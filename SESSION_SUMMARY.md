@@ -10,6 +10,14 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Regenerate: search all saved sources, prefer current, never invent** (`9ad3e89`).
+  Fixed the AI hallucinating a table/column not in the user's source (e.g.
+  `CLAIM_MASTER.CLM_NO`). Per-field regenerate now loads the schema from ALL *saved*
+  source connections (deleted ones already gone), ordering the source the mappings
+  came from FIRST. Backend prompt hardened: use ONLY tables/columns present verbatim
+  in the list (mapping AND join); add a JOIN only when a real shared key exists on
+  both tables; if the requested value isn't in the list → Not Mapped, no fabrication.
+  First-time generation is unchanged (already scoped to the single selected source).
 - **Regenerate now updates the FROM/JOIN clause** (`8488159`). When a single
   mapping is regenerated to pull from a source table not yet in the entity's join,
   the backend returns an updated `joinCondition` (extends the FROM/JOIN, inferring
