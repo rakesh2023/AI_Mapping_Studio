@@ -1140,7 +1140,14 @@ def extract_source():
         merged = {}          # lower(name) -> {"name":..., "columns":[...], "_cols": set()}
         order = []           # preserve first-seen table order
         for idx, chunk in enumerate(chunks):
-            part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+            # one chunk failing must not abort the whole extraction — retry once, then skip
+            try:
+                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+            except Exception:  # noqa: BLE001
+                try:
+                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                except Exception:  # noqa: BLE001
+                    part = []
             for t in part:
                 key = (t.get("name") or "").strip().lower()
                 if not key:
@@ -1238,9 +1245,20 @@ def extract_source_stream():
         model = _ai_model()
         merged, order = {}, []
         try:
+            failed = 0
             for idx, chunk in enumerate(chunks):
                 label = chunk.split("\n", 1)[0][:80]
-                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                # A single chunk failing (transient gateway error, etc.) must NOT abort
+                # the whole extraction — retry once, then skip and keep going.
+                part = []
+                try:
+                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                except Exception:  # noqa: BLE001
+                    try:
+                        part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                    except Exception:  # noqa: BLE001
+                        failed += 1
+                        part = []
                 for t in part:
                     key = (t.get("name") or "").strip().lower()
                     if not key:

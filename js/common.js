@@ -144,41 +144,61 @@ async function resetApplication(){
    ({type:'start'|'progress'|'done'|'error', ...}). Resolves with the 'done' payload
    (or throws on error). Falls back to the non-streaming endpoint if streaming fails. */
 async function streamExtractFile(file, onEvent){
-  const fd = new FormData();
-  fd.append("file", file);
-  let res;
-  try{
-    res = await fetch("/api/ai/extract-source-stream", {method:"POST", body:fd});
-  }catch(e){
-    throw new Error("Backend not reachable. Start it with python server/app.py.");
-  }
-  if(!res.ok || !res.body){
-    // Fallback: non-streaming endpoint (no progress, single result).
-    const r2 = await fetch("/api/ai/extract-source", {method:"POST", body:(function(){const f=new FormData();f.append("file",file);return f;})()});
-    const out = await r2.json();
+  // Non-streaming extraction (reliable; no progress). Used as a fallback if streaming
+  // isn't available or the stream connection drops mid-way on a very large file.
+  async function nonStreaming(){
+    const f = new FormData(); f.append("file", file);
+    const r = await fetch("/api/ai/extract-source", {method:"POST", body:f});
+    let out; try{ out = await r.json(); }catch(e){ out = {ok:false, error:"Server returned an invalid response (HTTP " + r.status + ")."}; }
     if(!out.ok) throw new Error(out.error || "Extraction failed.");
     if(onEvent) onEvent({type:"done", ...out});
     return out;
   }
+
+  let res;
+  try{
+    res = await fetch("/api/ai/extract-source-stream", {method:"POST", body:(function(){const f=new FormData();f.append("file",file);return f;})()});
+  }catch(e){
+    // couldn't even open the stream — try the plain endpoint before giving up
+    try{ return await nonStreaming(); }
+    catch(e2){ throw new Error("Backend not reachable. Start it with python server/app.py."); }
+  }
+  if(!res.ok || !res.body){
+    return await nonStreaming();
+  }
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = "", done = null;
-  while(true){
-    const {value, done: rdDone} = await reader.read();
-    if(rdDone) break;
-    buf += decoder.decode(value, {stream:true});
-    let nl;
-    while((nl = buf.indexOf("\n")) !== -1){
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if(!line) continue;
-      let evt; try{ evt = JSON.parse(line); }catch(e){ continue; }
-      if(onEvent) onEvent(evt);
-      if(evt.type === "error") throw new Error(evt.error || "Extraction failed.");
-      if(evt.type === "done") done = evt;
+  let buf = "", done = null, sawServerError = null;
+  try{
+    while(true){
+      const {value, done: rdDone} = await reader.read();
+      if(rdDone) break;
+      buf += decoder.decode(value, {stream:true});
+      let nl;
+      while((nl = buf.indexOf("\n")) !== -1){
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if(!line) continue;
+        let evt; try{ evt = JSON.parse(line); }catch(e){ continue; }
+        if(onEvent) onEvent(evt);
+        if(evt.type === "error") sawServerError = evt.error || "Extraction failed.";
+        if(evt.type === "done") done = evt;
+      }
+    }
+  }catch(streamErr){
+    // Connection dropped mid-stream (e.g. proxy/idle timeout on a big file).
+    // Fall back to the non-streaming endpoint rather than failing.
+    if(!done){
+      try{ return await nonStreaming(); }
+      catch(e2){ throw new Error("Extraction connection dropped and the fallback also failed: " + (e2.message || e2)); }
     }
   }
-  if(!done) throw new Error("Extraction ended without a result.");
+  if(sawServerError && !done) throw new Error(sawServerError);
+  if(!done){
+    // Stream ended without a result — try the reliable endpoint once.
+    return await nonStreaming();
+  }
   return done;
 }
 
