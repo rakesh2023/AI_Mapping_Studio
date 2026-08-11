@@ -102,8 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("strategyHint").textContent = STRATEGY_HINTS[e.target.value];
   });
   document.getElementById("sourceSelect").addEventListener("change", () => { sourceCache = null; });
-  // Top and bottom action buttons share the same handlers.
-  ["analyzeBtn","analyzeBtnTop"].forEach(id => { const b = document.getElementById(id); if(b) b.addEventListener("click", analyzeMetadata); });
+  // Top and bottom action buttons share the same handler.
   ["generateBtn","generateBtnTop"].forEach(id => { const b = document.getElementById(id); if(b) b.addEventListener("click", generateMappings); });
 
   // Hide the AI Processing Console column so the configuration area gets full width.
@@ -311,20 +310,6 @@ async function loadSource(){
       businessTerm:c.businessTerm||"", description:c.description||"", sample:c.sample
     }))}))};
   return sourceCache;
-}
-
-/* ---------- analyze (preview what will be sent) ---------- */
-async function analyzeMetadata(){
-  document.getElementById("aiResultBox").innerHTML = "";
-  if(!targetSchema || !targetSchema.entities.length){ showNotification("Upload a target schema first.", "warning"); return; }
-  runProcessLog("aiLog", ["Connecting to source system...", "Reading live source columns...", "Loading uploaded target schema...", "Analysis complete."], async () => {
-    try{
-      const src = await loadSource();
-      const cols = src.tables.reduce((a,t) => a + t.columns.length, 0);
-      const selMsg = selectedEntityNames().length ? (totalSelectedCols() + " column(s) in " + selectedEntityNames().length + " table(s) selected") : "no target columns selected yet";
-      showNotification("Ready: " + src.tables.length + " source tables (" + cols + " columns); " + selMsg + ".", "success");
-    }catch(err){ showNotification(err.message, "danger"); }
-  }, 450);
 }
 
 /* ---------- live progress-log helpers (per-table status) ---------- */
