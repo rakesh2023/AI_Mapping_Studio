@@ -40,6 +40,7 @@ let hiddenColumns = new Set(lsGet("aims_ws_hidden_cols", []) || []);
 
 let targetMeta = null;
 let allMappings = [];           // every generated mapping (with overrides applied)
+let sourceSchemaCols = [];      // FULL source schema [{table,column,dataType}] for regenerate
 let activeEntity = null;        // currently-selected target table (entity name)
 let tableListFilter = "";
 let joinConditions = {};        // entityName -> AI-identified join SQL (editable)
@@ -76,6 +77,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   document.getElementById("emptyState").style.display = "none";
   document.getElementById("reviewLayout").style.display = "";
+
+  // Load the full source schema in the background so "Regenerate" can search ALL
+  // source columns (not just ones already mapped). Non-blocking.
+  loadSourceSchema();
 
   buildHeader();
   wireGridControls();
@@ -535,8 +540,47 @@ async function rejectMapping(id, silent){
   if(!silent){ showNotification(id + " rejected.", "danger"); applyPipeline(); }
 }
 
-// Known source columns from the current mapping document (used to ground the AI regenerate).
+// Load the FULL source schema (every table & column) so regenerate can find columns
+// that aren't in the current mapping yet (e.g. a policy number in another table).
+// File System sources carry their tables on the connection; SQL sources read live.
+async function loadSourceSchema(){
+  const out = [], seen = new Set();
+  const add = (tbl, col, dt) => {
+    const k = (tbl||"") + "." + (col||"");
+    if(tbl && col && !seen.has(k)){ seen.add(k); out.push({table:tbl, column:col, dataType:dt||""}); }
+  };
+  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
+  for(const c of conns){
+    try{
+      if((c.type||"").toLowerCase() === "file system"){
+        (c.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
+      } else {
+        const cfg = {driver:c.driver||"ODBC Driver 17 for SQL Server", server:c.server||c.host||"",
+          database:c.database||c.db||"", schema:c.schema||null, trusted:!!c.trusted,
+          username:c.username||"", password:c.password||""};
+        if(!cfg.server || !cfg.database) continue;
+        const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
+        const data = await res.json();
+        if(data.ok) (data.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
+      }
+    }catch(e){ /* skip unreachable source; fall back to mapped columns */ }
+  }
+  sourceSchemaCols = out;
+}
+
+// Distinct source tables currently used by a target entity's mappings (join context).
+function entitySourceTables(entity){
+  const seen = new Set();
+  allMappings.forEach(m => {
+    if(m.targetEntity === entity && m.sourceTable) seen.add(m.sourceTable);
+  });
+  return Array.from(seen);
+}
+
+// Source columns to ground the AI regenerate: the FULL source schema if loaded,
+// otherwise fall back to columns already present in the mapping document.
 function knownSourceColumns(){
+  if(sourceSchemaCols && sourceSchemaCols.length) return sourceSchemaCols;
   const seen = new Set(), out = [];
   allMappings.forEach(m => {
     if(m.sourceTable && m.sourceColumn && m.sourceColumn !== "(no source equivalent)"){
@@ -564,7 +608,9 @@ async function regenerateMapping(id, silent, extraInstructions){
           lookupTable:m.lookupTable, defaultValue:m.defaultValue, nullHandling:m.nullHandling
         },
         sourceColumns: knownSourceColumns(),
-        instruction: extraInstructions || ""
+        instruction: extraInstructions || "",
+        currentJoin: joinConditions[m.targetEntity] || "",
+        entitySourceTables: entitySourceTables(m.targetEntity)
       })
     });
     const data = await res.json();
@@ -594,7 +640,25 @@ async function regenerateMapping(id, silent, extraInstructions){
       newValue: changes.mappingType + " @ " + changes.confidence + "% — " + changes.businessRule,
       reason: extraInstructions || "Regenerate request", user:"AI Engine (Claude)", source:"AI"});
     Object.assign(m, changes);
-    if(!silent){ showNotification(id + " regenerated → " + changes.mappingType + " (" + changes.confidence + "%).", "success"); applyPipeline(); }
+
+    // Update the entity's FROM/JOIN if the AI adjusted it (e.g. the new source column
+    // came from a table not previously in the join).
+    const newJoin = (r.joinCondition || "").trim();
+    if(newJoin && newJoin !== (joinConditions[m.targetEntity] || "").trim()){
+      const prevJoin = joinConditions[m.targetEntity] || "";
+      joinConditions[m.targetEntity] = newJoin;
+      lsSet("aims_ai_joins", joinConditions);
+      // reflect it in the join box if this entity is currently shown
+      if(activeEntity === m.targetEntity){
+        const jc = document.getElementById("joinCondition");
+        if(jc) jc.value = newJoin;
+      }
+      addHistoryRecord(id, {changeType:"Modified", previousValue: prevJoin || "(none)",
+        newValue: newJoin, reason:"Join condition updated during regenerate for " + m.targetEntity,
+        user:"AI Engine (Claude)", source:"AI"});
+    }
+
+    if(!silent){ showNotification(id + " regenerated → " + changes.mappingType + " (" + changes.confidence + "%)" + (newJoin ? "; join updated" : "") + ".", "success"); applyPipeline(); }
   }catch(err){
     showNotification("Backend not reachable during regenerate.", "danger");
   }

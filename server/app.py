@@ -697,6 +697,7 @@ SINGLE_MAPPING_SCHEMA = {
         "nullHandling": {"type": "string"},
         "confidence": {"type": "integer"},
         "explanation": {"type": "string"},
+        "joinCondition": {"type": "string"},
     },
     "required": ["sourceTable", "sourceColumn", "mappingType", "transformationRule",
                  "businessRule", "nullHandling", "confidence", "explanation"],
@@ -715,6 +716,8 @@ def regenerate_mapping():
     m = body.get("mapping") or {}
     src_cols = body.get("sourceColumns") or []
     instruction = (body.get("instruction") or "").strip()
+    current_join = (body.get("currentJoin") or "").strip()
+    entity_tables = body.get("entitySourceTables") or []   # source tables used by this entity
     if not m.get("targetColumn"):
         return jsonify(ok=False, error="No target field provided."), 400
 
@@ -727,10 +730,18 @@ def regenerate_mapping():
         "to 'Constant', put the value in defaultValue, and write transformationRule like "
         "CONSTANT('<value>'). If they specify a lookup, use 'Lookup' and fill lookupTable. "
         "Choose sourceTable/sourceColumn from the provided source list only (leave both "
-        "empty for Constant/Default/Not Mapped). Return the full updated mapping. "
-        "Respond with ONLY a JSON object with keys sourceTable, sourceColumn, mappingType, "
-        "transformationRule, businessRule, lookupTable, defaultValue, nullHandling, "
-        "confidence (0-100 integer), explanation. No prose, no markdown fences."
+        "empty for Constant/Default/Not Mapped).\n\n"
+        "JOIN CONDITION: You are also given the target entity's CURRENT join (FROM/JOIN "
+        "SQL that assembles its source rows) and the source tables it already uses. If your "
+        "chosen sourceTable is NOT already in that FROM/JOIN, UPDATE joinCondition to add a "
+        "JOIN for it — infer the join key from matching *_ID / *_CD / *_NBR columns or shared "
+        "business keys between the tables. If the chosen table is already covered (or the "
+        "mapping is Constant/Default/Not Mapped), return the current join unchanged. Write a "
+        "runnable snippet, e.g. 'FROM CLM_TXN c JOIN PARTY_MST p ON c.PARTY_ID = p.PARTY_ID'.\n\n"
+        "Return the full updated mapping. Respond with ONLY a JSON object with keys "
+        "sourceTable, sourceColumn, mappingType, transformationRule, businessRule, "
+        "lookupTable, defaultValue, nullHandling, confidence (0-100 integer), explanation, "
+        "joinCondition. No prose, no markdown fences."
     )
     user = (
         "TARGET FIELD: " + str(m.get("targetEntity", "")) + "." + str(m.get("targetColumn", ""))
@@ -738,6 +749,10 @@ def regenerate_mapping():
         + "CURRENT MAPPING: " + json.dumps({k: m.get(k) for k in
             ("sourceTable", "sourceColumn", "mappingType", "transformationRule",
              "businessRule", "lookupTable", "defaultValue", "nullHandling")}, ensure_ascii=False)
+        + "\n\nENTITY '" + str(m.get("targetEntity", "")) + "' CURRENT JOIN: "
+        + (current_join or "(none yet)")
+        + "\nSOURCE TABLES ALREADY USED BY THIS ENTITY: "
+        + (", ".join(entity_tables) if entity_tables else "(none)")
         + "\n\nAVAILABLE SOURCE COLUMNS:\n" + src_block
         + "\n\nUSER INSTRUCTION (apply this): " + (instruction or "Improve this mapping.")
     )
