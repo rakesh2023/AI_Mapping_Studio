@@ -1091,6 +1091,97 @@ def _parse_sql_ddl(text):
     return tables
 
 
+# Header synonyms for a structured Excel data dictionary (normalised: lowercase,
+# no spaces/underscores). Used to read attributes DIRECTLY from cells — no AI.
+_XLSX_HDR = {
+    "table":       ("table", "tablename", "targettable", "physicaltable", "entity",
+                    "entityname", "objectname", "object", "sourcetable"),
+    "column":      ("column", "columnname", "field", "fieldname", "attribute",
+                    "attributename", "sourcecolumn", "targetcolumn"),
+    "datatype":    ("datatype", "type", "columntype", "sqltype", "fieldtype"),
+    "length":      ("length", "len", "size", "columnlength", "fieldlength", "maxlength"),
+    "description": ("description", "desc", "comment", "comments", "notes", "definition", "remarks"),
+    "businessterm":("businessterm", "business", "glossaryterm", "businessname", "term"),
+    "sample":      ("sample", "samplevalue", "example", "examplevalue", "sampledata"),
+}
+
+
+def _norm_hdr(h):
+    return str(h or "").strip().lower().replace("_", "").replace(" ", "").replace("-", "")
+
+
+def _parse_xlsx_dictionary(raw):
+    """Deterministically parse a STRUCTURED Excel data dictionary into the source shape,
+    reading every attribute (name, dataType, length, description, businessTerm, sample)
+    straight from the cells — no AI, verbatim, instant.
+
+    Returns a list of tables, or None if the sheet isn't a recognisable dictionary
+    (no table-name + column-name header pair) so the caller falls back to the AI loop.
+    """
+    if openpyxl is None:
+        return None
+    import io
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception:  # noqa: BLE001
+        return None
+
+    tables, order = {}, []
+    recognised_any = False
+
+    for ws in wb.worksheets:
+        rows = [["" if c is None else str(c).strip() for c in r]
+                for r in ws.iter_rows(values_only=True)]
+        rows = [r for r in rows if any(v for v in r)]
+        if len(rows) < 2:
+            continue
+        header = rows[0]
+        # map each attribute to a column index via synonyms
+        idx = {}
+        for ci, h in enumerate(header):
+            n = _norm_hdr(h)
+            for key, syns in _XLSX_HDR.items():
+                if key not in idx and n in syns:
+                    idx[key] = ci
+                    break
+        # need at least a TABLE column and a COLUMN column to be a dictionary
+        if "table" not in idx or "column" not in idx:
+            continue
+        recognised_any = True
+
+        def cell(r, key):
+            i = idx.get(key)
+            return (r[i].strip() if (i is not None and i < len(r)) else "")
+
+        for r in rows[1:]:
+            tname = cell(r, "table")
+            cname = cell(r, "column")
+            if not tname or not cname:
+                continue
+            if tname not in tables:
+                tables[tname] = {"name": tname, "columns": [], "_seen": set()}
+                order.append(tname)
+            b = tables[tname]
+            if cname.lower() in b["_seen"]:
+                continue
+            b["_seen"].add(cname.lower())
+            lraw = cell(r, "length")
+            length = int(lraw) if lraw.isdigit() else (lraw or None)
+            b["columns"].append({
+                "name": cname,
+                "dataType": (cell(r, "datatype") or "").lower(),
+                "length": length,
+                "businessTerm": cell(r, "businessterm"),
+                "description": cell(r, "description"),
+                "sample": cell(r, "sample"),
+            })
+
+    if not recognised_any:
+        return None
+    out = [{"name": t["name"], "columns": t["columns"]} for t in (tables[k] for k in order) if t["columns"]]
+    return out or None
+
+
 @app.route("/api/ai/extract-source", methods=["POST"])
 def extract_source():
     """Read an uploaded file and use Claude to infer the SOURCE tables & columns.
@@ -1107,6 +1198,15 @@ def extract_source():
     if not raw:
         return jsonify(ok=False, error="The uploaded file is empty."), 400
 
+    # Fast path #1: a STRUCTURED Excel data dictionary is parsed directly from cells —
+    # instant, verbatim, no AI (falls through to AI if the layout isn't recognisable).
+    if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        xl = _parse_xlsx_dictionary(raw)
+        if xl:
+            cc = sum(len(t["columns"]) for t in xl)
+            return jsonify(ok=True, model="xlsx-dictionary-parser", fileName=filename,
+                           tables=xl, tableCount=len(xl), columnCount=cc)
+
     chunks, err = _extract_file_chunks(filename, raw)
     if err:
         return jsonify(ok=False, error=err), 400
@@ -1115,7 +1215,7 @@ def extract_source():
         return jsonify(ok=False, error="No readable text could be extracted from the file."), 400
     full_text = "\n".join(chunks)
 
-    # Fast path: SQL scripts with CREATE TABLE statements are parsed deterministically
+    # Fast path #2: SQL scripts with CREATE TABLE statements are parsed deterministically
     # so EVERY table is captured (the LLM tends to summarise large DDL). If the script
     # has no parseable CREATE TABLE, fall through to the AI path below.
     if filename.lower().endswith(".sql") or "create table" in full_text.lower():
@@ -1205,6 +1305,19 @@ def extract_source_stream():
             return _json.dumps(obj) + "\n"
         if not raw:
             yield ev({"type": "error", "error": "The uploaded file is empty."}); return
+
+        # Fast path #1: structured Excel dictionary — parsed directly from cells, instant.
+        if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+            xl = _parse_xlsx_dictionary(raw)
+            if xl:
+                cc = sum(len(t["columns"]) for t in xl)
+                yield ev({"type": "start", "chunks": 1, "fileName": filename, "unit": "workbook"})
+                yield ev({"type": "progress", "done": 1, "total": 1, "tables": len(xl),
+                          "columns": cc, "label": "Parsed Excel dictionary (direct, no AI)"})
+                yield ev({"type": "done", "ok": True, "model": "xlsx-dictionary-parser",
+                          "fileName": filename, "tables": xl, "tableCount": len(xl),
+                          "columnCount": cc, "chunks": 1})
+                return
 
         chunks, err = _extract_file_chunks(filename, raw)
         if err:
