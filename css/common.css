@@ -148,8 +148,12 @@ body.theme-dark .topbar-logo.logo-dark{display:block;}
 /* ===== Buttons ===== */
 .btn-primary{background:var(--primary);border-color:var(--primary);}
 .btn-primary:hover{background:var(--primary-dark);border-color:var(--primary-dark);}
-.btn-outline-soft{border:1px solid var(--border);color:var(--text-main);background:#fff;}
-.btn-outline-soft:hover{background:var(--gray-bg);}
+/* Secondary buttons: PwC-orange outline (meaningful brand color, not plain grey);
+   fills solid on hover. Primary CTA stays solid orange; semantic buttons keep
+   their own green/amber/red. */
+.btn-outline-soft{border:1px solid var(--primary);color:var(--primary);background:var(--bg-card);}
+.btn-outline-soft:hover{background:var(--primary);color:#fff;border-color:var(--primary);}
+.btn-outline-soft:disabled,.btn-outline-soft.disabled{border-color:var(--border);color:var(--text-muted);background:var(--bg-card);opacity:.6;}
 .btn-sm-icon{padding:4px 9px;font-size:.75rem;}
 
 /* Semantic soft-outline action buttons (PwC-themed) */
@@ -234,8 +238,8 @@ body.theme-dark{background:var(--bg-app);color:var(--text-main);}
 /* hardcoded-light surfaces in common.css */
 body.theme-dark .topbar{background:var(--bg-card);}
 body.theme-dark .kpi-card{background:var(--bg-card);}
-body.theme-dark .btn-outline-soft{background:var(--bg-card);color:var(--text-main);}
-body.theme-dark .btn-outline-soft:hover{background:var(--gray-bg);}
+body.theme-dark .btn-outline-soft{background:var(--bg-card);color:var(--primary);border-color:var(--primary);}
+body.theme-dark .btn-outline-soft:hover{background:var(--primary);color:#fff;}
 body.theme-dark .toast-item{background:var(--bg-card);}
 body.theme-dark .icon-btn{background:var(--bg-card);color:var(--text-main);}
 body.theme-dark .prof-bar{background:#333;}
