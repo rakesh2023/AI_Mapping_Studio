@@ -10,6 +10,11 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Metadata Explorer: removed the New Connection form** (`6faeacc`). It was a
+  SQL-only duplicate of Source Systems (which does SQL + File). The Explorer now only
+  lists **Saved Sources** with an **Explore** button + an "Add / Manage Sources" link;
+  connection create/edit/delete lives solely on Source Systems. `loadLiveObjects(conn)`
+  now takes a connection object; all form-dependent JS was removed.
 - **Regenerate: search all saved sources, prefer current, never invent** (`9ad3e89`).
   Fixed the AI hallucinating a table/column not in the user's source (e.g.
   `CLAIM_MASTER.CLM_NO`). Per-field regenerate now loads the schema from ALL *saved*
