@@ -540,17 +540,18 @@ async function rejectMapping(id, silent){
   if(!silent){ showNotification(id + " rejected.", "danger"); applyPipeline(); }
 }
 
-// Load the FULL source schema (every table & column) so regenerate can find columns
-// that aren't in the current mapping yet (e.g. a policy number in another table).
-// File System sources carry their tables on the connection; SQL sources read live.
+// Load the source schema (every table & column) so a per-field REGENERATE can find
+// columns that aren't in the current mapping yet. Searches ALL *saved* source
+// connections (deleted ones are already gone from the store), but orders the source
+// that these mappings actually came from FIRST so it's the preferred match. Never
+// includes made-up tables — only what's really configured.
 async function loadSourceSchema(){
   const out = [], seen = new Set();
   const add = (tbl, col, dt) => {
     const k = (tbl||"") + "." + (col||"");
     if(tbl && col && !seen.has(k)){ seen.add(k); out.push({table:tbl, column:col, dataType:dt||""}); }
   };
-  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
-  for(const c of conns){
+  const readConn = async (c) => {
     try{
       if((c.type||"").toLowerCase() === "file system"){
         (c.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
@@ -558,13 +559,21 @@ async function loadSourceSchema(){
         const cfg = {driver:c.driver||"ODBC Driver 17 for SQL Server", server:c.server||c.host||"",
           database:c.database||c.db||"", schema:c.schema||null, trusted:!!c.trusted,
           username:c.username||"", password:c.password||""};
-        if(!cfg.server || !cfg.database) continue;
+        if(!cfg.server || !cfg.database) return;
         const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
         const data = await res.json();
         if(data.ok) (data.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
       }
-    }catch(e){ /* skip unreachable source; fall back to mapped columns */ }
-  }
+    }catch(e){ /* skip unreachable source */ }
+  };
+
+  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
+  // The connection these mappings came from (by name) goes first = preferred source.
+  const usedNames = new Set(allMappings.map(m => m.sourceSystem).filter(Boolean));
+  const preferred = conns.filter(c => usedNames.has(c.name));
+  const rest = conns.filter(c => !usedNames.has(c.name));
+  for(const c of preferred) await readConn(c);   // preferred source's columns first
+  for(const c of rest) await readConn(c);         // then the other saved sources
   sourceSchemaCols = out;
 }
 
