@@ -385,7 +385,10 @@ async function initShell(activeHref){
   applyTheme(getTheme());   // ensure saved theme is active on every page
   const sidebarHTML =
     '<div class="sidebar-brand">' +
-      '<div class="brand-icon"><img src="../assets/images/pwc-mark.svg" alt="PwC"></div>' +
+      '<div class="brand-icon">' +
+        '<img class="brand-mark mark-light" src="../assets/images/pwc-mark-dark.svg" alt="PwC">' +
+        '<img class="brand-mark mark-dark" src="../assets/images/pwc-mark.svg" alt="PwC">' +
+      '</div>' +
       '<div class="brand-text"><b>PwC</b><span>AI Mapping Studio</span></div>' +
     '</div>' +
     '<nav class="sidebar-nav">' +
