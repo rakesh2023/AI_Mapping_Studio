@@ -39,6 +39,54 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireControls();
 });
 
+/* ---- AI Processing Console (per-table progress log) ---- */
+function etlConsoleShow(open){
+  const card = document.getElementById("etlConsoleCard");
+  const log = document.getElementById("etlLog");
+  const btn = document.getElementById("etlConsoleToggle");
+  if(!card) return;
+  card.style.display = "";                 // reveal the card
+  if(log) log.style.display = open === false ? "none" : "";
+  if(btn){
+    const icon = btn.querySelector("i");
+    if(icon) icon.className = "bi " + (open === false ? "bi-chevron-down" : "bi-chevron-up");
+    btn.title = open === false ? "Show console" : "Hide console";
+  }
+}
+function etlLogReset(){
+  const el = document.getElementById("etlLog");
+  if(el){ el.style.display = ""; el.innerHTML = ""; }
+}
+function etlLogStep(text){
+  const el = document.getElementById("etlLog");
+  if(!el) return null;
+  const line = document.createElement("div");
+  line.className = "log-line";
+  line.innerHTML = '<span class="spin"><i class="bi bi-arrow-repeat"></i></span> ' + escapeHtml(text);
+  el.appendChild(line);
+  requestAnimationFrame(() => { line.style.opacity = "1"; el.scrollTop = el.scrollHeight; });
+  return line;
+}
+function etlLogDone(line, text){
+  if(!line) return;
+  line.classList.add("done");
+  line.innerHTML = '<i class="bi bi-check-circle-fill"></i> ' + escapeHtml(text || line.textContent.trim());
+}
+function etlLogFail(line, text){
+  if(!line) return;
+  line.classList.add("error");
+  line.innerHTML = '<i class="bi bi-x-circle-fill"></i> ' + escapeHtml(text || line.textContent.trim());
+}
+function etlLogInfo(text){
+  const el = document.getElementById("etlLog");
+  if(!el) return;
+  const line = document.createElement("div");
+  line.className = "log-line done";
+  line.innerHTML = '<i class="bi bi-info-circle"></i> ' + escapeHtml(text);
+  el.appendChild(line);
+  requestAnimationFrame(() => { line.style.opacity = "1"; el.scrollTop = el.scrollHeight; });
+}
+
 /* Additional AI instructions for SQL generation — persisted with the project so
    they're ready when AI-assisted generation is enabled. */
 function initInstructions(){
@@ -155,6 +203,15 @@ function wireControls(){
   if(show) show.addEventListener("click", (e) => { e.preventDefault(); toggleEtlPanel(true); });
   if(lsGet("aims_etl_panel_hidden", false)) toggleEtlPanel(false);   // restore preference
 
+  // AI console collapse/expand
+  const conBtn = document.getElementById("etlConsoleToggle");
+  if(conBtn) conBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const log = document.getElementById("etlLog");
+    const collapsed = log && log.style.display === "none";
+    etlConsoleShow(collapsed ? true : false);   // toggle
+  });
+
   updateGenerateBtn();
 }
 
@@ -199,13 +256,23 @@ async function generateEtl(){
   const out = document.getElementById("etlOutput");
   const info = document.getElementById("etlOutInfo");
 
+  // Reveal + reset the console for this run.
+  etlConsoleShow(true);
+  etlLogReset();
+
   // No instructions -> fast deterministic template fill (no AI needed).
   if(!instr){
+    etlLogInfo("Deterministic template fill (no AI instructions provided).");
+    selected.forEach(g => {
+      const line = etlLogStep("Building " + g.name + " …");
+      etlLogDone(line, "Built " + g.name + " (" + g.rows.length + " columns)");
+    });
     const sql = selected.map(g => buildProc(g, db)).join("\n\nGO\n\n\n");
     etlLastSql = sql;
     if(out) out.innerHTML = '<code>' + escapeHtml(sql) + '</code>';
     if(info) info.textContent = selected.length + " procedure(s)";
     ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
+    etlLogInfo("Done — " + selected.length + " procedure(s) generated.");
     showNotification("Generated SQL for " + selected.length + " table(s).", "success");
     return;
   }
@@ -214,25 +281,40 @@ async function generateEtl(){
   // deterministic build for any table whose AI call fails).
   setEtlBusy(true);
   if(info) info.textContent = "Generating with AI…";
+  etlLogInfo("AI generation with your instructions. This takes a few seconds per table…");
   const parts = [];
   let aiCount = 0, fbCount = 0;
+  const errors = [];
   try{
     for(let i = 0; i < selected.length; i++){
       const g = selected[i];
       if(info) info.textContent = "AI generating " + (i+1) + " / " + selected.length + " (" + g.name + ")…";
+      const line = etlLogStep("[" + (i+1) + "/" + selected.length + "] AI generating " + g.name + " …");
       let sql = null;
       try{
         sql = await aiGenerateProc(g, db, instr);
-      }catch(e){ sql = null; }
-      if(sql && sql.trim()){ parts.push(sql.trim()); aiCount++; }
-      else { parts.push(buildProc(g, db)); fbCount++; }   // fallback keeps output complete
+      }catch(e){ sql = null; errors.push(g.name + ": " + (e && e.message ? e.message : e)); }
+      if(sql && sql.trim()){
+        parts.push(sql.trim()); aiCount++;
+        etlLogDone(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " generated by AI");
+      } else {
+        parts.push(buildProc(g, db)); fbCount++;   // fallback keeps output complete
+        etlLogFail(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " AI failed — used template. " + (errors.length ? errors[errors.length-1] : ""));
+      }
     }
     etlLastSql = parts.join("\n\nGO\n\n\n");
     if(out) out.innerHTML = '<code>' + escapeHtml(etlLastSql) + '</code>';
     if(info) info.textContent = selected.length + " procedure(s)" + (fbCount ? (" · " + fbCount + " fallback") : "");
     ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
-    if(fbCount) showNotification("Generated " + aiCount + " with AI; " + fbCount + " used the deterministic template (AI unavailable/failed).", "warning");
-    else showNotification("AI-generated SQL for " + aiCount + " table(s) with your instructions.", "success");
+    if(fbCount){
+      const reason = errors.length ? (" Reason: " + errors[0]) : "";
+      etlLogInfo("Finished with " + fbCount + " fallback(s). See errors above.");
+      showNotification("AI generation failed for " + fbCount + " table(s); used the deterministic template instead." + reason, "danger", 8000);
+      if(errors.length) console.error("ETL AI generation errors:\n" + errors.join("\n"));
+    } else {
+      etlLogInfo("Done — " + aiCount + " procedure(s) generated by AI.");
+      showNotification("AI-generated SQL for " + aiCount + " table(s) with your instructions.", "success");
+    }
   }finally{
     setEtlBusy(false);
   }
@@ -253,9 +335,16 @@ async function aiGenerateProc(g, db, instructions){
       nullHandling: m.nullHandling, targetDataType: m.targetDataType
     }))
   };
-  const res = await fetch("/api/ai/generate-etl", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-  const data = await res.json();
-  if(!data.ok) throw new Error(data.error || "AI generation failed");
+  let res;
+  try{
+    res = await fetch("/api/ai/generate-etl", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+  }catch(netErr){
+    throw new Error("Cannot reach the backend (is python server/main.py running?)");
+  }
+  let data;
+  try{ data = await res.json(); }
+  catch(parseErr){ throw new Error("HTTP " + res.status + " - non-JSON response from server"); }
+  if(!res.ok || !data.ok) throw new Error(data && data.error ? data.error : ("HTTP " + res.status));
   return data.sql;
 }
 

@@ -146,15 +146,13 @@ def generate_etl(body: Dict[str, Any]) -> Result:
 
     system = (
         "You are a senior SQL Server ETL engineer. Produce ONE stored procedure that "
-        "inserts into a target table from mapped source columns. You MUST follow the "
-        "EXACT template given by the user — keep every line of the boilerplate (USE, GO, "
-        "SET options, DECLARE block, BEGIN TRANSACTION, BEGIN TRY / END TRY, BEGIN CATCH, "
-        "the two CLAIM_CONVERSION_EXECUTION_LOG inserts, RAISERROR, END) verbatim. Only "
-        "fill the three placeholders:\n"
+        "inserts into a target table from mapped source columns.\n\n"
+        "Start from the TEMPLATE below as the DEFAULT structure and fill its three "
+        "placeholders:\n"
         "  <target columns>            -> the INSERT column list (the target columns)\n"
         "  <source expr AS target column, one per line> -> the SELECT list\n"
         "  <FROM / JOIN>               -> the FROM / JOIN clause\n\n"
-        "RULES:\n"
+        "COLUMN RULES:\n"
         "- One SELECT line per target column, in the SAME order as the INSERT list, as "
         "'<expr> AS <TargetColumn>'.\n"
         "- Direct -> sourceTable.sourceColumn. Data Type Conversion / Format Conversion -> "
@@ -162,23 +160,27 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "column and JOIN its lookup table. Constant/Default -> the literal value (no source). "
         "Not Mapped or missing source -> NULL with a trailing comment '-- Not Mapped'.\n"
         "- Use ONLY the source tables/columns present in the mapping list and the provided "
-        "FROM/JOIN. Do NOT invent tables or columns. If a needed lookup table is not in the "
-        "join, add it only if a mapping row names it.\n"
-        "- Use the provided FROM/JOIN clause as the basis; you MAY adjust join type (e.g. "
-        "LEFT JOIN) only if the user's ADDITIONAL INSTRUCTIONS ask for it.\n"
-        "- Apply the user's ADDITIONAL INSTRUCTIONS (e.g. TRY_CONVERT instead of CAST, WHERE "
-        "filters, LEFT JOIN for lookups) — they take priority for the SELECT/FROM body, but "
-        "never change the surrounding boilerplate or the procedure name.\n\n"
+        "FROM/JOIN. Do NOT invent tables or columns. This is the ONE hard rule that the "
+        "user's instructions cannot override.\n\n"
+        "ADDITIONAL INSTRUCTIONS override the template. The user's instructions take FULL "
+        "priority and may change ANYTHING about the procedure — for example: remove the USE "
+        "statement, change the letter-casing of the procedure name / table names / columns, "
+        "rename the procedure, adjust SET options, change join types, add WHERE filters, use "
+        "TRY_CONVERT instead of CAST, etc. Apply every instruction the user gives. When an "
+        "instruction conflicts with the template, follow the INSTRUCTION, not the template. "
+        "Preserve the transaction / TRY..CATCH / CLAIM_CONVERSION_EXECUTION_LOG logging "
+        "structure UNLESS the user explicitly asks to change or remove it.\n\n"
         "Return ONLY the SQL. No prose, no markdown fences."
     )
 
     user = (
-        "TARGET TABLE: " + target_table + "  (log TableName = '" + short + "', procedure = " + proc + ")\n\n"
+        "TARGET TABLE: " + target_table + "  (default log TableName = '" + short + "', default procedure name = " + proc + ")\n"
+        "DATABASE: " + db + "\n\n"
         "COLUMN MAPPINGS (targetColumn <= source [attributes]):\n" + _mapping_lines(rows) + "\n\n"
         "FROM / JOIN CLAUSE TO USE:\n" + (join if join else "(none provided — infer a single-table FROM from the source tables above)") + "\n\n"
-        "ADDITIONAL INSTRUCTIONS (apply to the SELECT/FROM body only):\n" +
+        "ADDITIONAL INSTRUCTIONS (these OVERRIDE the template — apply all of them):\n" +
         (instructions if instructions else "(none)") + "\n\n"
-        "FILL THIS EXACT TEMPLATE (keep all boilerplate verbatim):\n\n" + template
+        "TEMPLATE (default structure — adapt it per the ADDITIONAL INSTRUCTIONS above):\n\n" + template
     )
 
     model = ai_model()
