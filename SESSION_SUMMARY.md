@@ -8,6 +8,40 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ---
 
+## Latest changes (most recent first)
+
+- **Regenerate now updates the FROM/JOIN clause** (`8488159`). When a single
+  mapping is regenerated to pull from a source table not yet in the entity's join,
+  the backend returns an updated `joinCondition` (extends the FROM/JOIN, inferring
+  the key from matching `*_ID`/`*_CD`/`*_NBR`; unchanged if same table). The
+  workspace applies it to `aims_ai_joins`, refreshes the join box, logs history.
+  Verified: new-table → join extended; same-table → unchanged.
+- **Regenerate grounded on the FULL source schema** (`8488159` / `20260811v`).
+  Previously regenerate only saw columns already in the mapping doc, so it couldn't
+  find e.g. POLICY_NUMBER in another table. The workspace now loads every source
+  connection's tables (File System = stored tables; SQL = `/api/db/metadata`) and
+  passes them all to regenerate.
+- **Direct Excel data-dictionary parser** (`dc1f4b4`). Structured `.xlsx`
+  dictionaries (a Table/Entity column + a Column column) are parsed DIRECTLY from
+  cells — name/dataType/length/description/businessTerm/sample read **verbatim** —
+  instead of the multi-minute AI loop. `_parse_xlsx_dictionary()` returns None for
+  raw-data/irregular sheets so those still use AI. Wired into both extract endpoints.
+  50 tables × 10 cols → ~1s (was minutes); descriptions preserved in full.
+- **Extraction resilience** (`9dd620e`). Client falls back to the non-streaming
+  endpoint if the NDJSON stream drops mid-file ("Connection error" on big files);
+  a single chunk's AI failure retries once then skips instead of aborting all.
+- **Excel data-dictionary row grouping** (`2e48fe1`). Tall dictionaries were sliced
+  into blind 500-row blocks (model returned ~1 table); now rows are grouped by their
+  TABLE/ENTITY column, batching a few tables per chunk. Progress bar shows chunk
+  count / tables / columns live as it runs.
+
+Note on chunking: "N parts" = how many slices the file was cut into for AI calls.
+Excel dictionaries group ~6 tables (or ≤6000 chars) per chunk; wide sheets split by
+columns (≤150); PDFs/text split on table boundaries. SQL uses a deterministic parser.
+Excel dictionaries now usually skip AI entirely via the direct parser.
+
+---
+
 ## What we've accomplished
 
 ### Core app
@@ -64,29 +98,41 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 - **File extraction**: `/api/ai/extract-source` (JSON result) and
   `/api/ai/extract-source-stream` (NDJSON **progress** events for the UI progress bar).
   - SQL scripts → deterministic `CREATE TABLE` parser (no limits, every table).
-  - Excel → chunk by **sheet**; **wide** sheets chunk by **columns** (≤150/slice);
+  - **Structured Excel dictionaries → direct cell parser (`_parse_xlsx_dictionary`),
+    NO AI, verbatim, instant**; falls back to AI for raw-data/irregular sheets.
+  - Excel (AI path) → chunk by **sheet**; **wide** sheets by **columns** (≤150/slice);
     **data-dictionary** sheets (a TABLE/ENTITY column) **group rows by table**.
   - PDF/Word/text → **table-boundary** chunking (batch ~6–8 tables per AI call).
   - **Loop + merge**: one model call per chunk, union tables by name, dedup columns.
   - **Resilience**: a single chunk failure retries once then skips (never aborts all);
     client falls back to the non-streaming endpoint if the stream drops.
+- **Regenerate** (`/api/ai/regenerate-mapping`): re-maps ONE field on the FULL source
+  schema and returns an updated `joinCondition` (extends the entity FROM/JOIN when the
+  new source is a new table).
 - Corporate gateway plumbing: `_ai_model()` strips `[1m]` suffix; `_ca_bundle()` +
   `_anthropic_client()` trust the TLS-intercepting proxy via `win-ca-bundle.pem`.
 
 ### Git
-- Repo initialized; pushed to **https://github.com/rakesh2023/AI_Mapping_Studio** (`main`).
+- Repo pushed to **https://github.com/rakesh2023/AI_Mapping_Studio** (`main`).
 - `.gitignore` excludes `server/win-ca-bundle.pem`, `server/server.log`,
   `__pycache__/`, `.claude/`, `.env`. No secrets committed (API creds via env vars).
-- Latest commit: `9dd620e` (extraction resilience).
+- Commit history (newest first):
+  - `8488159` regenerate updates the entity FROM/JOIN + full-schema grounding
+  - `dc1f4b4` direct Excel data-dictionary parser (skip AI for structured .xlsx)
+  - `9dd620e` extraction resilience (dropped streams + per-chunk failures)
+  - `3ca3395` add SESSION_SUMMARY.md
+  - `2e48fe1` fix Excel data-dictionary extraction dropping tables/rows
+  - `2e46ee7` initial commit
 
 ---
 
 ## Current state
 - **Working & pushed.** Backend runs at `http://127.0.0.1:8000` via `python server/app.py`
   (debug reload on). Frontend is static; cache-busting via `?v=YYYYMMDD<letter>` on
-  css/js — currently `?v=20260811u`.
-- File extraction verified end-to-end: SQL (deterministic), wide Excel (800 cols → all),
-  tall data-dictionary Excel (100 tables × 40 cols → all), 125-table PDF → all.
+  css/js — currently `?v=20260811w`.
+- Verified end-to-end: SQL (deterministic), structured Excel dictionary (direct parser,
+  50 tables × 10 cols → ~1s), wide Excel (800 cols → all), tall data-dictionary Excel
+  (100 tables × 40 cols → all via AI), 125-table PDF → all, regenerate join extend/keep.
 
 ## Important decisions
 - **Local-only data**: everything persists in browser `localStorage` (`aims_*` keys).
@@ -100,14 +146,16 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 - Large files ⇒ **many sequential AI calls** ⇒ minutes-long runs (progress bar shows it).
 
 ## Next steps / open items
-- **Speed**: large-file extraction & multi-table generation run sequentially (slow).
-  Could **parallelize chunk/table calls** to cut wall-clock time.
+- **Speed**: the AI extraction path & multi-table generation run sequentially (slow on
+  huge files). Could **parallelize chunk/table calls** to cut wall-clock time. (Structured
+  Excel now bypasses AI entirely via the direct parser, so this mainly affects PDF/Word
+  and non-dictionary sheets.)
 - **localStorage quota**: very large schemas (thousands of columns) may approach ~5MB;
   consider IndexedDB or server-side persistence if this becomes a real limit.
-- **Validation Summary panel** (lower Dashboard section) — confirm fully live; the KPI
-  tiles are done.
-- **Verify the user's `CMT_Schema.xlsx`** extracts fully now (the resilience fix targets
-  the "Connection error" they hit on that large file).
+- **Re-extract `CMT_Schema.xlsx`** with the new direct parser — should be ~1s and capture
+  all tables/columns (the user must Edit the source → Extract → Save to refresh it).
+- **Regenerate join edits are per-field**: if a mapping is later changed to a table that
+  makes another table's JOIN unused, the stale JOIN is not auto-pruned (minor).
 - `reportlab` was pip-installed locally only for test PDF generation — not in
   `requirements.txt` (intentional; not an app dependency).
 
