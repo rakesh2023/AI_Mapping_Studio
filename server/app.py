@@ -829,20 +829,59 @@ def _xlsx_sheet_chunks(title, grid):
                               str(cend) + " of " + str(ncols) + ")\n" + "\n".join(lines))
         return chunks
 
-    # ---- Narrow sheet: slice by rows ----
-    rows = ["\t".join(r) for r in grid if any(r)]
-    if not rows:
+    # ---- Narrow sheet ----
+    grid = [r for r in grid if any(r)]
+    if not grid:
         return []
-    header = rows[0]
-    block = EXTRACT_XLSX_ROW_CAP
+    header_cells = grid[0]
+    header = "\t".join(header_cells)
+
+    # Detect a data-dictionary layout: a column whose header names the TABLE/ENTITY.
+    # If found, GROUP data rows by that table so each chunk holds complete tables
+    # (raw fixed-size row blocks confuse the model and it returns almost nothing).
+    tbl_col = None
+    for i, h in enumerate(header_cells):
+        hl = str(h).strip().lower().replace("_", "").replace(" ", "")
+        if hl in ("table", "tablename", "entity", "entityname", "objectname", "object"):
+            tbl_col = i; break
+
+    if tbl_col is not None:
+        # group rows by table value, preserving order
+        groups, gorder = {}, []
+        for r in grid[1:]:
+            tv = (r[tbl_col] if tbl_col < len(r) else "").strip()
+            if not tv:
+                continue
+            if tv not in groups:
+                groups[tv] = []; gorder.append(tv)
+            groups[tv].append("\t".join(r))
+        if gorder:
+            # batch a few tables per chunk, bounded by char budget
+            cur, cur_len, count = [], 0, 0
+            def flush():
+                if cur:
+                    chunks.append("Sheet: " + title +
+                                  " (data dictionary — each row is a COLUMN; the '" +
+                                  str(header_cells[tbl_col]) + "' cell names its table)\n" +
+                                  header + "\n" + "\n".join(cur))
+            for tv in gorder:
+                block_rows = groups[tv]
+                block_text = "\n".join(block_rows)
+                if cur and (count >= 6 or cur_len + len(block_text) > EXTRACT_AI_CHUNK):
+                    flush(); cur, cur_len, count = [], 0, 0
+                cur.extend(block_rows); cur_len += len(block_text); count += 1
+            flush()
+            return chunks
+
+    # No table column -> plain row-slices (small blocks, header repeated).
+    rows = ["\t".join(r) for r in grid]
+    block = 120
     if len(rows) <= block:
         return ["Sheet: " + title + "\n" + "\n".join(rows)]
-    for start in range(0, len(rows), block):
-        part = rows[start:start + block]
-        if start > 0:
-            part = [header] + part
-        chunks.append("Sheet: " + title + " (rows " + str(start + 1) + "-" +
-                      str(start + len(part)) + ")\n" + "\n".join(part))
+    for start in range(1, len(rows), block):
+        part = [header] + rows[start:start + block]
+        chunks.append("Sheet: " + title + " (rows " + str(start) + "-" +
+                      str(start + len(part) - 2) + ")\n" + "\n".join(part))
     return chunks
 
 
