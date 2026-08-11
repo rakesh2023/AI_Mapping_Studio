@@ -30,13 +30,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderSavedConnections();
     loadFileObjects(target);
   } else if(target){
-    document.getElementById("connectPanel").style.display = "";
-    fillConnForm(target);
     editingConnId = target.id;
     renderSavedConnections();
-    await loadLiveObjects();   // pulls tables/columns live from the source system
+    await loadLiveObjects(target);   // pulls tables/columns live from the source system
   } else {
-    // No source system configured yet -> show a prompt (with sample as a fallback view).
+    // No source configured yet -> show a prompt (with sample as a fallback view).
     renderNoConnectionState();
   }
 });
@@ -51,7 +49,7 @@ function renderNoConnectionState(){
     '<tr><td colspan="13"><div class="empty-state">' +
       '<i class="bi bi-database-add"></i>' +
       '<h4>No source system connected</h4>' +
-      '<p class="text-xs text-muted-2">Add a source database on the Source Systems page (or click <strong>Connect to Database</strong> above) to explore its real tables and columns.</p>' +
+      '<p class="text-xs text-muted-2">Add a source on the Source Systems page, then click <strong>Saved Sources</strong> above and Explore it to view its real tables and columns.</p>' +
       '<a class="btn btn-primary" href="source-systems.html"><i class="bi bi-database me-1"></i> Go to Source Systems</a>' +
       '<button class="btn btn-outline-soft ms-2" id="loadSampleBtn"><i class="bi bi-file-earmark me-1"></i> Load Sample Metadata</button>' +
     '</div></td></tr>';
@@ -67,201 +65,90 @@ async function loadSampleMetadata(){
 /* ================= Live DB connection ================= */
 /* Connections are shared with the Source Systems page via common.js
    (getDbConnections / saveDbConnections / upsertDbConnection / deleteDbConnection). */
-let editingConnId = null;   // id currently being edited, or null for "new"
+let editingConnId = null;   // id of the source currently being explored (for highlight)
 
-function getConnections(){ return getDbConnections(); }
-function saveConnections(list){ saveDbConnections(list); }
-
+/* The Explorer no longer CREATES connections — that's done on Source Systems. Here we
+   only list saved sources and let the user Connect (explore) one. */
 function wireConnectPanel(){
   const panel = document.getElementById("connectPanel");
   document.getElementById("openConnectBtn").addEventListener("click", () => {
     panel.style.display = panel.style.display === "none" ? "" : "none";
   });
-  // Collapse / expand the New Connection form body via the header caret.
-  document.getElementById("connFormToggle").addEventListener("click", () => {
-    const collapsed = document.getElementById("connFormBody").style.display === "none";
-    setConnFormCollapsed(!collapsed);
-  });
-  document.getElementById("dbAuth").addEventListener("change", (e) => {
-    const trusted = e.target.value === "trusted";
-    document.getElementById("dbUserGroup").style.display = trusted ? "none" : "";
-    document.getElementById("dbPassGroup").style.display = trusted ? "none" : "";
-  });
-  document.getElementById("testConnBtn").addEventListener("click", testConnection);
-  document.getElementById("saveConnBtn").addEventListener("click", () => { if(saveCurrentConnection()) showNotification("Connection saved.", "success"); });
-  document.getElementById("loadObjectsBtn").addEventListener("click", loadLiveObjects);
-  document.getElementById("cancelEditBtn").addEventListener("click", resetConnForm);
   renderSavedConnections();
-}
-
-function readConnConfig(){
-  const auth = document.getElementById("dbAuth").value;
-  return {
-    name: document.getElementById("dbConnName").value.trim(),
-    driver: document.getElementById("dbDriver").value,
-    server: document.getElementById("dbServer").value.trim(),
-    database: document.getElementById("dbName").value.trim(),
-    schema: document.getElementById("dbSchema").value.trim() || null,
-    trusted: auth === "trusted",
-    username: document.getElementById("dbUser").value,
-    password: document.getElementById("dbPass").value
-  };
-}
-
-function fillConnForm(c){
-  document.getElementById("dbConnName").value = c.name || "";
-  document.getElementById("dbDriver").value = c.driver || "ODBC Driver 17 for SQL Server";
-  document.getElementById("dbServer").value = c.server || "";
-  document.getElementById("dbName").value = c.database || "";
-  document.getElementById("dbSchema").value = c.schema || "";
-  document.getElementById("dbAuth").value = c.trusted ? "trusted" : "sql";
-  document.getElementById("dbUser").value = c.username || "";
-  document.getElementById("dbPass").value = c.password || "";
-  const trusted = !!c.trusted;
-  document.getElementById("dbUserGroup").style.display = trusted ? "none" : "";
-  document.getElementById("dbPassGroup").style.display = trusted ? "none" : "";
-}
-
-function resetConnForm(){
-  editingConnId = null;
-  fillConnForm({driver:"ODBC Driver 17 for SQL Server"});
-  document.getElementById("connFormTitle").innerHTML = '<i class="bi bi-database-add"></i> New Connection';
-  document.getElementById("cancelEditBtn").style.display = "none";
-  document.getElementById("saveConnBtn").innerHTML = '<i class="bi bi-save me-1"></i> Save Connection';
-  document.getElementById("loadObjectsBtn").innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i> Save &amp; Load Objects';
-}
-
-// Save the form as a new/updated connection. Returns the saved record or null.
-// Merges onto any existing record so shared fields (type, status) are kept.
-function saveCurrentConnection(){
-  const cfg = readConnConfig();
-  if(!cfg.name){ setConnStatus('<span class="badge-soft badge-medium">Enter a connection name to save.</span>'); return null; }
-  if(!cfg.server || !cfg.database){ setConnStatus('<span class="badge-soft badge-medium">Server and database are required.</span>'); return null; }
-  const list = getConnections();
-  let idx = editingConnId ? list.findIndex(c => c.id === editingConnId) : -1;
-  if(idx === -1) idx = list.findIndex(c => c.name.toLowerCase() === cfg.name.toLowerCase());
-  let record;
-  if(idx !== -1){ record = Object.assign({}, list[idx], cfg); record.id = list[idx].id; list[idx] = record; }
-  else { record = Object.assign({type:"SQL Server", status:"Not Tested"}, cfg); record.id = uid("CONN"); list.push(record); }
-  saveConnections(list);
-  editingConnId = record.id;
-  renderSavedConnections();
-  return record;
-}
-
-function editConnection(id){
-  const c = getConnections().find(x => x.id === id);
-  if(!c) return;
-  editingConnId = id;
-  fillConnForm(c);
-  document.getElementById("connFormTitle").innerHTML = '<i class="bi bi-pencil-square"></i> Edit Connection';
-  document.getElementById("cancelEditBtn").style.display = "";
-  document.getElementById("saveConnBtn").innerHTML = '<i class="bi bi-save me-1"></i> Update Connection';
-  document.getElementById("loadObjectsBtn").innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i> Update &amp; Load Objects';
-  document.getElementById("connStatus").innerHTML = "";
-  setConnFormCollapsed(false);   // reveal the form when editing
-  renderSavedConnections();
-  document.getElementById("dbConnName").focus();
-}
-
-function setConnFormCollapsed(collapsed){
-  const body = document.getElementById("connFormBody");
-  const caret = document.querySelector("#connFormCaret i");
-  if(body) body.style.display = collapsed ? "none" : "";
-  if(caret) caret.className = collapsed ? "bi bi-chevron-down" : "bi bi-chevron-up";
-}
-
-async function deleteConnection(id){
-  const c = getConnections().find(x => x.id === id);
-  if(!c) return;
-  const ok = await confirmDialog('Delete saved connection "' + escapeHtml(c.name) + '"?', "Delete");
-  if(!ok) return;
-  saveConnections(getConnections().filter(x => x.id !== id));
-  if(editingConnId === id) resetConnForm();
-  renderSavedConnections();
-  showNotification("Connection deleted.", "primary");
 }
 
 function connectFromSaved(id){
-  const c = getConnections().find(x => x.id === id);
+  const c = getDbConnection(id);
   if(!c) return;
   editingConnId = id;
+  renderSavedConnections();   // refresh the active highlight
   // File System sources have no live DB — render their AI-extracted tables directly.
   if((c.type || "").toLowerCase() === "file system"){
-    renderSavedConnections();   // refresh (in case selection styling changes)
     loadFileObjects(c);
     showNotification("Exploring '" + c.name + "' (file source).", "primary", 1500);
     return;
   }
-  fillConnForm(c);
-  loadLiveObjects();
+  loadLiveObjects(c);
 }
 
 function renderSavedConnections(){
   const el = document.getElementById("savedConnList");
   if(!el) return;
-  const list = getConnections();
+  const list = getDbConnections();
   if(!list.length){
-    el.innerHTML = '<div class="text-xs text-muted-2">No saved connections yet. Fill in the form below and click <strong>Save Connection</strong>.</div>';
+    el.innerHTML = '<div class="text-xs text-muted-2">No saved sources yet. Add one on the ' +
+      '<a href="source-systems.html">Source Systems</a> page, then return here to explore it.</div>';
     return;
   }
-  el.innerHTML = list.map(c =>
-    '<div class="saved-conn ' + (c.id===editingConnId?"editing":"") + '">' +
+  el.innerHTML = list.map(c => {
+    const file = (c.type || "").toLowerCase() === "file system";
+    const detail = file
+      ? ('<i class="bi bi-file-earmark-text"></i> ' + escapeHtml(c.fileName || "file") + ' &middot; ' +
+         (c.tableCount != null ? c.tableCount : (Array.isArray(c.tables) ? c.tables.length : "-")) + ' tables')
+      : (escapeHtml(c.server || c.host || "-") + ' &middot; ' + escapeHtml(c.database || c.db || "-") +
+         (c.schema ? " &middot; " + escapeHtml(c.schema) : ""));
+    return '<div class="saved-conn ' + (c.id===editingConnId?"editing":"") + '">' +
       '<div class="sc-info">' +
-        '<div class="sc-name"><i class="bi bi-hdd-network"></i> ' + escapeHtml(c.name) + '</div>' +
-        '<div class="sc-detail mono">' + escapeHtml(c.server) + ' &middot; ' + escapeHtml(c.database) +
-          (c.schema ? " &middot; " + escapeHtml(c.schema) : "") +
-          ' &middot; ' + (c.trusted ? "Windows Auth" : "SQL Login") + '</div>' +
+        '<div class="sc-name"><i class="bi ' + (file ? "bi-file-earmark-text" : "bi-hdd-network") + '"></i> ' + escapeHtml(c.name) +
+          ' <span class="text-muted-2 text-xs">(' + escapeHtml(c.type || "SQL Server") + ')</span></div>' +
+        '<div class="sc-detail mono">' + detail + '</div>' +
       '</div>' +
       '<div class="sc-actions">' +
-        '<button class="btn btn-sm btn-primary" data-conn-connect="' + c.id + '"><i class="bi bi-plug"></i> Connect</button>' +
-        '<button class="btn btn-sm btn-outline-soft" data-conn-edit="' + c.id + '" title="Edit"><i class="bi bi-pencil"></i></button>' +
-        '<button class="btn btn-sm btn-outline-soft" data-conn-delete="' + c.id + '" title="Delete"><i class="bi bi-trash"></i></button>' +
+        '<button class="btn btn-sm btn-primary" data-conn-connect="' + c.id + '"><i class="bi bi-search"></i> Explore</button>' +
       '</div>' +
-    '</div>'
-  ).join("");
+    '</div>';
+  }).join("");
   el.querySelectorAll("[data-conn-connect]").forEach(b => b.addEventListener("click", () => connectFromSaved(b.dataset.connConnect)));
-  el.querySelectorAll("[data-conn-edit]").forEach(b => b.addEventListener("click", () => editConnection(b.dataset.connEdit)));
-  el.querySelectorAll("[data-conn-delete]").forEach(b => b.addEventListener("click", () => deleteConnection(b.dataset.connDelete)));
 }
 
-function setConnStatus(html){ document.getElementById("connStatus").innerHTML = html; }
-
-async function testConnection(){
-  const cfg = readConnConfig();
-  if(!cfg.server || !cfg.database){ setConnStatus('<span class="badge-soft badge-medium">Enter server and database first.</span>'); return; }
-  setConnStatus('<span class="text-xs text-muted-2"><i class="bi bi-arrow-repeat"></i> Testing connection...</span>');
-  try{
-    const res = await fetch("/api/db/test", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
-    const data = await res.json();
-    if(data.ok){ setConnStatus('<span class="badge-soft badge-high"><i class="bi bi-check-circle-fill"></i> ' + escapeHtml(data.message) + '</span> <span class="text-xs text-muted-2">' + escapeHtml(data.version||"") + '</span>'); }
-    else { setConnStatus('<span class="badge-soft badge-low"><i class="bi bi-x-circle-fill"></i> ' + escapeHtml(data.error||"Connection failed") + '</span>'); }
-  }catch(err){
-    setConnStatus('<span class="badge-soft badge-low"><i class="bi bi-plug"></i> Backend not reachable. Start it with <code>python server/app.py</code>.</span>');
-  }
-}
-
-async function loadLiveObjects(){
-  const cfg = readConnConfig();
+// Explore a SQL Server source's tables/columns live. Takes the connection object.
+async function loadLiveObjects(conn){
+  const cfg = {
+    driver: conn.driver || "ODBC Driver 17 for SQL Server",
+    server: conn.server || conn.host || "",
+    database: conn.database || conn.db || "",
+    schema: conn.schema || null,
+    trusted: !!conn.trusted,
+    username: conn.username || "",
+    password: conn.password || ""
+  };
   if(!cfg.server || !cfg.database){
-    setConnStatus('<span class="badge-soft badge-medium">Enter server and database first.</span>');
-    showNotification("This connection has no server/database to explore. For file sources, re-extract on Source Systems.", "warning");
+    showNotification("'" + conn.name + "' has no server/database to explore. Edit it on Source Systems.", "warning");
+    if(!sourceMeta) renderNoConnectionState();
     return;
   }
-  // Persist the connection if it has a name, so it appears in Saved Connections.
-  if(cfg.name){ saveCurrentConnection(); }
-  setConnStatus('<span class="text-xs text-muted-2"><i class="bi bi-arrow-repeat"></i> Reading objects from database...</span>');
+  showNotification("Reading objects from " + (conn.name || cfg.database) + "…", "primary", 1500);
   try{
     const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
     const data = await res.json();
     if(!data.ok){
-      setConnStatus('<span class="badge-soft badge-low"><i class="bi bi-x-circle-fill"></i> ' + escapeHtml(data.error||"Failed to read metadata") + '</span>');
+      showNotification("Could not read metadata: " + (data.error||""), "danger");
       markConnStatus("Failed");
       if(!sourceMeta) renderNoConnectionState();
       return;
     }
     if(!data.tables.length){
-      setConnStatus('<span class="badge-soft badge-medium">No base tables found in ' + escapeHtml(data.schema) + '.</span>');
+      showNotification("No base tables found in " + (data.schema||"the database") + ".", "warning");
       if(!sourceMeta) renderNoConnectionState();
       return;
     }
@@ -271,14 +158,11 @@ async function loadLiveObjects(){
     renderTree();
     selectTable(sourceMeta.tables[0].name);
     // reflect live result back onto the saved connection (shared with Source Systems)
-    if(editingConnId){
-      const c = getDbConnection(editingConnId);
-      if(c){ c.status = "Connected"; c.tableCount = data.tableCount; c.columnCount = data.columnCount; c.schema = data.schema; upsertDbConnection(c); renderSavedConnections(); }
-    }
-    setConnStatus('<span class="badge-soft badge-high"><i class="bi bi-check-circle-fill"></i> Loaded ' + data.tableCount + ' tables, ' + data.columnCount + ' columns from live database.</span>');
+    const c = getDbConnection(conn.id);
+    if(c){ c.status = "Connected"; c.tableCount = data.tableCount; c.columnCount = data.columnCount; c.schema = data.schema; upsertDbConnection(c); renderSavedConnections(); }
     showNotification("Loaded " + data.tableCount + " tables from " + data.connection + " (live).", "success");
   }catch(err){
-    setConnStatus('<span class="badge-soft badge-low"><i class="bi bi-plug"></i> Backend not reachable. Start it with <code>python server/app.py</code>, then reload.</span>');
+    showNotification("Backend not reachable. Start it with python server/app.py.", "danger");
     if(!sourceMeta) renderNoConnectionState();
   }
 }
