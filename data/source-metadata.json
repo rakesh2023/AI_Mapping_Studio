@@ -1,0 +1,130 @@
+{
+  "connection": "LegacyPolicyDB",
+  "schema": "dbo",
+  "tables": [
+    {
+      "name": "LEGACY_POLICY",
+      "description": "Legacy policy master table storing core policy attributes.",
+      "rowCount": 128650,
+      "columns": [
+        {"name":"POLICY_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the policy record.","sample":"1004521","businessTerm":"Policy Internal ID","distinctCount":128650,"nullPct":0},
+        {"name":"POLICY_NUMBER","dataType":"VARCHAR","length":20,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Unique policy reference number issued to the customer.","sample":"POL-2019-004521","businessTerm":"Policy Number","distinctCount":128650,"nullPct":0},
+        {"name":"CUSTOMER_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":false,"fk":true,"default":null,"description":"Foreign key referencing LEGACY_CUSTOMER.","sample":"88231","businessTerm":"Customer ID","distinctCount":94210,"nullPct":0},
+        {"name":"POLICY_TYPE_CD","dataType":"VARCHAR","length":6,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Legacy product/line of business code.","sample":"AUTO","businessTerm":"Product Code","distinctCount":6,"nullPct":0,
+          "topValues":[{"value":"AUTO","pct":42},{"value":"HOME","pct":31},{"value":"COMM","pct":18},{"value":"UMB","pct":5},{"value":"OTHER","pct":4}]},
+        {"name":"POLICY_STATUS_CD","dataType":"CHAR","length":1,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Legacy single-character policy status flag.","sample":"A","businessTerm":"Policy Status","distinctCount":4,"nullPct":5,
+          "topValues":[{"value":"A","pct":65},{"value":"C","pct":20},{"value":"P","pct":10},{"value":"NULL","pct":5}],
+          "aiInterpretation":[
+            {"value":"A","meaning":"Active"},
+            {"value":"C","meaning":"Cancelled"},
+            {"value":"P","meaning":"Pending"},
+            {"value":"NULL","meaning":"Unknown"}
+          ]},
+        {"name":"EFFECTIVE_DATE","dataType":"DATETIME","length":8,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Policy term effective (start) date.","sample":"2023-04-01","businessTerm":"Effective Date","distinctCount":3120,"nullPct":0},
+        {"name":"EXPIRATION_DATE","dataType":"DATETIME","length":8,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Policy term expiration (end) date.","sample":"2024-04-01","businessTerm":"Expiration Date","distinctCount":3120,"nullPct":0},
+        {"name":"WRITTEN_PREMIUM","dataType":"VARCHAR","length":20,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Total written premium amount stored as text in legacy system.","sample":"1,245.00","businessTerm":"Written Premium","distinctCount":45210,"nullPct":2,
+          "dataQualityIssues":["Stored as VARCHAR instead of numeric","Contains thousands separators","2% blank/null values"]},
+        {"name":"CURRENCY_CD","dataType":"CHAR","length":3,"nullable":true,"pk":false,"fk":false,"default":"USD","description":"ISO currency code for premium amount.","sample":"USD","businessTerm":"Currency","distinctCount":3,"nullPct":8},
+        {"name":"AGENT_ID","dataType":"NUMERIC","length":10,"nullable":true,"pk":false,"fk":true,"default":null,"description":"Foreign key referencing LEGACY_AGENT.","sample":"3321","businessTerm":"Agent ID","distinctCount":540,"nullPct":3},
+        {"name":"BRANCH_CD","dataType":"VARCHAR","length":8,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Branch/office code that issued the policy.","sample":"BR-021","businessTerm":"Branch Code","distinctCount":48,"nullPct":1},
+        {"name":"CREATED_DATE","dataType":"DATETIME","length":8,"nullable":false,"pk":false,"fk":false,"default":"SYSDATE","description":"Record creation timestamp.","sample":"2019-03-14","businessTerm":"Created Date","distinctCount":3200,"nullPct":0},
+        {"name":"UPDATED_DATE","dataType":"DATETIME","length":8,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Record last-updated timestamp.","sample":"2024-01-11","businessTerm":"Updated Date","distinctCount":8100,"nullPct":6}
+      ]
+    },
+    {
+      "name": "LEGACY_CUSTOMER",
+      "description": "Legacy customer/policyholder demographic table.",
+      "rowCount": 94210,
+      "columns": [
+        {"name":"CUSTOMER_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for customer.","sample":"88231","businessTerm":"Customer ID","distinctCount":94210,"nullPct":0},
+        {"name":"CUSTOMER_TYPE","dataType":"CHAR","length":1,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Indicates whether the customer is an individual or a company.","sample":"I","businessTerm":"Customer Type","distinctCount":2,"nullPct":0,
+          "topValues":[{"value":"I","pct":81},{"value":"C","pct":19}]},
+        {"name":"FIRST_NAME","dataType":"VARCHAR","length":40,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Customer first name (individuals only).","sample":"Sarah","businessTerm":"First Name","distinctCount":18400,"nullPct":19},
+        {"name":"MIDDLE_NAME","dataType":"VARCHAR","length":40,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Customer middle name.","sample":"J","businessTerm":"Middle Name","distinctCount":4100,"nullPct":62},
+        {"name":"LAST_NAME","dataType":"VARCHAR","length":40,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Customer last name (individuals only).","sample":"Whitfield","businessTerm":"Last Name","distinctCount":21300,"nullPct":19},
+        {"name":"COMPANY_NAME","dataType":"VARCHAR","length":100,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Legal company name (organizations only).","sample":"Bluepoint Logistics LLC","businessTerm":"Company Name","distinctCount":17800,"nullPct":81},
+        {"name":"DATE_OF_BIRTH","dataType":"DATETIME","length":8,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Customer date of birth.","sample":"1985-06-22","businessTerm":"Date of Birth","distinctCount":15200,"nullPct":21},
+        {"name":"TAX_ID","dataType":"VARCHAR","length":15,"nullable":true,"pk":false,"fk":false,"default":null,"description":"SSN or Tax ID number.","sample":"XXX-XX-4321","businessTerm":"Tax ID","distinctCount":93000,"nullPct":4},
+        {"name":"EMAIL","dataType":"VARCHAR","length":80,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Primary contact email.","sample":"s.whitfield@mail.com","businessTerm":"Email Address","distinctCount":80100,"nullPct":11},
+        {"name":"PHONE","dataType":"VARCHAR","length":20,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Primary contact phone number.","sample":"(312) 555-0199","businessTerm":"Phone Number","distinctCount":89100,"nullPct":6},
+        {"name":"ADDRESS_LINE_1","dataType":"VARCHAR","length":60,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Primary address line.","sample":"482 Grover Ave","businessTerm":"Address Line 1","distinctCount":91200,"nullPct":2},
+        {"name":"ADDRESS_LINE_2","dataType":"VARCHAR","length":60,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Secondary address line.","sample":"Suite 220","businessTerm":"Address Line 2","distinctCount":9800,"nullPct":74},
+        {"name":"CITY","dataType":"VARCHAR","length":40,"nullable":true,"pk":false,"fk":false,"default":null,"description":"City of residence.","sample":"Chicago","businessTerm":"City","distinctCount":3400,"nullPct":2},
+        {"name":"STATE_CD","dataType":"CHAR","length":2,"nullable":true,"pk":false,"fk":false,"default":null,"description":"US state code.","sample":"IL","businessTerm":"State","distinctCount":52,"nullPct":2},
+        {"name":"POSTAL_CODE","dataType":"VARCHAR","length":10,"nullable":true,"pk":false,"fk":false,"default":null,"description":"ZIP / postal code.","sample":"60614","businessTerm":"Postal Code","distinctCount":18900,"nullPct":3},
+        {"name":"COUNTRY_CD","dataType":"CHAR","length":2,"nullable":true,"pk":false,"fk":false,"default":"US","description":"ISO country code.","sample":"US","businessTerm":"Country","distinctCount":4,"nullPct":1}
+      ]
+    },
+    {
+      "name": "LEGACY_AGENT",
+      "description": "Legacy agent/producer table.",
+      "rowCount": 540,
+      "columns": [
+        {"name":"AGENT_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for agent.","sample":"3321","businessTerm":"Agent ID","distinctCount":540,"nullPct":0},
+        {"name":"AGENT_NAME","dataType":"VARCHAR","length":80,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Full name of the producing agent.","sample":"Marcus Ellery","businessTerm":"Agent Name","distinctCount":540,"nullPct":0},
+        {"name":"AGENCY_CODE","dataType":"VARCHAR","length":10,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Code of the agency the agent belongs to.","sample":"AG-1042","businessTerm":"Agency Code","distinctCount":210,"nullPct":1},
+        {"name":"LICENSE_NUMBER","dataType":"VARCHAR","length":20,"nullable":true,"pk":false,"fk":false,"default":null,"description":"State-issued producer license number.","sample":"IL-99213","businessTerm":"License Number","distinctCount":540,"nullPct":3},
+        {"name":"STATUS_CD","dataType":"CHAR","length":1,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Agent active/inactive flag.","sample":"A","businessTerm":"Agent Status","distinctCount":2,"nullPct":0,
+          "topValues":[{"value":"A","pct":91},{"value":"I","pct":9}]}
+      ]
+    },
+    {
+      "name": "LEGACY_POLICY_TERM",
+      "description": "Legacy policy term/period table storing each renewal term of a policy.",
+      "rowCount": 214300,
+      "columns": [
+        {"name":"TERM_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the policy term.","sample":"5008812","businessTerm":"Term Internal ID","distinctCount":214300,"nullPct":0},
+        {"name":"POLICY_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":false,"fk":true,"default":null,"description":"Foreign key referencing LEGACY_POLICY.","sample":"1004521","businessTerm":"Policy Internal ID","distinctCount":128650,"nullPct":0},
+        {"name":"TERM_SEQ","dataType":"NUMERIC","length":4,"nullable":false,"pk":false,"fk":false,"default":"1","description":"Sequential term/renewal number within the policy.","sample":"2","businessTerm":"Term Number","distinctCount":9,"nullPct":0},
+        {"name":"TERM_START","dataType":"DATETIME","length":8,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Term period start date.","sample":"2023-04-01","businessTerm":"Period Start","distinctCount":3120,"nullPct":0},
+        {"name":"TERM_END","dataType":"DATETIME","length":8,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Term period end date.","sample":"2024-04-01","businessTerm":"Period End","distinctCount":3120,"nullPct":0}
+      ]
+    },
+    {
+      "name": "LEGACY_LOCATION",
+      "description": "Legacy risk-location table storing insured property/risk addresses per policy.",
+      "rowCount": 141200,
+      "columns": [
+        {"name":"LOCATION_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the risk location.","sample":"77120","businessTerm":"Location Internal ID","distinctCount":141200,"nullPct":0},
+        {"name":"LOC_ADDRESS","dataType":"VARCHAR","length":60,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Risk location street address.","sample":"920 Industrial Pkwy","businessTerm":"Address Line 1","distinctCount":138400,"nullPct":0},
+        {"name":"LOC_CITY","dataType":"VARCHAR","length":40,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Risk location city.","sample":"Aurora","businessTerm":"City","distinctCount":2900,"nullPct":1},
+        {"name":"LOC_STATE","dataType":"CHAR","length":2,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Risk location US state code.","sample":"IL","businessTerm":"State","distinctCount":51,"nullPct":1},
+        {"name":"LOC_ZIP","dataType":"VARCHAR","length":10,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Risk location ZIP/postal code.","sample":"60505","businessTerm":"Postal Code","distinctCount":16800,"nullPct":3}
+      ]
+    },
+    {
+      "name": "LEGACY_ADDRESS",
+      "description": "Legacy shared address table referenced by customers and accounts.",
+      "rowCount": 96500,
+      "columns": [
+        {"name":"ADDRESS_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the address.","sample":"33418","businessTerm":"Address Internal ID","distinctCount":96500,"nullPct":0},
+        {"name":"ADDR1","dataType":"VARCHAR","length":60,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Primary address line.","sample":"482 Grover Ave","businessTerm":"Address Line 1","distinctCount":92100,"nullPct":0},
+        {"name":"ADDR2","dataType":"VARCHAR","length":60,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Secondary address line.","sample":"Suite 220","businessTerm":"Address Line 2","distinctCount":9600,"nullPct":73},
+        {"name":"CITY","dataType":"VARCHAR","length":40,"nullable":false,"pk":false,"fk":false,"default":null,"description":"City.","sample":"Chicago","businessTerm":"City","distinctCount":3300,"nullPct":1},
+        {"name":"STATE","dataType":"CHAR","length":2,"nullable":false,"pk":false,"fk":false,"default":null,"description":"US state code.","sample":"IL","businessTerm":"State","distinctCount":52,"nullPct":1},
+        {"name":"ZIP","dataType":"VARCHAR","length":10,"nullable":false,"pk":false,"fk":false,"default":null,"description":"ZIP/postal code.","sample":"60614","businessTerm":"Postal Code","distinctCount":18500,"nullPct":2},
+        {"name":"COUNTRY","dataType":"CHAR","length":2,"nullable":true,"pk":false,"fk":false,"default":"US","description":"ISO country code.","sample":"US","businessTerm":"Country","distinctCount":4,"nullPct":1}
+      ]
+    },
+    {
+      "name": "LEGACY_AGENCY",
+      "description": "Legacy agency table grouping producers/agents into organizations.",
+      "rowCount": 210,
+      "columns": [
+        {"name":"AGENCY_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the agency.","sample":"4021","businessTerm":"Agency Internal ID","distinctCount":210,"nullPct":0},
+        {"name":"AGENCY_NAME","dataType":"VARCHAR","length":100,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Legal name of the agency/organization.","sample":"Ellery Insurance Partners","businessTerm":"Organization Name","distinctCount":210,"nullPct":0},
+        {"name":"AGENCY_CODE","dataType":"VARCHAR","length":10,"nullable":true,"pk":false,"fk":false,"default":null,"description":"Short agency code.","sample":"AG-1042","businessTerm":"Agency Code","distinctCount":210,"nullPct":2}
+      ]
+    },
+    {
+      "name": "LEGACY_ACCOUNT",
+      "description": "Legacy billing/customer account table grouping policies under a holder.",
+      "rowCount": 88700,
+      "columns": [
+        {"name":"ACCOUNT_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":true,"fk":false,"default":null,"description":"Internal surrogate key for the account.","sample":"6001299","businessTerm":"Account Internal ID","distinctCount":88700,"nullPct":0},
+        {"name":"ACCOUNT_NO","dataType":"VARCHAR","length":20,"nullable":false,"pk":false,"fk":false,"default":null,"description":"Business account number.","sample":"ACCT-000129","businessTerm":"Account Number","distinctCount":88700,"nullPct":0},
+        {"name":"HOLDER_CUSTOMER_ID","dataType":"NUMERIC","length":10,"nullable":false,"pk":false,"fk":true,"default":null,"description":"Foreign key referencing the primary account-holder customer in LEGACY_CUSTOMER.","sample":"88231","businessTerm":"Account Holder","distinctCount":84300,"nullPct":1}
+      ]
+    }
+  ]
+}

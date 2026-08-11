@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 110" role="img" aria-label="pwc">
+  <!-- Colour device: a fan of overlapping angled shards in PwC's warm palette -->
+  <g transform="translate(150,6)">
+    <polygon points="0,44 16,4 30,4 14,44"    fill="#FFB600"/>
+    <polygon points="16,44 32,4 46,4 30,44"   fill="#EB8C00"/>
+    <polygon points="32,44 48,4 62,4 46,44"   fill="#E0301E"/>
+    <polygon points="48,44 64,4 78,4 62,44"   fill="#D04A02"/>
+    <polygon points="64,44 80,4 94,4 78,44"   fill="#A32020"/>
+  </g>
+  <!-- Wordmark (dark, for light backgrounds) -->
+  <text x="4" y="98" font-family="Georgia,'Times New Roman',serif" font-size="76" font-weight="700" fill="#2d2d2d" letter-spacing="-3">pwc</text>
+</svg>

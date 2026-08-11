@@ -1,0 +1,131 @@
+{
+  "note": "Sample Guidewire-inspired metadata for prototype purposes. Field names are illustrative and not guaranteed to match an actual Guidewire schema release.",
+  "application": "Guidewire PolicyCenter",
+  "module": "PolicyCenter",
+  "entities": [
+    {
+      "name": "Policy",
+      "table": "pc_policy",
+      "description": "Core policy entity representing a written insurance policy.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Globally unique public identifier assigned by the platform.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"PolicyNumber","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":false,"description":"Business policy number shown to customers/agents.","businessTerm":"Policy Number","accepted":null,"default":null},
+        {"name":"PolicyType","dataType":"varchar","length":30,"mandatory":true,"pk":false,"fk":false,"description":"Product/line of business associated with the policy.","businessTerm":"Product","accepted":"PersonalAuto, Homeowners, CommercialPackage, Umbrella, Other","default":null},
+        {"name":"Status","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":false,"description":"Current lifecycle status of the policy.","businessTerm":"Policy Status","accepted":"Active, Cancelled, Pending, Expired, Unknown","default":null},
+        {"name":"EffectiveDate","dataType":"datetime","length":null,"mandatory":true,"pk":false,"fk":false,"description":"Policy term start date.","businessTerm":"Effective Date","accepted":null,"default":null},
+        {"name":"ExpirationDate","dataType":"datetime","length":null,"mandatory":true,"pk":false,"fk":false,"description":"Policy term end date.","businessTerm":"Expiration Date","accepted":null,"default":null},
+        {"name":"WrittenPremium","dataType":"decimal(18,2)","length":18,"mandatory":true,"pk":false,"fk":false,"description":"Total written premium for the policy term.","businessTerm":"Written Premium","accepted":null,"default":null},
+        {"name":"Currency","dataType":"varchar","length":3,"mandatory":true,"pk":false,"fk":false,"description":"ISO currency of the premium.","businessTerm":"Currency","accepted":"USD, CAD, GBP","default":"USD"},
+        {"name":"ProducerCode","dataType":"varchar","length":15,"mandatory":false,"pk":false,"fk":true,"description":"Reference code of the producer/agent who sold the policy.","businessTerm":"Producer Code","accepted":null,"default":null},
+        {"name":"CreateTime","dataType":"datetime","length":null,"mandatory":true,"pk":false,"fk":false,"description":"Timestamp the record was created in target system.","businessTerm":"Create Time","accepted":null,"default":"system"},
+        {"name":"UpdateTime","dataType":"datetime","length":null,"mandatory":false,"pk":false,"fk":false,"description":"Timestamp the record was last updated.","businessTerm":"Update Time","accepted":null,"default":"system"},
+        {"name":"BranchOffice","dataType":"varchar","length":10,"mandatory":false,"pk":false,"fk":false,"description":"Sample field: originating branch/office code.","businessTerm":"Branch Office","accepted":null,"default":null}
+      ]
+    },
+    {
+      "name": "PolicyPeriod",
+      "table": "pc_policyperiod",
+      "description": "Sample entity representing a single term/period of a policy.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier for the policy period.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"PolicyPublicID","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":true,"description":"Reference to parent Policy.","businessTerm":"Policy Reference","accepted":null,"default":null},
+        {"name":"TermNumber","dataType":"int","length":4,"mandatory":true,"pk":false,"fk":false,"description":"Sequential term number of the policy.","businessTerm":"Term Number","accepted":null,"default":null},
+        {"name":"PeriodStart","dataType":"datetime","length":null,"mandatory":true,"pk":false,"fk":false,"description":"Sample field: period start date.","businessTerm":"Period Start","accepted":null,"default":null},
+        {"name":"PeriodEnd","dataType":"datetime","length":null,"mandatory":true,"pk":false,"fk":false,"description":"Sample field: period end date.","businessTerm":"Period End","accepted":null,"default":null}
+      ]
+    },
+    {
+      "name": "Contact",
+      "table": "cc_contact",
+      "description": "Represents a person or company involved in a policy, claim, or account (Guidewire ContactManager-inspired).",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Globally unique public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"FirstName","dataType":"varchar","length":40,"mandatory":false,"pk":false,"fk":false,"description":"First name for a person contact.","businessTerm":"First Name","accepted":null,"default":null},
+        {"name":"MiddleName","dataType":"varchar","length":40,"mandatory":false,"pk":false,"fk":false,"description":"Middle name for a person contact.","businessTerm":"Middle Name","accepted":null,"default":null},
+        {"name":"LastName","dataType":"varchar","length":40,"mandatory":false,"pk":false,"fk":false,"description":"Last name for a person contact.","businessTerm":"Last Name","accepted":null,"default":null},
+        {"name":"CompanyName","dataType":"varchar","length":100,"mandatory":false,"pk":false,"fk":false,"description":"Legal name for a company contact.","businessTerm":"Company Name","accepted":null,"default":null},
+        {"name":"DisplayName","dataType":"varchar","length":120,"mandatory":true,"pk":false,"fk":false,"description":"Full display name shown across the UI.","businessTerm":"Display Name","accepted":null,"default":null},
+        {"name":"ContactType","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":false,"description":"Classifies the contact as a person or company.","businessTerm":"Contact Type","accepted":"Person, Company, Unknown","default":null},
+        {"name":"DateOfBirth","dataType":"datetime","length":null,"mandatory":false,"pk":false,"fk":false,"description":"Date of birth for person contacts.","businessTerm":"Date of Birth","accepted":null,"default":null},
+        {"name":"TaxID","dataType":"varchar","length":15,"mandatory":false,"pk":false,"fk":false,"description":"SSN or Tax ID.","businessTerm":"Tax ID","accepted":null,"default":null},
+        {"name":"EmailAddress","dataType":"varchar","length":80,"mandatory":false,"pk":false,"fk":false,"description":"Primary email address.","businessTerm":"Email Address","accepted":null,"default":null},
+        {"name":"PrimaryPhone","dataType":"varchar","length":20,"mandatory":false,"pk":false,"fk":false,"description":"Primary phone number.","businessTerm":"Primary Phone","accepted":null,"default":null},
+        {"name":"AddressLine1","dataType":"varchar","length":60,"mandatory":false,"pk":false,"fk":false,"description":"Primary address line.","businessTerm":"Address Line 1","accepted":null,"default":null},
+        {"name":"AddressLine2","dataType":"varchar","length":60,"mandatory":false,"pk":false,"fk":false,"description":"Secondary address line.","businessTerm":"Address Line 2","accepted":null,"default":null},
+        {"name":"City","dataType":"varchar","length":40,"mandatory":false,"pk":false,"fk":false,"description":"City.","businessTerm":"City","accepted":null,"default":null},
+        {"name":"State","dataType":"varchar","length":2,"mandatory":false,"pk":false,"fk":false,"description":"State/province code.","businessTerm":"State","accepted":null,"default":null},
+        {"name":"PostalCode","dataType":"varchar","length":10,"mandatory":false,"pk":false,"fk":false,"description":"Postal/ZIP code.","businessTerm":"Postal Code","accepted":null,"default":null},
+        {"name":"Country","dataType":"varchar","length":2,"mandatory":true,"pk":false,"fk":false,"description":"ISO country code.","businessTerm":"Country","accepted":"US, CA, GB","default":"US"}
+      ]
+    },
+    {
+      "name": "PolicyLocation",
+      "table": "pc_policylocation",
+      "description": "Sample entity: risk location associated with a policy.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"AddressLine1","dataType":"varchar","length":60,"mandatory":true,"pk":false,"fk":false,"description":"Risk address line 1.","businessTerm":"Address Line 1","accepted":null,"default":null},
+        {"name":"City","dataType":"varchar","length":40,"mandatory":true,"pk":false,"fk":false,"description":"Risk location city.","businessTerm":"City","accepted":null,"default":null},
+        {"name":"State","dataType":"varchar","length":2,"mandatory":true,"pk":false,"fk":false,"description":"Risk location state.","businessTerm":"State","accepted":null,"default":null},
+        {"name":"PostalCode","dataType":"varchar","length":10,"mandatory":false,"pk":false,"fk":false,"description":"Risk location postal code.","businessTerm":"Postal Code","accepted":null,"default":null}
+      ]
+    },
+    {
+      "name": "Address",
+      "table": "bc_address",
+      "description": "Sample shared address entity.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"AddressLine1","dataType":"varchar","length":60,"mandatory":true,"pk":false,"fk":false,"description":"Address line 1.","businessTerm":"Address Line 1","accepted":null,"default":null},
+        {"name":"AddressLine2","dataType":"varchar","length":60,"mandatory":false,"pk":false,"fk":false,"description":"Address line 2.","businessTerm":"Address Line 2","accepted":null,"default":null},
+        {"name":"City","dataType":"varchar","length":40,"mandatory":true,"pk":false,"fk":false,"description":"City.","businessTerm":"City","accepted":null,"default":null},
+        {"name":"State","dataType":"varchar","length":2,"mandatory":true,"pk":false,"fk":false,"description":"State.","businessTerm":"State","accepted":null,"default":null},
+        {"name":"PostalCode","dataType":"varchar","length":10,"mandatory":true,"pk":false,"fk":false,"description":"Postal code.","businessTerm":"Postal Code","accepted":null,"default":null},
+        {"name":"Country","dataType":"varchar","length":2,"mandatory":true,"pk":false,"fk":false,"description":"ISO country code.","businessTerm":"Country","accepted":null,"default":"US"}
+      ]
+    },
+    {
+      "name": "Coverage",
+      "table": "pc_coverage",
+      "description": "Sample entity: coverage line attached to a policy period.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"CoverageCode","dataType":"varchar","length":15,"mandatory":true,"pk":false,"fk":false,"description":"Sample coverage type code (e.g., BI, PD, COMP).","businessTerm":"Coverage Code","accepted":"BI, PD, COMP, COLL, UMB","default":null},
+        {"name":"Limit","dataType":"decimal(18,2)","length":18,"mandatory":false,"pk":false,"fk":false,"description":"Coverage limit amount.","businessTerm":"Coverage Limit","accepted":null,"default":null},
+        {"name":"Deductible","dataType":"decimal(18,2)","length":18,"mandatory":false,"pk":false,"fk":false,"description":"Coverage deductible amount.","businessTerm":"Deductible","accepted":null,"default":null}
+      ]
+    },
+    {
+      "name": "Producer",
+      "table": "pc_producer",
+      "description": "Sample entity representing an agent/producer (Guidewire-inspired).",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"ProducerCode","dataType":"varchar","length":15,"mandatory":true,"pk":false,"fk":false,"description":"Unique producer/agent code.","businessTerm":"Producer Code","accepted":null,"default":null},
+        {"name":"ProducerName","dataType":"varchar","length":80,"mandatory":true,"pk":false,"fk":false,"description":"Full name of producer/agency.","businessTerm":"Producer Name","accepted":null,"default":null},
+        {"name":"LicenseNumber","dataType":"varchar","length":20,"mandatory":false,"pk":false,"fk":false,"description":"State producer license number.","businessTerm":"License Number","accepted":null,"default":null},
+        {"name":"Status","dataType":"varchar","length":15,"mandatory":true,"pk":false,"fk":false,"description":"Producer active/inactive status.","businessTerm":"Producer Status","accepted":"Active, Inactive","default":null}
+      ]
+    },
+    {
+      "name": "Organization",
+      "table": "cc_organization",
+      "description": "Sample entity: organizational/agency grouping for producers.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"OrganizationName","dataType":"varchar","length":100,"mandatory":true,"pk":false,"fk":false,"description":"Name of the agency/organization.","businessTerm":"Organization Name","accepted":null,"default":null},
+        {"name":"AgencyCode","dataType":"varchar","length":10,"mandatory":false,"pk":false,"fk":false,"description":"Agency code.","businessTerm":"Agency Code","accepted":null,"default":null}
+      ]
+    },
+    {
+      "name": "Account",
+      "table": "pc_account",
+      "description": "Sample entity: billing/customer account grouping policies.",
+      "fields": [
+        {"name":"PublicID","dataType":"varchar","length":20,"mandatory":true,"pk":true,"fk":false,"description":"Public identifier.","businessTerm":"Public ID","accepted":null,"default":"auto-generated"},
+        {"name":"AccountNumber","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":false,"description":"Unique account number.","businessTerm":"Account Number","accepted":null,"default":null},
+        {"name":"AccountHolderContact","dataType":"varchar","length":20,"mandatory":true,"pk":false,"fk":true,"description":"Reference to primary Contact.","businessTerm":"Account Holder","accepted":null,"default":null}
+      ]
+    }
+  ]
+}

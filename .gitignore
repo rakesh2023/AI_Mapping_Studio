@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Runtime / logs
+server/server.log
+*.log
+
+# Environment-specific certificate bundle (rebuild locally, do not commit)
+server/win-ca-bundle.pem
+
+# Secrets / local env
+.env
+*.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local state
+.claude/
+
+# Temp files
+*.tmp
+*.bak

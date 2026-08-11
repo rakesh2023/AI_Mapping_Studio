@@ -1,0 +1,10 @@
+[
+{"id":"DOC-001","fileName":"Legacy_Policy_Data_Dictionary.xlsx","fileType":"Excel","category":"Source Data Dictionary","size":"842 KB","uploadedDate":"2025-01-08T09:14:00Z","status":"Indexed","aiIndexed":true},
+{"id":"DOC-002","fileName":"Guidewire_PolicyCenter_Sample_DataDictionary.pdf","fileType":"PDF","category":"Target Data Dictionary","size":"1.4 MB","uploadedDate":"2025-01-08T09:16:00Z","status":"Indexed","aiIndexed":true},
+{"id":"DOC-003","fileName":"Policy_Status_BusinessRules.docx","fileType":"DOCX","category":"Business Rules","size":"210 KB","uploadedDate":"2025-01-08T09:20:00Z","status":"Indexed","aiIndexed":true},
+{"id":"DOC-004","fileName":"Product_Lookup_Table.xlsx","fileType":"Excel","category":"Reference Data","size":"36 KB","uploadedDate":"2025-01-08T09:22:00Z","status":"Indexed","aiIndexed":true},
+{"id":"DOC-005","fileName":"Legacy_to_PolicyCenter_PriorMapping_v3.xlsx","fileType":"Existing Mapping Document","category":"Existing Mapping","size":"1.1 MB","uploadedDate":"2025-01-08T09:25:00Z","status":"Indexed","aiIndexed":true},
+{"id":"DOC-006","fileName":"Customer_Address_TransformationSpec.pdf","fileType":"PDF","category":"Transformation Specification","size":"455 KB","uploadedDate":"2025-01-09T14:02:00Z","status":"Parsing","aiIndexed":false},
+{"id":"DOC-007","fileName":"Architecture_Overview_Migration.pptx","fileType":"TXT","category":"Architecture Document","size":"3.2 MB","uploadedDate":"2025-01-09T14:10:00Z","status":"Uploaded","aiIndexed":false},
+{"id":"DOC-008","fileName":"Agent_Producer_Hierarchy_Notes.docx","fileType":"DOCX","category":"Business Requirement Document","size":"98 KB","uploadedDate":"2025-01-10T08:40:00Z","status":"Failed","aiIndexed":false}
+]

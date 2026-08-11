@@ -1,0 +1,84 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Source Systems - AI Mapping Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260811t">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260811t">
+<link rel="stylesheet" href="../css/forms.css?v=20260811t">
+<link rel="stylesheet" href="../css/tables.css?v=20260811t">
+<link rel="stylesheet" href="../css/mapping.css?v=20260811t">
+<link rel="stylesheet" href="../css/responsive.css?v=20260811t">
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Source Systems</div>
+        <h2>Source System Configuration</h2></div>
+        <button class="btn btn-primary" id="addConnBtn"><i class="bi bi-plus-lg me-1"></i> Add Source System</button>
+      </div>
+
+      <div id="connectionCards" class="row g-4 mb-4"></div>
+
+      <div class="card-el" id="connFormCard" style="display:none;">
+        <div class="section-title" id="connFormTitle"><i class="bi bi-plug"></i> Connection Details</div>
+        <form id="connForm">
+          <div class="form-grid cols-3">
+            <div class="form-group"><label>Connection Name</label><input class="form-control" id="cName"></div>
+            <div class="form-group"><label>Source Type</label>
+              <select class="form-select" id="cType">
+                <option>SQL Server</option><option>File System</option>
+                <option>Oracle</option><option>PostgreSQL</option><option>MySQL</option>
+                <option>DB2</option>
+              </select></div>
+            <div class="form-group" id="driverGroup"><label>ODBC Driver</label>
+              <select class="form-select" id="cDriver"><option>ODBC Driver 17 for SQL Server</option><option>ODBC Driver 18 for SQL Server</option><option>SQL Server</option></select></div>
+            <div class="form-group"><label>Server / Host</label><input class="form-control" id="cHost"></div>
+            <div class="form-group"><label>Database Name</label><input class="form-control" id="cDb"></div>
+            <div class="form-group"><label>Schema (optional)</label><input class="form-control" id="cSchema"></div>
+            <div class="form-group" id="authGroup"><label>Authentication</label>
+              <select class="form-select" id="cAuth"><option value="sql">SQL Login</option><option value="trusted">Windows (Trusted)</option></select></div>
+            <div class="form-group" id="userGroup"><label>Username</label><input class="form-control" id="cUser"></div>
+            <div class="form-group" id="passGroup"><label>Password</label><input type="password" class="form-control" id="cPass"></div>
+          </div>
+
+          <!-- File System source: upload a file and let the AI extract source tables/columns -->
+          <div id="fileGroup" style="display:none;">
+            <div class="form-grid cols-2">
+              <div class="form-group">
+                <label>Source File</label>
+                <input type="file" class="form-control" id="cFile" accept=".xlsx,.xlsm,.xls,.pdf,.docx,.sql,.txt,.csv,.json,.xml">
+                <div class="text-xs text-muted-2 mt-1">Excel, PDF, Word, SQL script, CSV/TXT, JSON, or XML. The AI reads it and extracts the source tables &amp; columns.</div>
+              </div>
+              <div class="form-group d-flex align-items-end">
+                <button type="button" class="btn btn-outline-soft" id="extractFileBtn"><i class="bi bi-stars me-1"></i> Extract with AI</button>
+              </div>
+            </div>
+            <div id="extractResult" class="mt-2"></div>
+          </div>
+
+          <div class="hint-note mt-2 mb-3" id="sqlHint"><i class="bi bi-info-circle"></i> SQL Server connections are tested and explored live via the local backend (<code>python server/app.py</code>). Credentials are stored locally in your browser only for this prototype.</div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-outline-soft" id="testConnBtn"><i class="bi bi-broadcast me-1"></i> Test Connection</button>
+            <button type="button" class="btn btn-outline-soft" id="cancelConnBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i> Save Connection</button>
+          </div>
+          <div id="testConnResult" class="mt-3"></div>
+        </form>
+      </div>
+    </main>
+  </div>
+</div>
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260811t"></script>
+<script src="../js/navigation.js?v=20260811t"></script>
+<script src="../js/source-systems.js?v=20260811t"></script>
+</body>
+</html>

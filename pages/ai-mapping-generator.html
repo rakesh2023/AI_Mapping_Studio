@@ -1,0 +1,125 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Mapping Generator - AI Mapping Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260811t">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260811t">
+<link rel="stylesheet" href="../css/forms.css?v=20260811t">
+<link rel="stylesheet" href="../css/mapping.css?v=20260811t">
+<link rel="stylesheet" href="../css/responsive.css?v=20260811t">
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> AI Mapping Generator</div>
+        <h2>AI Mapping Generator</h2></div>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-lg-7" id="configCol">
+          <div class="card-el">
+            <div class="section-title d-flex align-items-center justify-content-between">
+              <span><i class="bi bi-sliders"></i> Generation Configuration</span>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="showConsoleBtn" style="display:none;" title="Show console"><i class="bi bi-terminal"></i> Console</button>
+            </div>
+            <div id="aiStatus" class="mb-3"></div>
+            <div class="form-actions" style="border-top:none;padding-top:0;margin-top:0;margin-bottom:16px;">
+              <button class="btn btn-outline-soft" id="analyzeBtnTop"><i class="bi bi-search me-1"></i> Analyze Metadata</button>
+              <button class="btn btn-primary" id="generateBtnTop"><i class="bi bi-stars me-1"></i> Generate Mapping with AI</button>
+            </div>
+            <div class="form-grid">
+              <div class="form-group"><label>Source System (live)</label>
+                <select class="form-select" id="sourceSelect"></select></div>
+              <div class="form-group"><label>Target Schema (uploaded)</label>
+                <div id="targetSummary" class="mt-1"></div></div>
+              <div class="form-group" style="grid-column:1/-1;">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                  <label class="mb-0">Target Tables to Map</label>
+                  <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-soft" id="selectAllTablesBtn">Select All</button>
+                    <button type="button" class="btn btn-sm btn-outline-soft" id="clearTablesBtn">Clear</button>
+                  </div>
+                </div>
+                <div class="form-text-hint mb-2">Pick the tables you need, or expand a table to map only specific columns. Generated columns are kept until you Clear All in the Mapping Workspace.</div>
+                <input type="text" class="form-control mb-2" id="tableSearch" placeholder="Search target tables...">
+                <div id="tablePickInfo" class="text-xs text-muted-2 mb-2"></div>
+                <div id="targetTablePick" class="entity-pick-grid"></div>
+              </div>
+              <div class="form-group" style="grid-column:1/-1;"><label>Business Context</label>
+                <textarea class="form-control" rows="10" id="bizContext" placeholder="Describe the migration, domains, and any priorities for the AI..."># Data Conversion Prompt
+
+Convert legacy claims data into the target CMT/PMT data model following these rules:
+
+1. **Schema Mapping** – Transform each legacy field into its corresponding CMT/PMT target field as per the mapping specification.
+
+2. **Business Keys** – Preserve original legacy business keys (ClaimNumber, PolicyNumber, InsuredId, etc.) in the target model without modification.
+
+3. **Audit Timestamps** – Carry forward legacy audit fields (CreatedDate, CreatedBy, ModifiedDate, ModifiedBy) as-is into the target model.
+
+4. **Code Translation** – Translate all coded fields (status, type, category, etc.) using the applicable lookup/mapping tables. If no match is found, flag as unmapped/exception.
+
+5. **PMT_ID Generation (Primary Key)** – Follow this strict priority order:
+
+   **Step 1 – Use Existing Unique Identifier (Preferred):**
+   Check the legacy record for any existing unique identifier column (e.g., ActivityId, PaymentId, HistoryId, ClaimantId, DocumentId, ReserveLineId, etc.). If found, use it directly as the PMT_ID.
+
+   **Step 2 – Composite Key (Only if Step 1 fails):**
+   Only if no unique identifier or discriminating column exists anywhere in the legacy record, construct the PMT_ID using:
+   > **Important:** Do not default to the composite key pattern automatically. It must only be used when Step 1 is genuinely not possible — i.e., the legacy record has no usable unique ID at all.
+
+6. **PMT_Payload_Id (Grouping Key)** – All records generated for the same claim within a payload must share the same PMT_Payload_Id, default:
+   `PMT_Payload_Id = ClaimNumber`
+
+7. **Data Integrity** – Ensure:
+   - No duplicate PMT_IDs across the dataset.
+   - Every PMT_ID correctly links to its PMT_Payload_Id.
+   - Record counts match between legacy and target (e.g., 10 legacy Activity rows → 10 target Activity PMT records).
+   - No orphan child records — each must trace back to its parent claim.
+
+8. **Traceability** – Include the original legacy record identifier in each converted record for backward traceability.
+
+Apply these rules consistently across all entities (Claim, Party, Activity, History, Payment, Reserve, Coverage, Document, etc.) during conversion.</textarea></div>
+              <div class="form-group" style="grid-column:1/-1;"><label>Additional AI Instructions</label>
+                <textarea class="form-control" rows="3" id="aiInstructions" placeholder="e.g. Map status codes via a lookup table; do not map internal surrogate keys directly."></textarea></div>
+              <div class="form-group" style="grid-column:1/-1;"><label>Mapping Strategy</label>
+                <select class="form-select" id="mappingStrategy">
+                  <option>Conservative</option><option selected>Balanced</option><option>Aggressive</option>
+                </select>
+                <div class="form-text-hint" id="strategyHint">Balanced: generate likely mappings and flag uncertain ones for review.</div>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-outline-soft" id="analyzeBtn"><i class="bi bi-search me-1"></i> Analyze Metadata</button>
+              <button class="btn btn-primary" id="generateBtn"><i class="bi bi-stars me-1"></i> Generate Mapping with AI</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-5" id="consoleCol">
+          <div class="card-el h-100">
+            <div class="section-title d-flex align-items-center justify-content-between">
+              <span><i class="bi bi-terminal"></i> AI Processing Console</span>
+              <button type="button" class="icon-btn" id="hideConsoleBtn" title="Hide panel (more space)"><i class="bi bi-chevron-right"></i></button>
+            </div>
+            <div class="process-log" id="aiLog">Console idle. Configure inputs and click "Generate Mapping".</div>
+            <div id="aiResultBox" class="mt-3"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260811t"></script>
+<script src="../js/navigation.js?v=20260811t"></script>
+<script src="../js/target-schema.js?v=20260811t"></script>
+<script src="../js/ai-mapping.js?v=20260811t"></script>
+</body>
+</html>

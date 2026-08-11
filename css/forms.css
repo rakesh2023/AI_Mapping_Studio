@@ -1,0 +1,48 @@
+.form-section{margin-bottom:26px;}
+.form-section .form-section-title{font-size:.85rem;font-weight:700;color:#334155;margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px;}
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px 20px;}
+.form-grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.form-group label{font-size:.78rem;font-weight:600;color:#334155;margin-bottom:5px;display:block;}
+.form-group .req{color:var(--danger);}
+.form-control, .form-select{
+  font-size:.85rem;border-radius:7px;border:1px solid var(--border);padding:8px 11px;
+}
+.form-control:focus, .form-select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(208,74,2,.12);}
+.form-text-hint{font-size:.72rem;color:var(--text-muted);margin-top:4px;}
+.form-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid var(--border);margin-top:18px;}
+.upload-dropzone{
+  border:2px dashed #f3c3a6;border-radius:12px;background:#fdf6f1;padding:40px 20px;text-align:center;cursor:pointer;transition:.15s;
+}
+.upload-dropzone.dragover{background:var(--primary-soft);border-color:var(--primary);}
+.upload-dropzone i{font-size:2.2rem;color:var(--primary);margin-bottom:10px;display:block;}
+.switch-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);}
+.switch-row:last-child{border-bottom:none;}
+
+/* Saved DB connections */
+.saved-conn-list{display:flex;flex-direction:column;gap:8px;}
+.saved-conn{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  border:1px solid var(--border);border-radius:9px;padding:10px 14px;background:#fff;transition:.15s;
+}
+.saved-conn:hover{border-color:var(--primary);}
+.saved-conn.editing{border-color:var(--primary);background:var(--primary-soft);}
+.saved-conn .sc-name{font-weight:700;font-size:.86rem;display:flex;align-items:center;gap:7px;}
+.saved-conn .sc-detail{font-size:.72rem;color:var(--text-muted);margin-top:2px;}
+.saved-conn .sc-actions{display:flex;gap:6px;flex-shrink:0;}
+
+/* ===== Dark theme overrides ===== */
+body.theme-dark .form-section .form-section-title,
+body.theme-dark .form-group label{color:var(--text-main);}
+body.theme-dark .upload-dropzone{background:#2a2118;border-color:#5a3a1e;}
+body.theme-dark .saved-conn{background:var(--bg-card);}
+body.theme-dark .saved-conn.editing{background:var(--primary-soft);}
+body.theme-dark input[type="file"].form-control{color:var(--text-main);}
+/* date/time inputs: use the browser's dark form controls + invert the calendar icon */
+body.theme-dark input[type="date"],
+body.theme-dark input[type="datetime-local"],
+body.theme-dark input[type="time"],
+body.theme-dark input[type="month"]{color-scheme:dark;}
+body.theme-dark input[type="date"]::-webkit-calendar-picker-indicator,
+body.theme-dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+body.theme-dark input[type="time"]::-webkit-calendar-picker-indicator,
+body.theme-dark input[type="month"]::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.6);}

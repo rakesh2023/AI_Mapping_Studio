@@ -1,0 +1,34 @@
+{
+  "currentProjectId": "proj-001",
+  "projects": [
+    {
+      "id": "proj-001",
+      "name": "Claim Conversion Project",
+      "description": "Data conversion of legacy claims data into the target CMT/PMT data model, covering Claim, Party, Activity, History, Payment, Reserve, Coverage and Document domains.",
+      "client": "New Client Group",
+      "migrationType": "Data Conversion",
+      "domain": "Insurance",
+      "sourceApplication": "Legacy Policy Administration System",
+      "targetApplication": "Guidewire PolicyCenter",
+      "owner": "Rakesh Sinha",
+      "startDate": "2024-11-01",
+      "targetDate": "2025-06-30",
+      "environment": "Development",
+      "stats": {
+        "sourceSystems": 3,
+        "sourceTables": 32,
+        "sourceColumns": 486,
+        "targetTables": 27,
+        "targetColumns": 398,
+        "totalMappingRows": 412,
+        "mappedFields": 380,
+        "unmappedFields": 32,
+        "approvedMappings": 295,
+        "needsReview": 85,
+        "validationErrors": 14,
+        "completionPct": 92,
+        "avgConfidencePct": 87
+      }
+    }
+  ]
+}
