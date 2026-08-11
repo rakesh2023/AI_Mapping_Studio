@@ -127,6 +127,18 @@
 .entity-card .ec-col.locked:hover{background:transparent;}
 .entity-card .ec-col.locked input{cursor:not-allowed;}
 
+/* ETL Code page — planned-outputs list + SQL preview */
+.etl-plan{list-style:none;padding:0;margin:0;}
+.etl-plan li{font-size:.82rem;padding:6px 0;display:flex;gap:8px;align-items:flex-start;line-height:1.4;}
+.etl-plan li i{color:var(--primary);flex:none;margin-top:2px;}
+.etl-preview{background:#0f1b34;color:#cbd5e1;border-radius:10px;padding:16px;font-family:"Consolas",monospace;
+  font-size:.76rem;line-height:1.5;overflow:auto;white-space:pre;margin:0;max-height:640px;}
+body.theme-dark .etl-preview{background:#0b1220;}
+/* selectable target-table cards (left panel) */
+#etlTableList{display:flex;flex-direction:column;gap:10px;max-height:640px;overflow-y:auto;}
+.tl-item.etl-pick .tl-name{gap:9px;}
+.tl-item.etl-pick .etl-pick-cb{margin:0;flex:none;}
+
 .discovery-field{border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;}
 .discovery-field .df-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
 .discovery-field .df-target{font-weight:700;font-size:.9rem;}

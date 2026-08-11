@@ -61,6 +61,19 @@ body.sidebar-collapsed .main-wrapper{margin-left:76px;}
 
 .content-area{padding:22px 28px 60px;flex:1;}
 
+/* ===== Persistent app shell (pages/app.html): sidebar + header once, page in a frame ===== */
+html,body.app-shell-host{height:100%;margin:0;}
+body.app-shell-host{overflow:hidden;}
+body.app-shell-host .app-shell{height:100vh;}
+body.app-shell-host .main-wrapper{height:100vh;overflow:hidden;}
+.shell-frame-wrap{flex:1;min-height:0;overflow:hidden;}
+#shellFrame{width:100%;height:100%;border:0;display:block;background:var(--bg-app);}
+
+/* A page rendered INSIDE the shell frame owns no chrome: it fills the frame with
+   no sidebar offset, and scrolls internally. */
+body.in-app-shell .main-wrapper{margin-left:0;}
+body.in-app-shell .app-shell{min-height:100vh;}
+
 /* ===== Topbar ===== */
 .topbar{
   height:66px;background:#fff;border-bottom:1px solid var(--border);

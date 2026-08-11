@@ -278,7 +278,14 @@ function exploreConn(id){
     showNotification("Exploration is available for SQL Server and File System sources in this prototype.", "warning");
     return;
   }
-  window.location.href = "metadata-explorer.html?connect=" + encodeURIComponent(id);
+  const href = "metadata-explorer.html?connect=" + encodeURIComponent(id);
+  // Inside the persistent shell, navigate the shell frame; else normal navigation.
+  try{
+    if(window.self !== window.top && window.top.AIMS_SHELL && typeof window.top.aimsShellGoto === "function"){
+      window.top.aimsShellGoto(href); return;
+    }
+  }catch(e){}
+  window.location.href = href;
 }
 
 function editConn(id){ openForm(id); }
