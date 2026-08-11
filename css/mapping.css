@@ -111,6 +111,12 @@
 .entity-card .ec-expand{border:none;background:none;color:var(--primary);font-size:.72rem;font-weight:600;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;}
 .entity-card .ec-expand:hover{text-decoration:underline;}
 .entity-card .ec-cols{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;max-height:220px;overflow-y:auto;}
+/* per-table column search — sticks to the top of the scrollable list */
+.entity-card .ec-col-search{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:6px;
+  background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:4px 8px;margin-bottom:6px;}
+.entity-card .ec-col-search i{font-size:.72rem;color:var(--text-muted);flex:none;}
+.entity-card .ec-col-search-input{border:none;background:transparent;outline:none;width:100%;font-size:.74rem;color:var(--text-main);}
+.entity-card .ec-col-count{padding:2px 2px 6px;}
 .entity-card .ec-col{display:flex;align-items:center;gap:8px;padding:3px 2px;cursor:pointer;border-radius:5px;}
 .entity-card .ec-col:hover{background:var(--gray-bg);}
 .entity-card .ec-col input{margin:0;flex:none;}

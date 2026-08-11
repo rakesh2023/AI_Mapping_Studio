@@ -13,6 +13,11 @@ const STRATEGY_HINTS = {
 };
 
 const LS_AI_MAPPINGS = "aims_ai_mappings";   // generated mappings live here for the workspace
+const LS_BIZ_CONTEXT = "aims_business_context";   // user-saved Business Context prompt
+
+// The prompt shipped in the HTML is the DEFAULT; captured on load so "Default" can
+// restore it. A user-saved value (localStorage) overrides it until reset.
+let defaultBizContext = "";
 
 let targetSchema = null;
 let sourceCache = null;   // {connection, schema, tables:[...]} loaded from the chosen source
@@ -23,6 +28,8 @@ let selectedCols = {};              // { entityName: Set<colName> } — NEW pick
 let generatedCols = {};             // { entityName: Set<colName> } — already-mapped (locked)
 let expandedEntities = new Set();   // entity cards whose column list is expanded
 let tableFilter = "";               // search term for the target-table picker
+let colFilters = {};                // per-entity column search term { entityName: "text" }
+let focusColSearch = null;          // entity whose column-search box should re-focus after render
 
 /* ---- selection helpers ---- */
 function entityByName(name){ return (targetSchema.entities||[]).find(e => e.name === name); }
@@ -78,12 +85,53 @@ function loadGeneratedCols(){
   });
 }
 
+/* ---- Business Context persistence ----
+   The prompt in the HTML is the default. A saved value (localStorage) is
+   restored on load and used for generation; it survives reloads/navigation and
+   is cleared only by a full application reset (which wipes all aims_* keys). */
+function initBizContext(){
+  const ta = document.getElementById("bizContext");
+  if(!ta) return;
+  defaultBizContext = ta.value;                 // capture the shipped default
+  const saved = lsGet(LS_BIZ_CONTEXT, null);
+  if(saved !== null && saved !== undefined){ ta.value = saved; }
+  bizCtxState(saved !== null && saved !== undefined ? "saved" : "default");
+
+  const saveBtn = document.getElementById("saveBizCtxBtn");
+  const resetBtn = document.getElementById("resetBizCtxBtn");
+  if(saveBtn) saveBtn.addEventListener("click", () => {
+    lsSet(LS_BIZ_CONTEXT, ta.value);
+    bizCtxState("saved");
+    if(typeof showNotification === "function") showNotification("Business Context saved. It will persist until you reset the application.", "success");
+  });
+  if(resetBtn) resetBtn.addEventListener("click", () => {
+    ta.value = defaultBizContext;
+    localStorage.removeItem(LS_BIZ_CONTEXT);
+    bizCtxState("default");
+    if(typeof showNotification === "function") showNotification("Business Context restored to the default prompt.", "primary");
+  });
+  // mark as "unsaved edits" while typing so the user knows to save
+  ta.addEventListener("input", () => {
+    const cur = lsGet(LS_BIZ_CONTEXT, null);
+    bizCtxState(cur !== null && cur === ta.value ? "saved" : (ta.value === defaultBizContext ? "default" : "unsaved"));
+  });
+}
+
+function bizCtxState(state){
+  const el = document.getElementById("bizCtxState");
+  if(!el) return;
+  if(state === "saved"){ el.textContent = "Saved"; el.className = "text-xs"; el.style.color = "var(--success)"; }
+  else if(state === "unsaved"){ el.textContent = "Unsaved changes"; el.className = "text-xs"; el.style.color = "var(--warning)"; }
+  else { el.textContent = "Using default"; el.className = "text-xs text-muted-2"; el.style.color = ""; }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("ai-mapping-generator.html");
   if(typeof migrateLegacyTargetSchema === "function") migrateLegacyTargetSchema();
   targetSchema = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
 
   loadGeneratedCols();   // lock+check columns already mapped
+  initBizContext();      // restore a saved Business Context (falls back to the default)
   buildSourceOptions();
   buildTargetSummary();
   renderTablePicker();
@@ -199,7 +247,13 @@ function renderTablePicker(){
     const open = expandedEntities.has(e.name);
     const allGenerated = genCount >= total && total > 0;   // whole table already mapped
 
-    const colRows = (e.fields||[]).map(f => {
+    // Per-table column search: match ANYWHERE in the column name (substring, case-insensitive).
+    const cf = (colFilters[e.name] || "").toLowerCase();
+    const visibleFields = cf
+      ? (e.fields||[]).filter(f => (f.name||"").toLowerCase().indexOf(cf) !== -1)
+      : (e.fields||[]);
+
+    const colRows = visibleFields.map(f => {
       const locked = isColGenerated(e.name, f.name);
       const on = locked || isColSelected(e.name, f.name);
       return '<label class="ec-col' + (locked ? " locked" : "") + '" data-col="' + escapeHtml(f.name) + '"' +
@@ -209,6 +263,19 @@ function renderTablePicker(){
         '<span class="ec-col-type">' + (locked ? '<i class="bi bi-lock-fill" title="mapped"></i> ' : '') + escapeHtml(f.dataType || "") + '</span>' +
       '</label>';
     }).join("");
+
+    // Search box + (when filtering) a small result count / empty note.
+    const colSearchBox =
+      '<div class="ec-col-search">' +
+        '<i class="bi bi-search"></i>' +
+        '<input type="text" class="ec-col-search-input" data-colsearch="' + escapeHtml(e.name) + '"' +
+          ' placeholder="Search columns..." value="' + escapeHtml(colFilters[e.name] || "") + '">' +
+      '</div>' +
+      (cf
+        ? (visibleFields.length
+            ? '<div class="ec-col-count text-xs text-muted-2">' + visibleFields.length + ' of ' + total + ' columns</div>'
+            : '<div class="ec-col-count text-xs text-muted-2">No columns match "' + escapeHtml(colFilters[e.name]) + '".</div>')
+        : "");
 
     return '<div class="entity-card ' + state + '" data-entity="' + escapeHtml(e.name) + '">' +
       '<div class="ec-head">' +
@@ -221,7 +288,7 @@ function renderTablePicker(){
         '<button type="button" class="ec-expand" data-expand="' + escapeHtml(e.name) + '">' +
           '<i class="bi bi-chevron-' + (open?"up":"down") + '"></i> ' + (open?"hide":"columns") + '</button>' +
       '</div>' +
-      '<div class="ec-cols" style="display:' + (open?"block":"none") + ';">' + colRows + '</div>' +
+      '<div class="ec-cols" style="display:' + (open?"block":"none") + ';">' + colSearchBox + colRows + '</div>' +
     '</div>';
   }).join("");
 
@@ -240,12 +307,30 @@ function renderTablePicker(){
       const cb = lbl.querySelector(".ec-col-cb");
       if(cb) cb.addEventListener("change", () => { toggleColumn(name, lbl.dataset.col); renderTablePicker(); });
     });
+    // Per-table column search: filter as you type. Re-render, then restore focus +
+    // caret to the search box (re-render replaces the input node).
+    const colSearch = card.querySelector("[data-colsearch]");
+    if(colSearch){
+      colSearch.addEventListener("click", (ev) => ev.stopPropagation());   // don't toggle the card
+      colSearch.addEventListener("input", (ev) => {
+        colFilters[name] = ev.target.value || "";
+        focusColSearch = name;   // tell the next render to refocus this box
+        renderTablePicker();
+      });
+    }
     // restore this card's column-list scroll position
     if(savedScroll[name] != null){
       const cols = card.querySelector(".ec-cols");
       if(cols) cols.scrollTop = savedScroll[name];
     }
   });
+
+  // Restore focus to the column-search box that triggered this render (keeps typing smooth).
+  if(focusColSearch){
+    const box = grid.querySelector('[data-colsearch="' + (window.CSS && CSS.escape ? CSS.escape(focusColSearch) : focusColSearch) + '"]');
+    if(box){ const v = box.value; box.focus(); try{ box.setSelectionRange(v.length, v.length); }catch(e){} }
+    focusColSearch = null;
+  }
   updateSelCount();
 }
 
