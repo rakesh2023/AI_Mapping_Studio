@@ -6,7 +6,7 @@ streaming Response (application/x-ndjson), exactly as before.
 """
 from flask import Blueprint, request, jsonify, Response
 
-from app.services import ai_client, mapping_service, extraction_service
+from app.services import ai_client, mapping_service, extraction_service, etl_service
 
 bp = Blueprint("ai_api", __name__, url_prefix="/api/ai")
 
@@ -27,6 +27,13 @@ def generate_mappings():
 def regenerate_mapping():
     body = request.get_json(force=True) or {}
     payload, status = mapping_service.regenerate_mapping(body)
+    return jsonify(payload), status
+
+
+@bp.route("/generate-etl", methods=["POST"])
+def generate_etl():
+    body = request.get_json(force=True) or {}
+    payload, status = etl_service.generate_etl(body)
     return jsonify(payload), status
 
 

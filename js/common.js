@@ -139,15 +139,7 @@ async function resetApplication(){
     localStorage.setItem("aims_ai_mappings", "[]");
   }catch(e){ /* ignore */ }
   if(typeof showNotification === "function") showNotification("Application reset. Reloading…", "primary", 1500);
-  setTimeout(() => {
-    // In the shell (top window has AIMS_SHELL) reload the shell to Dashboard;
-    // from a framed page, ask the shell to navigate; else normal navigation.
-    if(window.AIMS_SHELL){ window.location.href = "app.html#dashboard.html"; return; }
-    try{
-      if(window.self !== window.top && window.top.AIMS_SHELL){ window.top.location.href = "app.html#dashboard.html"; return; }
-    }catch(e){}
-    window.location.href = "dashboard.html";
-  }, 700);
+  setTimeout(() => { window.location.href = "dashboard.html"; }, 700);
 }
 
 /* ---- Streamed AI file extraction with progress ----
@@ -392,14 +384,6 @@ async function loadProject(){
 }
 function setCurrentProject(project){ lsSet(LS_KEYS.project, project); }
 
-/* True when this page is being displayed inside the persistent app shell frame
-   (pages/app.html). In that case the page must NOT draw its own sidebar/header —
-   the shell already owns them; the page only renders its content area. */
-function inAppShell(){
-  try{ return window.self !== window.top && window.top.AIMS_SHELL === true; }
-  catch(e){ return false; }   // cross-origin (shouldn't happen here) -> treat as standalone
-}
-
 function buildSidebarHTML(activeHref){
   return '<div class="sidebar-brand">' +
       '<div class="brand-icon">' +
@@ -454,22 +438,6 @@ function buildHeaderHTML(){
 async function initShell(activeHref){
   applyTheme(getTheme());   // ensure saved theme is active on every page
 
-  // Inside the persistent shell frame: the shell already draws the sidebar +
-  // header, so this page renders ONLY its content. Remove the empty chrome
-  // placeholders and let the content area fill the frame.
-  if(inAppShell()){
-    document.body.classList.add("in-app-shell");
-    const sb = document.getElementById("sidebar-container");
-    const hd = document.getElementById("header-container");
-    if(sb) sb.remove();
-    if(hd) hd.remove();
-    await loadProject();
-    // Tell the shell which page is active (so it can highlight the nav link) and
-    // keep the shell theme in sync when this page toggles it.
-    try{ if(window.top && typeof window.top.aimsShellPageLoaded === "function") window.top.aimsShellPageLoaded(activeHref); }catch(e){}
-    return;
-  }
-
   const sidebarEl = document.getElementById("sidebar-container");
   if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(activeHref); }
 
@@ -505,9 +473,7 @@ function wireShellEvents(){
   if(searchInput){
     searchInput.addEventListener("keydown", e => {
       if(e.key === "Enter" && searchInput.value.trim()){
-        const href = "mapping-workspace.html?search=" + encodeURIComponent(searchInput.value.trim());
-        if(window.AIMS_SHELL){ shellNavigate(href); }
-        else { window.location.href = href; }
+        window.location.href = "mapping-workspace.html?search=" + encodeURIComponent(searchInput.value.trim());
       }
     });
   }
@@ -523,14 +489,9 @@ function wireShellEvents(){
   if(themeBtn){
     themeBtn.addEventListener("click", () => {
       const next = getTheme() === "dark" ? "light" : "dark";
-      setTheme(next);   // persists + applies to this document
+      setTheme(next);   // persists + applies
       const icon = themeBtn.querySelector("i");
       if(icon) icon.className = "bi " + (next === "dark" ? "bi-sun" : "bi-moon-stars");
-      // If we're the shell, also flip the framed page's theme immediately.
-      const frame = document.getElementById("shellFrame");
-      if(frame && frame.contentDocument){
-        try{ frame.contentDocument.body.classList.toggle("theme-dark", next === "dark"); }catch(e){}
-      }
     });
   }
 }
@@ -540,88 +501,6 @@ function applySidebarCollapsedState(){
   const label = document.getElementById("sidebarToggleLabel");
   if(label) label.textContent = collapsed ? "Expand" : "Collapse";
 }
-
-/* =========================================================================
-   Persistent app shell (pages/app.html)
-   Draws the sidebar + header ONCE and loads each page into an inner <iframe>,
-   so navigating between pages refreshes only the right pane — the shell never
-   reloads. Individual pages detect they're inside the frame (inAppShell) and
-   skip drawing their own chrome.
-   ========================================================================= */
-const SHELL_PAGES = (function(){
-  const set = {};
-  SIDEBAR_SECTIONS.forEach(s => s.items.forEach(i => { set[i.href] = i.label; }));
-  return set;
-})();
-
-function initAppShell(){
-  window.AIMS_SHELL = true;               // marker read by inAppShell() in framed pages
-  applyTheme(getTheme());
-
-  const sidebarEl = document.getElementById("sidebar-container");
-  if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(""); }
-  const headerEl = document.getElementById("header-container");
-  if(headerEl){ headerEl.className = "topbar"; headerEl.innerHTML = buildHeaderHTML(); }
-
-  wireShellEvents();
-  applySidebarCollapsedState();
-
-  // Intercept nav-link clicks: load the target into the frame instead of navigating.
-  document.querySelectorAll(".sidebar-nav .nav-link").forEach(a => {
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      const href = a.getAttribute("href");
-      shellNavigate(href);
-    });
-  });
-
-  // Initial page: ?p=<file> (from a deep link) else the hash else Dashboard.
-  const params = new URLSearchParams(window.location.search);
-  const start = params.get("p") || (window.location.hash ? window.location.hash.slice(1) : "") || "dashboard.html";
-  shellNavigate(SHELL_PAGES[start] ? start : "dashboard.html");
-
-  // Back/forward within the shell.
-  window.addEventListener("hashchange", () => {
-    const h = window.location.hash ? window.location.hash.slice(1) : "dashboard.html";
-    const frame = document.getElementById("shellFrame");
-    const cur = frameCurrentPage(frame);
-    if(h && h !== cur) shellNavigate(h, true);
-  });
-}
-
-function frameCurrentPage(frame){
-  try{
-    const p = frame && frame.contentWindow ? frame.contentWindow.location.pathname : "";
-    return p.split("/").pop();
-  }catch(e){ return ""; }
-}
-
-function shellNavigate(href, fromHash){
-  const frame = document.getElementById("shellFrame");
-  if(!frame) return;
-  frame.src = href;                        // ONLY the frame reloads
-  if(!fromHash){ try{ window.location.hash = href; }catch(e){} }
-  setShellActiveLink(href);
-}
-
-function setShellActiveLink(href){
-  document.querySelectorAll(".sidebar-nav .nav-link").forEach(a => {
-    a.classList.toggle("active", a.getAttribute("href") === href);
-  });
-}
-
-/* Called BY a framed page (via window.top) once it has initialised, so the shell
-   can highlight the correct nav link even when the page was reached by a deep
-   link or an in-page redirect. */
-function aimsShellPageLoaded(activeHref){
-  if(!activeHref) return;
-  setShellActiveLink(activeHref);
-  try{ if(window.location.hash.slice(1) !== activeHref) window.location.hash = activeHref; }catch(e){}
-}
-
-/* Let framed pages navigate the shell (e.g. source-systems -> metadata-explorer),
-   preserving the persistent shell instead of doing a full reload. */
-function aimsShellGoto(href){ shellNavigate(href); }
 
 function renderWorkflowStepper(containerId, activeIndex){
   const el = document.getElementById(containerId);

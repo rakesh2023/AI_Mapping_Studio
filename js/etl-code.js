@@ -10,6 +10,7 @@
    ========================================================================= */
 
 const LS_ETL_DB = "aims_etl_db";
+const LS_ETL_INSTRUCTIONS = "aims_etl_instructions";
 
 let etlGroups = [];              // [{name, entity, table, rows:[...], join}]
 let etlSelected = new Set();     // selected target-table keys
@@ -33,9 +34,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   etlGroups = groupByTargetTable(mappings, joins);
 
   initDbName();
+  initInstructions();
   renderTableList();
   wireControls();
 });
+
+/* Additional AI instructions for SQL generation — persisted with the project so
+   they're ready when AI-assisted generation is enabled. */
+function initInstructions(){
+  const ta = document.getElementById("etlInstructions");
+  if(!ta) return;
+  const saved = lsGet(LS_ETL_INSTRUCTIONS, null);
+  if(saved != null) ta.value = saved;
+  ta.addEventListener("input", () => lsSet(LS_ETL_INSTRUCTIONS, ta.value));
+}
+function currentEtlInstructions(){
+  const ta = document.getElementById("etlInstructions");
+  return ta ? (ta.value || "").trim() : "";
+}
 
 /* ---- group mapping rows by target table ---- */
 function groupByTargetTable(mappings, joins){
@@ -122,41 +138,137 @@ function wireControls(){
   });
   if(clr) clr.addEventListener("click", () => { etlSelected.clear(); renderTableList(); updateGenerateBtn(); });
 
-  const gen = document.getElementById("generateEtlBtn");
-  if(gen) gen.addEventListener("click", (e) => { e.preventDefault(); generateEtl(); });
+  ["generateEtlBtn","generateEtlBtn2"].forEach(id => {
+    const b = document.getElementById(id);
+    if(b) b.addEventListener("click", (e) => { e.preventDefault(); generateEtl(); });
+  });
   const copyBtn = document.getElementById("copyEtlBtn");
   if(copyBtn) copyBtn.addEventListener("click", (e) => { e.preventDefault(); copyEtl(); });
   const dl = document.getElementById("downloadEtlBtn");
   if(dl) dl.addEventListener("click", (e) => { e.preventDefault(); downloadEtl(); });
+  const clrOut = document.getElementById("clearEtlBtn");
+  if(clrOut) clrOut.addEventListener("click", (e) => { e.preventDefault(); clearEtl(); });
+
+  const hide = document.getElementById("etlHidePanelBtn");
+  const show = document.getElementById("etlShowPanelBtn");
+  if(hide) hide.addEventListener("click", (e) => { e.preventDefault(); toggleEtlPanel(false); });
+  if(show) show.addEventListener("click", (e) => { e.preventDefault(); toggleEtlPanel(true); });
+  if(lsGet("aims_etl_panel_hidden", false)) toggleEtlPanel(false);   // restore preference
 
   updateGenerateBtn();
 }
 
-function updateGenerateBtn(){
-  const gen = document.getElementById("generateEtlBtn");
-  const n = etlSelected.size;
-  if(gen){
-    gen.disabled = n === 0;
-    gen.innerHTML = '<i class="bi bi-magic me-1"></i> Generate ETL Code' + (n ? (' (' + n + ')') : '');
+// Collapse/expand the Target Tables panel; the SQL column widens to fill the space.
+function toggleEtlPanel(show){
+  const panel = document.getElementById("etlPanelCol");
+  const grid = document.getElementById("etlGridCol");
+  const showBtn = document.getElementById("etlShowPanelBtn");
+  if(!panel || !grid) return;
+  if(show){
+    panel.style.display = "";
+    grid.classList.remove("col-lg-12"); grid.classList.add("col-lg-8");
+    if(showBtn) showBtn.style.display = "none";
+    lsSet("aims_etl_panel_hidden", false);
+  } else {
+    panel.style.display = "none";
+    grid.classList.remove("col-lg-8"); grid.classList.add("col-lg-12");
+    if(showBtn) showBtn.style.display = "";
+    lsSet("aims_etl_panel_hidden", true);
   }
+}
+
+function updateGenerateBtn(){
+  const n = etlSelected.size;
+  ["generateEtlBtn","generateEtlBtn2"].forEach(id => {
+    const gen = document.getElementById(id);
+    if(gen){
+      gen.disabled = n === 0;
+      gen.innerHTML = '<i class="bi bi-magic me-1"></i> Generate ETL Code' + (n ? (' (' + n + ')') : '');
+    }
+  });
 }
 
 /* ---- SQL generation (deterministic template fill) ---- */
 let etlLastSql = "";
 
-function generateEtl(){
+async function generateEtl(){
   const selected = etlGroups.filter(g => etlSelected.has(g.name));
   if(!selected.length){ showNotification("Select at least one target table.", "warning"); return; }
   const db = currentEtlDb();
-  const scripts = selected.map(g => buildProc(g, db));
-  etlLastSql = scripts.join("\n\nGO\n\n\n");
-
+  const instr = currentEtlInstructions();
   const out = document.getElementById("etlOutput");
-  if(out) out.innerHTML = '<code>' + escapeHtml(etlLastSql) + '</code>';
   const info = document.getElementById("etlOutInfo");
-  if(info) info.textContent = selected.length + " procedure(s)";
-  ["copyEtlBtn","downloadEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
-  showNotification("Generated SQL for " + selected.length + " table(s).", "success");
+
+  // No instructions -> fast deterministic template fill (no AI needed).
+  if(!instr){
+    const sql = selected.map(g => buildProc(g, db)).join("\n\nGO\n\n\n");
+    etlLastSql = sql;
+    if(out) out.innerHTML = '<code>' + escapeHtml(sql) + '</code>';
+    if(info) info.textContent = selected.length + " procedure(s)";
+    ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
+    showNotification("Generated SQL for " + selected.length + " table(s).", "success");
+    return;
+  }
+
+  // Instructions present -> AI-generate each table's proc (fall back to the
+  // deterministic build for any table whose AI call fails).
+  setEtlBusy(true);
+  if(info) info.textContent = "Generating with AI…";
+  const parts = [];
+  let aiCount = 0, fbCount = 0;
+  try{
+    for(let i = 0; i < selected.length; i++){
+      const g = selected[i];
+      if(info) info.textContent = "AI generating " + (i+1) + " / " + selected.length + " (" + g.name + ")…";
+      let sql = null;
+      try{
+        sql = await aiGenerateProc(g, db, instr);
+      }catch(e){ sql = null; }
+      if(sql && sql.trim()){ parts.push(sql.trim()); aiCount++; }
+      else { parts.push(buildProc(g, db)); fbCount++; }   // fallback keeps output complete
+    }
+    etlLastSql = parts.join("\n\nGO\n\n\n");
+    if(out) out.innerHTML = '<code>' + escapeHtml(etlLastSql) + '</code>';
+    if(info) info.textContent = selected.length + " procedure(s)" + (fbCount ? (" · " + fbCount + " fallback") : "");
+    ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
+    if(fbCount) showNotification("Generated " + aiCount + " with AI; " + fbCount + " used the deterministic template (AI unavailable/failed).", "warning");
+    else showNotification("AI-generated SQL for " + aiCount + " table(s) with your instructions.", "success");
+  }finally{
+    setEtlBusy(false);
+  }
+}
+
+// Call the backend to AI-generate one table's stored proc honoring instructions.
+async function aiGenerateProc(g, db, instructions){
+  const payload = {
+    database: db,
+    targetTable: g.name,
+    targetEntity: g.entity,
+    joinCondition: g.join || "",
+    instructions: instructions || "",
+    mappings: g.rows.map(m => ({
+      targetColumn: m.targetColumn, sourceTable: m.sourceTable, sourceColumn: m.sourceColumn,
+      mappingType: m.mappingType, transformationRule: m.transformationRule,
+      businessRule: m.businessRule, lookupTable: m.lookupTable, defaultValue: m.defaultValue,
+      nullHandling: m.nullHandling, targetDataType: m.targetDataType
+    }))
+  };
+  const res = await fetch("/api/ai/generate-etl", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || "AI generation failed");
+  return data.sql;
+}
+
+// Toggle a "running" state on the generate buttons.
+function setEtlBusy(busy){
+  ["generateEtlBtn","generateEtlBtn2"].forEach(id => {
+    const b = document.getElementById(id);
+    if(!b) return;
+    b.disabled = busy || etlSelected.size === 0;
+    b.classList.toggle("btn-running", busy);
+    if(busy) b.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Generating…';
+  });
+  if(!busy) updateGenerateBtn();
 }
 
 // Short table name for the SP / log TableName: strip a leading CMT_/PMT_ prefix.
@@ -266,6 +378,17 @@ function downloadEtl(){
   a.href = url; a.download = "etl_" + currentEtlDb() + "_procedures.sql";
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+// Clear the generated SQL output (does NOT touch the table selection).
+function clearEtl(){
+  etlLastSql = "";
+  const out = document.getElementById("etlOutput");
+  if(out) out.innerHTML = '<code>-- Select one or more target tables on the left, then click "Generate ETL Code".</code>';
+  const info = document.getElementById("etlOutInfo");
+  if(info) info.textContent = "";
+  ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = true; });
+  showNotification("Cleared the generated SQL.", "primary", 1200);
 }
 
 /* ---- Target database name ---- */
