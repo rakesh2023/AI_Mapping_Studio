@@ -10,6 +10,15 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Backend refactor: monolith → layered package** (uncommitted). `server/app.py`
+  (~1550 lines) split into `server/app/` with layers `api → services → parsers/schemas
+  → core` and launched by `server/main.py` (`create_app()` factory). Pure structural
+  refactor — **zero behavior change**: same routes, JSON shapes, and SSE event format
+  (verified by comparing prompts, payloads, URL maps and NDJSON events against the old
+  file). The duplicated model-call retry/fallback pattern (generate / regenerate /
+  extract) is unified in `services/ai_client.py` as `call_with_fallback` +
+  `schema_attempts`. Also removed the redundant **Analyze Metadata** button from the AI
+  Mapping Generator. Run command changed to `cd server && python main.py`.
 - **Metadata Explorer: removed the New Connection form** (`6faeacc`). It was a
   SQL-only duplicate of Source Systems (which does SQL + File). The Explorer now only
   lists **Saved Sources** with an **Explore** button + an "Add / Manage Sources" link;
@@ -140,7 +149,7 @@ Excel dictionaries now usually skip AI entirely via the direct parser.
 ---
 
 ## Current state
-- **Working & pushed.** Backend runs at `http://127.0.0.1:8000` via `python server/app.py`
+- **Working & pushed.** Backend runs at `http://127.0.0.1:8000` via `cd server && python main.py`
   (debug reload on). Frontend is static; cache-busting via `?v=YYYYMMDD<letter>` on
   css/js — currently `?v=20260811w`.
 - Verified end-to-end: SQL (deterministic), structured Excel dictionary (direct parser,
@@ -198,7 +207,15 @@ ai-mapping-studio/
 │        validation-results.json, sample-documents.json
 ├─ assets/images/  pwc-logo.svg (white wordmark), pwc-logo-dark.svg (dark wordmark), pwc-mark.svg
 └─ server/
-   ├─ app.py             # Flask: DB + AI + file extraction (streaming)
+   ├─ main.py            # entry point (create_app + app.run)
+   ├─ app/               # layered Flask package
+   │  ├─ __init__.py     #   create_app() factory (registers blueprints)
+   │  ├─ core/           #   config.py (paths/port/model/CA/tuning), capabilities.py (import guards)
+   │  ├─ schemas/        #   ai_schemas.py (3 Claude structured-output schemas)
+   │  ├─ parsers/        #   text_chunking, sql_ddl_parser, file_parsers (PURE — no Flask/Anthropic)
+   │  ├─ services/       #   ai_client, db_service, mapping_service, extraction_service
+   │  └─ api/            #   static_routes, db_routes, ai_routes (thin blueprints)
+   ├─ tests/             # pytest: services + parsers + api routing (mocked)
    ├─ requirements.txt   # Flask, pyodbc, anthropic, openpyxl, pypdf, python-docx
    ├─ README.md
    └─ win-ca-bundle.pem  # (gitignored) corporate CA bundle — rebuild locally
@@ -207,7 +224,7 @@ ai-mapping-studio/
 ### Run
 ```
 pip install -r server/requirements.txt
-python server/app.py            # serves the app at http://127.0.0.1:8000
+cd server && python main.py     # serves the app at http://127.0.0.1:8000
 ```
 Requires env vars for the Claude gateway (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN/API_KEY)
 and the Microsoft ODBC Driver for live SQL Server connections.

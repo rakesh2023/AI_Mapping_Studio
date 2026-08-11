@@ -13,7 +13,7 @@ gateway). There is **no build step** — the frontend is served as-is.
 
 ```
 pip install -r server/requirements.txt
-python server/app.py            # serves the whole app at http://127.0.0.1:8000
+cd server && python main.py     # serves the whole app at http://127.0.0.1:8000
 ```
 
 Flask runs with `debug=True` (auto-reload on save). It serves **both** the static site and the
@@ -29,7 +29,8 @@ against `http://127.0.0.1:8000/api/...`.
   Without these, AI endpoints fail but DB/static serving still works.
 - **Microsoft ODBC Driver for SQL Server** (17 or 18) for live SQL connections.
 - `server/win-ca-bundle.pem` — corporate CA bundle for the TLS-intercepting proxy; **gitignored**,
-  must be rebuilt locally. `_ca_bundle()` / `_anthropic_client()` in `app.py` wire it into httpx.
+  must be rebuilt locally. `ca_bundle()` (in `app/core/config.py`) / `anthropic_client()` (in
+  `app/services/ai_client.py`) wire it into httpx.
 
 ## Cache-busting — REQUIRED after any css/js edit
 
@@ -50,7 +51,7 @@ didn't work."
 
 ### Data lives in the browser, not a database
 The app has **no server-side persistence**. All working state is in browser `localStorage` under
-`aims_*` keys. `server/app.py` is stateless — it opens short-lived DB connections per request and
+`aims_*` keys. The Flask backend is stateless — it opens short-lived DB connections per request and
 proxies AI calls. The `data/*.json` files are **sample/seed data only** (fallbacks), not the live
 store.
 
@@ -82,21 +83,40 @@ Theming is **token-based**: `css/common.css :root` defines design tokens; `body.
 them plus a set of hardcoded-surface overrides. Prefer `var(--token)` over literal colors so surfaces
 flip automatically in dark mode.
 
-### Backend AI patterns (`server/app.py`, ~1500 lines, single file)
+### Backend layout (layered package under `server/app/`)
+The backend is a Flask app factory (`app/__init__.py` `create_app()`), launched by `server/main.py`.
+Layers, strict import direction `api → services → parsers/schemas → core`:
+- `core/` — `config.py` (paths, `port()`, `ai_model()`, `ca_bundle()`, `EXTRACT_*` tuning) and
+  `capabilities.py` (the optional-import guards: `pyodbc`, `anthropic`, `openpyxl`, `PdfReader`,
+  `docx` — `None` when absent). **Import these from here; don't re-write try/except blocks.**
+- `parsers/` — **pure** (no Flask/Anthropic): `text_chunking.py`, `sql_ddl_parser.py`, `file_parsers.py`.
+- `schemas/ai_schemas.py` — the three Claude structured-output JSON schemas.
+- `services/` — business logic, each returning `(payload_dict, http_status)`: `ai_client.py`,
+  `db_service.py`, `mapping_service.py`, `extraction_service.py`.
+- `api/` — **thin** blueprints (`static_routes`, `db_routes`, `ai_routes`): parse request → call
+  service → jsonify. No business logic.
+
+**Shared AI plumbing** (`services/ai_client.py`): `anthropic_client()` builds the httpx client trusting
+the CA bundle; `call_with_fallback(run, attempts)` + `schema_attempts(schema)` unify the "try
+structured-output configs, degrade to a bare call" ladder used by generation, regeneration, and
+extraction; `parse_mapping_json()` is the shared best-effort JSON extractor.
+
+### Backend AI patterns
 The two hard problems are **output-token truncation** and **models summarizing long input**. The
 consistent solution is **loop + merge** — never one big call:
 
-- **Mapping generation** (`/api/ai/generate-mappings`): loops **per target entity**, and within a wide
-  entity splits columns into field-chunks (`FIELD_CHUNK`) so output never truncates. Results merged by
-  column (upsert).
-- **File extraction** (`/api/ai/extract-source` + `/api/ai/extract-source-stream`): chunks the input,
-  one AI call per chunk, unions tables by name / dedups columns. Chunking strategy depends on file:
-  - **SQL scripts** → deterministic `CREATE TABLE` parser (`_parse_sql_ddl`), **no AI**.
-  - **Structured Excel dictionaries** → direct cell parser (`_parse_xlsx_dictionary`), **no AI**,
+- **Mapping generation** (`/api/ai/generate-mappings`, `mapping_service.py`): loops **per target
+  entity**, and within a wide entity splits columns into field-chunks (`FIELD_CHUNK`) so output never
+  truncates. Results merged by column (upsert).
+- **File extraction** (`/api/ai/extract-source` + `/api/ai/extract-source-stream`,
+  `extraction_service.py`): chunks the input, one AI call per chunk, unions tables by name / dedups
+  columns. Chunking strategy depends on file:
+  - **SQL scripts** → deterministic `CREATE TABLE` parser (`parse_sql_ddl`), **no AI**.
+  - **Structured Excel dictionaries** → direct cell parser (`parse_xlsx_dictionary`), **no AI**,
     verbatim, instant. Returns `None` for raw/irregular sheets → falls back to AI.
   - Excel (AI path) → by sheet; **wide** sheets by columns; **dictionary** sheets group rows by their
-    TABLE/ENTITY column (`_xlsx_sheet_chunks`).
-  - PDF/Word/text → table-boundary chunking (`_split_by_tables`).
+    TABLE/ENTITY column (`xlsx_sheet_chunks`).
+  - PDF/Word/text → table-boundary chunking (`split_by_tables`).
   - The `-stream` variant emits **NDJSON progress events** for the UI progress bar; the client
     (`streamExtractFile` in `common.js`) **falls back to the non-streaming endpoint** if the stream
     drops, and per-chunk failures retry once then skip (never abort the whole file).
@@ -106,10 +126,9 @@ consistent solution is **loop + merge** — never one big call:
   (prevents hallucinating non-existent tables/columns). First-time generation stays scoped to the
   single selected source.
 
-`_ai_model()` strips the `[1m]` suffix from Bedrock-style model IDs before calling the gateway.
-
-Tuning constants near the top of the extraction section: `EXTRACT_TEXT_BUDGET`, `EXTRACT_AI_CHUNK`,
-`EXTRACT_XLSX_ROW_CAP`, `EXTRACT_XLSX_COL_CAP`, `EXTRACT_MAX_CHUNKS`.
+`ai_model()` (in `core/config.py`) strips the `[1m]` suffix from Bedrock-style model IDs before
+calling the gateway. Extraction tuning constants live in `core/config.py`: `EXTRACT_TEXT_BUDGET`,
+`EXTRACT_AI_CHUNK`, `EXTRACT_XLSX_ROW_CAP`, `EXTRACT_XLSX_COL_CAP`, `EXTRACT_MAX_CHUNKS`.
 
 ### Source vs Target symmetry
 Both source (`js/source-systems.js`) and target (`js/target-system.js` + `js/target-schema.js`) are
