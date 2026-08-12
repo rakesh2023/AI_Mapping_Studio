@@ -16,8 +16,9 @@ from typing import Any, Dict, List, Tuple
 from app.core.capabilities import anthropic
 from app.core.config import ai_model
 from app.services.ai_client import (
-    anthropic_client, call_with_fallback, schema_attempts, parse_mapping_json,
+    anthropic_client, schema_attempts, parse_mapping_json,
 )
+from app.services.ai_client_service import call_ai
 from app.schemas.ai_schemas import MAPPING_ITEM_SCHEMA, SINGLE_MAPPING_SCHEMA
 
 Payload = Dict[str, Any]
@@ -184,7 +185,7 @@ def generate_mappings(body: Dict[str, Any]) -> Result:
             with client.messages.stream(**base_kwargs, **extra_cfg) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, schema_attempts(MAPPING_ITEM_SCHEMA))
+        resp = call_ai("AI Mapping Generator", run, schema_attempts(MAPPING_ITEM_SCHEMA))
         if getattr(resp, "stop_reason", None) == "refusal":
             raise RuntimeError("The request was declined by safety classifiers.")
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
@@ -330,7 +331,7 @@ def regenerate_mapping(body: Dict[str, Any]) -> Result:
             with client.messages.stream(**base_kwargs, **extra) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, [
+        resp = call_ai("AI Mapping Generator - Regenerate Field", run, [
             {"output_config": {"format": {"type": "json_schema", "schema": SINGLE_MAPPING_SCHEMA}}},
             {},
         ])

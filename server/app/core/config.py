@@ -68,3 +68,13 @@ EXTRACT_MAX_CHUNKS = 200       # safety cap on total model calls per file
 
 # --- Deployment (Deploy to SQL Server) --- #
 DEPLOY_MAX_ATTEMPTS = 3        # total execute attempts before giving up (incl. AI fixes)
+
+
+def usage_db_path() -> str:
+    """Path to the local SQLite file that stores the AI usage log.
+
+    App-owned telemetry only (token counts + metadata for every Claude call) —
+    NOT a customer/target database. Defaults to server/aims_usage.db; override
+    with AIMS_USAGE_DB. The file is created on first use and is gitignored.
+    """
+    return os.environ.get("AIMS_USAGE_DB") or os.path.join(SERVER_DIR, "aims_usage.db")

@@ -10,6 +10,10 @@ env/
 server/server.log
 *.log
 
+# Local AI-usage log store (app-owned SQLite telemetry; rebuilt locally)
+server/aims_usage.db
+*.db
+
 # Environment-specific certificate bundle (rebuild locally, do not commit)
 server/win-ca-bundle.pem
 

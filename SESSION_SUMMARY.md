@@ -1,6 +1,6 @@
 # AI Mapping Studio — Session Summary
 
-_Last updated: 2026-08-11_
+_Last updated: 2026-08-12_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,22 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **AI Usage Logging & Reporting** (uncommitted). Every Claude API call in the app is
+  now logged — feature, model, input/output/total tokens, duration, timestamp, and
+  success/failed — to a local **SQLite** file (`server/aims_usage.db`, gitignored; path
+  via `config.usage_db_path()` / `AIMS_USAGE_DB`). No SQL Server, no prompt/response
+  content, no cost figures. All model calls funnel through a single new wrapper
+  `services/ai_client_service.py::call_ai(feature, run, attempts)` (wraps the existing
+  `call_with_fallback`; times the call, reads `usage`/`model`, logs via
+  `services/ai_usage_logger.py`, re-raises failures after logging `status=failed`).
+  Inserts run on a background daemon thread so AI latency is unaffected and a logging
+  error can never break a feature. The 7 existing call sites (mapping generate +
+  regenerate, source extraction, add-column, ETL proc, ETL create-table, deploy AI-fix)
+  were swapped from `call_with_fallback` to `call_ai` — prompts unchanged. New report
+  page **Reports → AI Usage Report** (`pages/ai-usage-report.html` + `js/ai-usage-report.js`)
+  with summary cards + filterable/paginated table, served by `api/ai_usage.py`
+  (`GET /api/ai-usage/logs`, `/summary`). Table auto-created at startup. +10 tests (104 total).
 
 - **Backend refactor: monolith → layered package** (uncommitted). `server/app.py`
   (~1550 lines) split into `server/app/` with layers `api → services → parsers/schemas

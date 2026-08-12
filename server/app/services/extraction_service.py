@@ -22,8 +22,9 @@ from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary
 from app.parsers.sql_ddl_parser import parse_sql_ddl
 from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA
 from app.services.ai_client import (
-    anthropic_client, call_with_fallback, schema_attempts, parse_mapping_json,
+    anthropic_client, schema_attempts, parse_mapping_json,
 )
+from app.services.ai_client_service import call_ai
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
@@ -278,7 +279,7 @@ def _ai_extract_tables_from_text(model: str, filename: str, text: str,
         with client.messages.stream(**base_kwargs, **extra) as stream:
             return stream.get_final_message()
 
-    resp = call_with_fallback(run, schema_attempts(SOURCE_EXTRACT_SCHEMA))
+    resp = call_ai("Source Metadata Extraction", run, schema_attempts(SOURCE_EXTRACT_SCHEMA))
     if getattr(resp, "stop_reason", None) == "refusal":
         return []
     out = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")

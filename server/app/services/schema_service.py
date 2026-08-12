@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Tuple
 
 from app.core.capabilities import anthropic
 from app.core.config import ai_model
-from app.services.ai_client import anthropic_client, call_with_fallback, parse_mapping_json
+from app.services.ai_client import anthropic_client, parse_mapping_json
+from app.services.ai_client_service import call_ai
 from app.schemas.ai_schemas import COLUMN_SCHEMA
 
 Payload = Dict[str, Any]
@@ -95,7 +96,7 @@ def parse_column(body: Dict[str, Any]) -> Result:
             with client.messages.stream(**base_kwargs, **extra) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, [
+        resp = call_ai("Target System - Add Column (AI)", run, [
             {"output_config": {"format": {"type": "json_schema", "schema": COLUMN_SCHEMA}}},
             {},
         ])

@@ -11,10 +11,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   await initShell("metadata-explorer.html");
 
   document.getElementById("colSearch").addEventListener("input", debounce(renderColumns, 150));
-  document.getElementById("selAllCols").addEventListener("change", (e) => {
-    document.querySelectorAll(".col-check").forEach(cb => cb.checked = e.target.checked);
-  });
-  document.getElementById("addScopeBtn").addEventListener("click", addSelectedToScope);
   wireConnectPanel();
 
   // Decide what to show: prefer a live source-system connection over sample data.
@@ -236,7 +232,6 @@ function renderColumns(){
   }
   body.innerHTML = cols.map(c =>
     '<tr>' +
-      '<td><input type="checkbox" class="col-check" data-col="' + c.name + '"></td>' +
       '<td class="mono">' + c.name + '</td>' +
       '<td>' + c.dataType + '</td>' +
       '<td>' + (c.length ?? "-") + '</td>' +
@@ -253,12 +248,3 @@ function renderColumns(){
   ).join("");
 }
 
-function addSelectedToScope(){
-  const checked = Array.from(document.querySelectorAll(".col-check:checked")).map(cb => cb.dataset.col);
-  if(!checked.length){ showNotification("Select at least one column to add to mapping scope.", "warning"); return; }
-  const scope = lsGet(LS_KEYS.scope, {});
-  const existing = scope[activeTable.name] || [];
-  scope[activeTable.name] = Array.from(new Set(existing.concat(checked)));
-  lsSet(LS_KEYS.scope, scope);
-  showNotification(checked.length + " column(s) from " + activeTable.name + " added to mapping scope.", "success");
-}

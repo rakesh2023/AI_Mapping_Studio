@@ -31,6 +31,9 @@ const SIDEBAR_SECTIONS = [
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
     {label:"Export", icon:"bi-download", href:"export.html"},
     {label:"Settings", icon:"bi-gear", href:"settings.html"}
+  ]},
+  {title:"Reports", items:[
+    {label:"AI Usage Report", icon:"bi-graph-up", href:"ai-usage-report.html"}
   ]}
 ];
 

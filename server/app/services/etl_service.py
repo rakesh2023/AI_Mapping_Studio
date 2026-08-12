@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Tuple
 
 from app.core.capabilities import anthropic
 from app.core.config import ai_model
-from app.services.ai_client import anthropic_client, call_with_fallback
+from app.services.ai_client import anthropic_client
+from app.services.ai_client_service import call_ai
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
@@ -194,7 +195,7 @@ def generate_etl(body: Dict[str, Any]) -> Result:
             with client.messages.stream(**base_kwargs, **extra) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, [{"output_config": {"effort": "medium"}}, {}])
+        resp = call_ai("ETL Code Generator - Stored Procedure", run, [{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
@@ -304,7 +305,7 @@ def generate_ddl(body: dict):
             with client.messages.stream(**base_kwargs, **extra) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, [{"output_config": {"effort": "medium"}}, {}])
+        resp = call_ai("ETL Code Generator - Create Table", run, [{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")

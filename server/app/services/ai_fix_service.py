@@ -10,7 +10,8 @@ from typing import Any, Dict
 
 from app.core.capabilities import anthropic
 from app.core.config import ai_model
-from app.services.ai_client import anthropic_client, call_with_fallback
+from app.services.ai_client import anthropic_client
+from app.services.ai_client_service import call_ai
 
 
 def _strip_fences(text: str) -> str:
@@ -86,7 +87,7 @@ def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
             with client.messages.stream(**base_kwargs, **extra) as stream:
                 return stream.get_final_message()
 
-        resp = call_with_fallback(run, [{"output_config": {"effort": "medium"}}, {}])
+        resp = call_ai("ETL Deploy - AI SQL Fix", run, [{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The fix request was declined by safety classifiers."}
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")

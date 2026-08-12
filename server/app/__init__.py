@@ -21,11 +21,17 @@ def create_app() -> Flask:
     from app.api.db_routes import bp as db_bp
     from app.api.ai_routes import bp as ai_bp
     from app.api.deploy_routes import bp as deploy_bp
+    from app.api.ai_usage import bp as ai_usage_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(db_bp)
     application.register_blueprint(ai_bp)
     application.register_blueprint(deploy_bp)
+    application.register_blueprint(ai_usage_bp)
+
+    # Create the local AI-usage-log table if missing (idempotent, non-fatal).
+    from app.services.ai_usage_logger import ensure_usage_table
+    ensure_usage_table()
     return application
 
 
