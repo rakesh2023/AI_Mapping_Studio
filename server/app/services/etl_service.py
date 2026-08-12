@@ -216,3 +216,119 @@ def _strip_fences(text: str) -> str:
         t = re.sub(r"^```[a-zA-Z]*\n", "", t)
         t = re.sub(r"\n```$", "", t)
     return t.strip()
+
+
+def generate_ddl(body: dict):
+    """AI-assisted CREATE TABLE DDL for ONE target table.
+
+    Applies the user's instruction to a deterministic baseline DDL while keeping
+    the real columns accurate. Body: {database, targetTable, columns:[{name,
+    dataType,length,mandatory,pk,fk,fkReference}], baselineDdl, instructions}.
+    Returns (payload, status) with payload.warnings listing any column
+    identifiers the AI introduced that are NOT in the real schema.
+    """
+    if anthropic is None:
+        return {"ok": False, "error": "The 'anthropic' SDK is not installed on the server. Run: pip install anthropic"}, 400
+
+    target_table = (body.get("targetTable") or "").strip()
+    columns = body.get("columns") or []
+    baseline = (body.get("baselineDdl") or "").strip()
+    instructions = (body.get("instructions") or "").strip()
+    if not target_table:
+        return {"ok": False, "error": "No target table provided."}, 400
+    if not columns:
+        return {"ok": False, "error": "No columns provided for this target table."}, 400
+
+    col_lines = []
+    for c in columns:
+        bits = [str(c.get("name", "")), str(c.get("dataType", "") or "")]
+        if c.get("length"):
+            bits[-1] += "(" + str(c.get("length")) + ")"
+        attrs = []
+        if c.get("mandatory"):
+            attrs.append("NOT NULL")
+        if c.get("pk"):
+            attrs.append("PK")
+        if c.get("fk"):
+            attrs.append("FK -> " + str(c.get("fkReference") or "?"))
+        col_lines.append("- " + bits[0] + " " + bits[1] + ("  [" + ", ".join(attrs) + "]" if attrs else ""))
+    cols_block = "\n".join(col_lines)
+
+    system = (
+        "You are a senior SQL Server (T-SQL) engineer. Produce ONE CREATE TABLE statement "
+        "for the given target table. Use the BASELINE DDL as the default and apply the "
+        "user's ADDITIONAL INSTRUCTIONS.\n\n"
+        "HARD RULES (cannot be overridden):\n"
+        "- Use ONLY the columns listed in COLUMNS. Do NOT invent, rename, or drop columns "
+        "unless an instruction explicitly says to. Keep each column's real name and data "
+        "type accurate to the schema.\n"
+        "- Target dialect is Microsoft SQL Server (T-SQL): bracket identifiers like "
+        "[dbo].[Table] and [column]; use SQL Server types.\n\n"
+        "The instructions may add NOT NULL/defaults, composite primary keys, indexes, "
+        "column comments, IF NOT EXISTS, etc. Apply them faithfully. If there are no "
+        "instructions, return clean standard DDL equivalent to the baseline.\n\n"
+        "Return ONLY the SQL. No prose, no markdown fences."
+    )
+    user = (
+        "TARGET TABLE: " + target_table + "\n"
+        "DATABASE: " + (body.get("database") or "CommonStage") + "\n\n"
+        "COLUMNS (name, type [attrs]):\n" + cols_block + "\n\n"
+        "ADDITIONAL INSTRUCTIONS (apply these):\n" + (instructions or "(none)") + "\n\n"
+        "BASELINE DDL (default to adapt):\n\n" + (baseline or "(none — build it from COLUMNS)")
+    )
+
+    model = ai_model()
+    try:
+        client = anthropic_client()
+        base_kwargs = dict(model=model, max_tokens=3000, system=system,
+                           messages=[{"role": "user", "content": user}])
+
+        def run(extra):
+            with client.messages.stream(**base_kwargs, **extra) as stream:
+                return stream.get_final_message()
+
+        resp = call_with_fallback(run, [{"output_config": {"effort": "medium"}}, {}])
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
+        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        sql = _strip_fences(text)
+        if not sql.strip():
+            return {"ok": False, "error": "The AI returned no SQL for this table."}, 400
+
+        warnings = _ddl_hallucination_warnings(sql, columns, target_table)
+        return {"ok": True, "model": model, "targetTable": target_table,
+                "sql": sql, "warnings": warnings}, 200
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        msg = str(exc) or (exc.__class__.__name__ + " (see server log)")
+        return {"ok": False, "error": msg}, 400
+
+
+def _ddl_hallucination_warnings(sql: str, columns, target_table: str):
+    """Best-effort guard: flag bracketed [identifiers] in the DDL that are not a
+    known column, the table name, or a constraint/index name. Heuristic — meant
+    to surface obvious hallucinations, not to be exhaustive."""
+    known = {str(c.get("name", "")).lower() for c in columns if c.get("name")}
+    known.add(str(target_table).lower())
+    # include FK-referenced tables/columns as legitimate
+    for c in columns:
+        ref = str(c.get("fkReference") or "")
+        for part in re.split(r"[.\s]+", ref):
+            if part:
+                known.add(part.strip("[]").lower())
+    suspicious = []
+    for ident in re.findall(r"\[([^\]]+)\]", sql):
+        low = ident.lower()
+        if low in known or low == "dbo":
+            continue
+        # skip obvious constraint / index / schema names
+        if re.match(r"^(pk|fk|ix|uq|df|ck)[_0-9a-z]*$", low) or "_" in low or low.startswith("idx"):
+            continue
+        suspicious.append(ident)
+    # de-dup, preserve order
+    seen, out = set(), []
+    for s in suspicious:
+        if s.lower() not in seen:
+            seen.add(s.lower()); out.append(s)
+    return out

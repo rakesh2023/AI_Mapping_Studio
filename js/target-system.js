@@ -29,6 +29,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("cType").addEventListener("change", toggleTargetFields);
   document.getElementById("cAuth").addEventListener("change", toggleTargetFields);
   document.getElementById("targetSearch").addEventListener("input", debounce(renderTargetFields, 150));
+  wireAddColumn();
 });
 
 function isSqlServer(type){ return (type || "").toLowerCase().indexOf("sql server") !== -1; }
@@ -336,6 +337,8 @@ function selectEntity(name){
   document.querySelectorAll("[data-entity]").forEach(n => n.classList.toggle("active", n.dataset.entity === name));
   document.getElementById("targetTitle").innerHTML = '<i class="bi bi-table"></i> ' + escapeHtml(name) +
     ' <span class="text-muted-2 text-xs">(' + escapeHtml(activeEntity.table || name) + ')</span>';
+  const addBtn = document.getElementById("addColumnBtn");
+  if(addBtn) addBtn.style.display = "";   // an entity is selected -> allow adding a column
   renderTargetFields();
 }
 
@@ -349,7 +352,7 @@ function renderTargetFields(){
     return;
   }
   body.innerHTML = fields.map(f =>
-    '<tr>' +
+    '<tr data-col="' + escapeHtml(f.name) + '">' +
       '<td>' + escapeHtml(activeEntity.name) + '</td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
       '<td class="mono">' + escapeHtml(f.name) + '</td>' +
@@ -365,6 +368,277 @@ function renderTargetFields(){
       '<td>' + escapeHtml(f.default ?? "-") + '</td>' +
     '</tr>'
   ).join("");
+}
+
+/* =========================================================================
+   Add Column — append a new field (grid row) to the selected target table,
+   manually or via a natural-language AI instruction. Persists to the ACTIVE
+   target connection (localStorage) so it survives refresh and flows to the
+   AI Generator / Workspace / Validation.
+   ========================================================================= */
+const AC_TYPES = ["varchar","nvarchar","char","text","int","bigint","smallint","tinyint",
+  "decimal","numeric","money","float","bit","boolean","date","datetime","datetime2","time","uniqueidentifier"];
+const AC_LENGTH_TYPES = ["varchar","nvarchar","char","decimal","numeric"];
+let acModal = null;            // bootstrap.Modal instance
+let acLastAdded = null;        // {entity, column} for Undo
+
+function wireAddColumn(){
+  const openBtn = document.getElementById("addColumnBtn");
+  if(openBtn) openBtn.addEventListener("click", openAddColumnModal);
+
+  // type dropdown options
+  const typeSel = document.getElementById("acType");
+  if(typeSel) typeSel.innerHTML = AC_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join("");
+
+  // tab toggle
+  document.querySelectorAll("#acTabs [data-tab]").forEach(b => {
+    b.addEventListener("click", () => acSwitchTab(b.dataset.tab));
+  });
+  const typeEl = document.getElementById("acType");
+  if(typeEl) typeEl.addEventListener("change", acToggleLen);
+  const fkEl = document.getElementById("acFk");
+  if(fkEl) fkEl.addEventListener("change", acToggleFk);
+  const nameEl = document.getElementById("acName");
+  if(nameEl) nameEl.addEventListener("input", () => acClearErr("acName"));
+
+  const parseBtn = document.getElementById("acParseBtn");
+  if(parseBtn) parseBtn.addEventListener("click", acParse);
+  const saveBtn = document.getElementById("acSaveBtn");
+  if(saveBtn) saveBtn.addEventListener("click", acSave);
+  // Enter in the manual form submits (not the AI textarea)
+  const form = document.getElementById("acForm");
+  if(form) form.addEventListener("keydown", (e) => { if(e.key === "Enter"){ e.preventDefault(); acSave(); } });
+}
+
+function openAddColumnModal(){
+  if(!activeEntity){ showNotification("Select a target table first.", "warning"); return; }
+  const meta = getTargetSchema();
+  // reset form
+  document.getElementById("acForm").reset();
+  document.getElementById("acType").value = "varchar";
+  document.querySelectorAll(".acerr").forEach(e => e.textContent = "");
+  document.getElementById("acAIError").innerHTML = "";
+  document.getElementById("acAIStatus").textContent = "";
+  document.getElementById("acInstruction").value = "";
+  document.getElementById("acTableName").textContent = activeEntity.name;
+
+  // FK reference options: every table.column in the active schema
+  const fkOpts = [];
+  (meta.entities || []).forEach(e => (e.fields || []).forEach(f => fkOpts.push((e.table || e.name) + "." + f.name)));
+  document.getElementById("acFkRefList").innerHTML = fkOpts.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
+
+  // Insert-position options: existing columns of THIS table
+  document.getElementById("acAfter").innerHTML = '<option value="">At the end</option>' +
+    (activeEntity.fields || []).map(f => '<option value="' + escapeHtml(f.name) + '">after ' + escapeHtml(f.name) + '</option>').join("");
+
+  acSwitchTab("manual");
+  acToggleLen();
+  acToggleFk();
+
+  if(!acModal) acModal = new bootstrap.Modal(document.getElementById("addColumnModal"));
+  acModal.show();
+  setTimeout(() => document.getElementById("acName").focus(), 200);
+}
+
+function acSwitchTab(tab){
+  const ai = tab === "ai";
+  document.getElementById("acAIPanel").style.display = ai ? "" : "none";
+  document.getElementById("acTabManual").classList.toggle("active", !ai);
+  document.getElementById("acTabAI").classList.toggle("active", ai);
+}
+
+function acToggleLen(){
+  const type = document.getElementById("acType").value;
+  const needsLen = AC_LENGTH_TYPES.indexOf(type) !== -1;
+  document.getElementById("acLenGroup").style.display = needsLen ? "" : "none";
+}
+function acToggleFk(){
+  document.getElementById("acFkGroup").style.display = document.getElementById("acFk").checked ? "" : "none";
+}
+
+function acSetErr(field, msg){
+  const el = document.querySelector('.acerr[data-for="' + field + '"]');
+  if(el){ el.textContent = msg; el.style.color = "var(--danger)"; }
+}
+function acClearErr(field){ const el = document.querySelector('.acerr[data-for="' + field + '"]'); if(el) el.textContent = ""; }
+
+/* ---- AI instruction -> prefill the form (preview/confirm) ---- */
+async function acParse(){
+  const instruction = (document.getElementById("acInstruction").value || "").trim();
+  const status = document.getElementById("acAIStatus");
+  const errBox = document.getElementById("acAIError");
+  errBox.innerHTML = "";
+  if(!instruction){ errBox.innerHTML = failNote("Type an instruction first."); return; }
+  status.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Parsing…';
+  try{
+    const payload = {
+      instruction,
+      tableName: activeEntity.name,
+      existingColumns: (activeEntity.fields || []).map(f => ({name:f.name, dataType:f.dataType, pk:f.pk, fk:f.fk}))
+    };
+    const res = await fetch("/api/ai/parse-column", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    status.textContent = "";
+    if(!data.ok){ errBox.innerHTML = failNote(data.error || "Could not parse the instruction."); return; }
+    const c = data.column;
+    if((c.confidence || 0) < 45){
+      errBox.innerHTML = failNote("Not confident about that request" + (c.note ? ": " + c.note : ".") + " Edit the form below or rephrase.");
+    }
+    // prefill the shared form (preview — user confirms with Add Column)
+    document.getElementById("acName").value = c.column || "";
+    document.getElementById("acType").value = AC_TYPES.indexOf((c.dataType||"").toLowerCase()) !== -1 ? c.dataType.toLowerCase() : "varchar";
+    acToggleLen();
+    if(c.length != null) document.getElementById("acLen").value = c.length;
+    document.getElementById("acMandatory").value = c.mandatory ? "true" : "false";
+    document.getElementById("acPk").checked = !!c.pk;
+    document.getElementById("acFk").checked = !!c.fk;
+    acToggleFk();
+    document.getElementById("acFkRef").value = c.fkReference || "";
+    document.getElementById("acDesc").value = c.description || "";
+    document.getElementById("acAfter").value = (c.afterColumn && (activeEntity.fields||[]).some(f => f.name === c.afterColumn)) ? c.afterColumn : "";
+    acSwitchTab("manual");   // show the pre-filled form to confirm
+    if(c.duplicate) acSetErr("acName", "A column named '" + c.column + "' already exists.");
+    showNotification("AI filled the form — review and click Add Column.", "primary", 2500);
+  }catch(err){
+    status.textContent = "";
+    errBox.innerHTML = failNote("Backend not reachable. Start it with: cd server && python main.py");
+  }
+}
+
+/* ---- validate the manual/preview form ---- */
+function acValidate(){
+  document.querySelectorAll(".acerr").forEach(e => e.textContent = "");
+  let ok = true;
+  const name = (document.getElementById("acName").value || "").trim();
+  const type = document.getElementById("acType").value;
+  const needsLen = AC_LENGTH_TYPES.indexOf(type) !== -1;
+  const lenRaw = (document.getElementById("acLen").value || "").trim();
+  const fk = document.getElementById("acFk").checked;
+  const fkRef = (document.getElementById("acFkRef").value || "").trim();
+
+  if(!name){ acSetErr("acName", "Column name is required."); ok = false; }
+  else if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)){ acSetErr("acName", "Use letters, numbers and underscores only (no spaces)."); ok = false; }
+  else if((activeEntity.fields || []).some(f => f.name.toLowerCase() === name.toLowerCase())){ acSetErr("acName", "A column named '" + name + "' already exists in this table."); ok = false; }
+
+  if(needsLen){
+    if(!lenRaw){ acSetErr("acLen", "Length is required for " + type + "."); ok = false; }
+    else if(!/^[1-9][0-9]*$/.test(lenRaw)){ acSetErr("acLen", "Length must be a positive integer."); ok = false; }
+  }
+  if(fk && !fkRef){ acSetErr("acFkRef", "Enter the referenced table.column."); ok = false; }
+  else if(fk && fkRef){
+    const meta = getTargetSchema();
+    const exists = (meta.entities || []).some(e => (e.fields || []).some(f => ((e.table||e.name) + "." + f.name).toLowerCase() === fkRef.toLowerCase()));
+    if(!exists) acSetErr("acFkRef", "Warning: '" + fkRef + "' isn't a known target table.column.");   // warn, not block
+  }
+  return ok;
+}
+
+/* ---- build field object from the form ---- */
+function acFieldFromForm(){
+  const type = document.getElementById("acType").value;
+  const needsLen = AC_LENGTH_TYPES.indexOf(type) !== -1;
+  const lenRaw = (document.getElementById("acLen").value || "").trim();
+  const fk = document.getElementById("acFk").checked;
+  return {
+    name: (document.getElementById("acName").value || "").trim(),
+    dataType: type,
+    length: needsLen && lenRaw ? parseInt(lenRaw, 10) : null,
+    mandatory: document.getElementById("acMandatory").value === "true",
+    pk: document.getElementById("acPk").checked,
+    fk: fk,
+    fkReference: fk ? (document.getElementById("acFkRef").value || "").trim() : "",
+    description: (document.getElementById("acDesc").value || "").trim(),
+    businessTerm: "",
+    accepted: null,
+    default: null
+  };
+}
+
+/* ---- save: persist to the active connection, refresh, highlight, undo ---- */
+function acSave(){
+  if(!acValidate()) return;
+  const field = acFieldFromForm();
+  const afterCol = document.getElementById("acAfter").value || "";
+
+  // PK warning (allow composite, but confirm intent) — non-blocking.
+  if(field.pk && (activeEntity.fields || []).some(f => f.pk)){
+    // simple confirm; keep going if user accepts
+    if(!window.confirm("This table already has a primary key. Add '" + field.name + "' as an additional PK (composite key)?")) return;
+  }
+
+  const res = persistColumn(activeEntity.name, field, afterCol);
+  if(!res.ok){ showNotification(res.error || "Could not save the column.", "danger"); return; }
+
+  if(acModal) acModal.hide();
+  // refresh browser + counters, keep the same entity selected
+  renderActiveBrowser();
+  selectEntity(activeEntity.name);
+  flashRow(field.name);
+  acLastAdded = {entity: activeEntity.name, column: field.name};
+  showColumnAddedToast(field.name, activeEntity.name);
+}
+
+/* Insert the field into the ACTIVE target connection's entity and re-persist. */
+function persistColumn(entityName, field, afterCol){
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn || !conn.entities){ return {ok:false, error:"No active target connection to modify."}; }
+  const ent = conn.entities.find(e => e.name === entityName || e.table === entityName);
+  if(!ent){ return {ok:false, error:"Target table '" + entityName + "' was not found."}; }
+  ent.fields = ent.fields || [];
+  if(ent.fields.some(f => f.name.toLowerCase() === field.name.toLowerCase())){
+    return {ok:false, error:"A column named '" + field.name + "' already exists."};
+  }
+  // insert after a given column, else append
+  const at = afterCol ? ent.fields.findIndex(f => f.name === afterCol) : -1;
+  if(at !== -1) ent.fields.splice(at + 1, 0, field); else ent.fields.push(field);
+
+  conn.columnCount = (conn.entities || []).reduce((a,e) => a + (e.fields||[]).length, 0);
+  conn.tableCount = (conn.entities || []).length;
+  try{
+    upsertTargetConnection(conn);
+    if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);   // re-materialize getTargetSchema()
+  }catch(err){ return {ok:false, error:"Could not persist (storage full?): " + err.message}; }
+  return {ok:true};
+}
+
+/* Remove a just-added column (Undo). */
+function removeColumn(entityName, colName){
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn) return;
+  const ent = (conn.entities || []).find(e => e.name === entityName || e.table === entityName);
+  if(!ent) return;
+  ent.fields = (ent.fields || []).filter(f => f.name !== colName);
+  conn.columnCount = (conn.entities || []).reduce((a,e) => a + (e.fields||[]).length, 0);
+  upsertTargetConnection(conn);
+  if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);
+  renderActiveBrowser();
+  selectEntity(entityName);
+}
+
+function flashRow(colName){
+  const row = document.querySelector('#targetFieldsBody tr[data-col="' + (window.CSS && CSS.escape ? CSS.escape(colName) : colName) + '"]');
+  if(row){ row.classList.add("row-flash"); row.scrollIntoView({behavior:"smooth", block:"center"}); setTimeout(() => row.classList.remove("row-flash"), 2200); }
+}
+
+/* success toast with an Undo action */
+function showColumnAddedToast(colName, entityName){
+  const stack = document.getElementById("toast-stack");
+  if(!stack){ showNotification("Column '" + colName + "' added to " + entityName + ".", "success"); return; }
+  const el = document.createElement("div");
+  el.className = "toast-item success";
+  el.innerHTML = '<div class="d-flex align-items-center justify-content-between gap-3">' +
+    '<span><i class="bi bi-check-circle me-1"></i> Column <strong>' + escapeHtml(colName) + '</strong> added to ' + escapeHtml(entityName) + '.</span>' +
+    '<button type="button" class="btn btn-sm btn-outline-soft acundo">Undo</button></div>';
+  stack.appendChild(el);
+  const remove = () => { if(el.parentNode) el.parentNode.removeChild(el); };
+  el.querySelector(".acundo").addEventListener("click", () => {
+    removeColumn(entityName, colName);
+    remove();
+    showNotification("Removed '" + colName + "'.", "primary", 1500);
+  });
+  setTimeout(remove, 7000);
 }
 
 /* ---- note helpers (match source-systems.js) ---- */

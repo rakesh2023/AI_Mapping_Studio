@@ -39,19 +39,29 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireControls();
 });
 
-/* ---- AI Processing Console (per-table progress log) ---- */
-function etlConsoleShow(open){
-  const card = document.getElementById("etlConsoleCard");
-  const log = document.getElementById("etlLog");
-  const btn = document.getElementById("etlConsoleToggle");
-  if(!card) return;
-  card.style.display = "";                 // reveal the card
-  if(log) log.style.display = open === false ? "none" : "";
-  if(btn){
-    const icon = btn.querySelector("i");
-    if(icon) icon.className = "bi " + (open === false ? "bi-chevron-down" : "bi-chevron-up");
-    btn.title = open === false ? "Show console" : "Hide console";
-  }
+/* ---- AI Processing Console (right-side column; hidden until you generate) ---- */
+function etlConsoleShow(){
+  const col = document.getElementById("etlConsoleCol");
+  if(col) col.style.display = "";          // reveal the console column
+  layoutEtlCols();
+}
+function etlConsoleHide(){
+  const col = document.getElementById("etlConsoleCol");
+  if(col) col.style.display = "none";      // collapse (re-opens on the next generate)
+  layoutEtlCols();
+}
+// Recompute the widths of Target Tables / Generated SQL / Console based on which
+// side panels are visible, so the SQL box always fills the remaining space.
+function layoutEtlCols(){
+  const panel = document.getElementById("etlPanelCol");
+  const grid = document.getElementById("etlGridCol");
+  const con = document.getElementById("etlConsoleCol");
+  if(!grid) return;
+  const p = panel && panel.style.display !== "none";
+  const c = con && con.style.display !== "none";
+  let gw;
+  if(p && c) gw = 5; else if(!p && c) gw = 8; else if(p && !c) gw = 9; else gw = 12;
+  grid.className = grid.className.replace(/\bcol-lg-\d+\b/g, "").replace(/\s+/g, " ").trim() + " col-lg-" + gw;
 }
 function etlLogReset(){
   const el = document.getElementById("etlLog");
@@ -190,6 +200,10 @@ function wireControls(){
     const b = document.getElementById(id);
     if(b) b.addEventListener("click", (e) => { e.preventDefault(); generateEtl(); });
   });
+  ["generateDdlBtn","generateDdlBtn2"].forEach(id => {
+    const b = document.getElementById(id);
+    if(b) b.addEventListener("click", (e) => { e.preventDefault(); generateDdl(); });
+  });
   const copyBtn = document.getElementById("copyEtlBtn");
   if(copyBtn) copyBtn.addEventListener("click", (e) => { e.preventDefault(); copyEtl(); });
   const dl = document.getElementById("downloadEtlBtn");
@@ -203,14 +217,9 @@ function wireControls(){
   if(show) show.addEventListener("click", (e) => { e.preventDefault(); toggleEtlPanel(true); });
   if(lsGet("aims_etl_panel_hidden", false)) toggleEtlPanel(false);   // restore preference
 
-  // AI console collapse/expand
+  // AI console close button (re-opens automatically on the next generate)
   const conBtn = document.getElementById("etlConsoleToggle");
-  if(conBtn) conBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    const log = document.getElementById("etlLog");
-    const collapsed = log && log.style.display === "none";
-    etlConsoleShow(collapsed ? true : false);   // toggle
-  });
+  if(conBtn) conBtn.addEventListener("click", (e) => { e.preventDefault(); etlConsoleHide(); });
 
   updateGenerateBtn();
 }
@@ -218,35 +227,54 @@ function wireControls(){
 // Collapse/expand the Target Tables panel; the SQL column widens to fill the space.
 function toggleEtlPanel(show){
   const panel = document.getElementById("etlPanelCol");
-  const grid = document.getElementById("etlGridCol");
   const showBtn = document.getElementById("etlShowPanelBtn");
-  if(!panel || !grid) return;
+  if(!panel) return;
   if(show){
     panel.style.display = "";
-    grid.classList.remove("col-lg-12"); grid.classList.add("col-lg-8");
     if(showBtn) showBtn.style.display = "none";
     lsSet("aims_etl_panel_hidden", false);
   } else {
     panel.style.display = "none";
-    grid.classList.remove("col-lg-8"); grid.classList.add("col-lg-12");
     if(showBtn) showBtn.style.display = "";
     lsSet("aims_etl_panel_hidden", true);
   }
+  layoutEtlCols();
 }
 
 function updateGenerateBtn(){
   const n = etlSelected.size;
+  const cnt = n ? (' (' + n + ')') : '';
   ["generateEtlBtn","generateEtlBtn2"].forEach(id => {
     const gen = document.getElementById(id);
-    if(gen){
-      gen.disabled = n === 0;
-      gen.innerHTML = '<i class="bi bi-magic me-1"></i> Generate ETL Code' + (n ? (' (' + n + ')') : '');
-    }
+    if(gen){ gen.disabled = n === 0; gen.innerHTML = '<i class="bi bi-magic me-1"></i> Generate ETL Code' + cnt; }
   });
+  const ddlTop = document.getElementById("generateDdlBtn");
+  if(ddlTop){ ddlTop.disabled = n === 0; ddlTop.innerHTML = '<i class="bi bi-table me-1"></i> Generate Create Table Script' + cnt; }
+  const ddlPanel = document.getElementById("generateDdlBtn2");
+  if(ddlPanel){ ddlPanel.disabled = n === 0; ddlPanel.innerHTML = '<i class="bi bi-table me-1"></i> Create Table' + cnt; }
 }
 
 /* ---- SQL generation (deterministic template fill) ---- */
-let etlLastSql = "";
+let etlLastSql = "";     // ETL stored-procedure output buffer
+let ddlLastSql = "";     // CREATE TABLE output buffer
+let etlView = "etl";     // which buffer the panel shows: "etl" | "ddl"
+
+function currentSql(){ return etlView === "ddl" ? ddlLastSql : etlLastSql; }
+function outputPlaceholder(){ return '-- Select one or more target tables on the left, then click "Generate ETL Code" or "Create Table".'; }
+
+// Render the active buffer into the panel; keep the view toggle + toolbar buttons in sync.
+function renderOutput(){
+  const out = document.getElementById("etlOutput");
+  if(out) out.innerHTML = '<code>' + escapeHtml(currentSql() || outputPlaceholder()) + '</code>';
+  updateViewToggle();
+  updateOutputButtons();
+}
+function setEtlView(v){ etlView = (v === "ddl") ? "ddl" : "etl"; renderOutput(); }
+function updateViewToggle(){ /* view toggle removed — the panel shows the last-generated output */ }
+function updateOutputButtons(){
+  const has = !!currentSql();
+  ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = !has; });
+}
 
 async function generateEtl(){
   const selected = etlGroups.filter(g => etlSelected.has(g.name));
@@ -267,11 +295,9 @@ async function generateEtl(){
       const line = etlLogStep("Building " + g.name + " …");
       etlLogDone(line, "Built " + g.name + " (" + g.rows.length + " columns)");
     });
-    const sql = selected.map(g => buildProc(g, db)).join("\n\nGO\n\n\n");
-    etlLastSql = sql;
-    if(out) out.innerHTML = '<code>' + escapeHtml(sql) + '</code>';
+    etlLastSql = selected.map(g => buildProc(g, db)).join("\n\nGO\n\n\n");
+    etlView = "etl"; renderOutput();
     if(info) info.textContent = selected.length + " procedure(s)";
-    ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
     etlLogInfo("Done — " + selected.length + " procedure(s) generated.");
     showNotification("Generated SQL for " + selected.length + " table(s).", "success");
     return;
@@ -279,7 +305,7 @@ async function generateEtl(){
 
   // Instructions present -> AI-generate each table's proc (fall back to the
   // deterministic build for any table whose AI call fails).
-  setEtlBusy(true);
+  setEtlBusy(true, "etl");
   if(info) info.textContent = "Generating with AI…";
   etlLogInfo("AI generation with your instructions. This takes a few seconds per table…");
   const parts = [];
@@ -303,9 +329,8 @@ async function generateEtl(){
       }
     }
     etlLastSql = parts.join("\n\nGO\n\n\n");
-    if(out) out.innerHTML = '<code>' + escapeHtml(etlLastSql) + '</code>';
+    etlView = "etl"; renderOutput();
     if(info) info.textContent = selected.length + " procedure(s)" + (fbCount ? (" · " + fbCount + " fallback") : "");
-    ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = false; });
     if(fbCount){
       const reason = errors.length ? (" Reason: " + errors[0]) : "";
       etlLogInfo("Finished with " + fbCount + " fallback(s). See errors above.");
@@ -348,14 +373,18 @@ async function aiGenerateProc(g, db, instructions){
   return data.sql;
 }
 
-// Toggle a "running" state on the generate buttons.
-function setEtlBusy(busy){
-  ["generateEtlBtn","generateEtlBtn2"].forEach(id => {
+// Toggle a "running" state; disables ALL generate buttons (no concurrent runs),
+// spinner shows on the buttons for the mode being run ("etl" | "ddl").
+function setEtlBusy(busy, which){
+  const all = ["generateEtlBtn","generateEtlBtn2","generateDdlBtn","generateDdlBtn2"];
+  all.forEach(id => {
     const b = document.getElementById(id);
     if(!b) return;
+    const isDdl = id.indexOf("Ddl") !== -1;
+    const running = busy && ((which === "ddl") === isDdl);
     b.disabled = busy || etlSelected.size === 0;
-    b.classList.toggle("btn-running", busy);
-    if(busy) b.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Generating…';
+    b.classList.toggle("btn-running", running);
+    if(running) b.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Generating…';
   });
   if(!busy) updateGenerateBtn();
 }
@@ -452,32 +481,201 @@ function buildProc(g, db){
 "END;";
 }
 
+/* =========================================================================
+   CREATE TABLE (DDL) generation — deterministic from the target schema, or
+   AI-assisted with the shared instruction box. Mirrors the ETL flow.
+   ========================================================================= */
+
+// Resolve a target table's full column set: prefer the authoritative target
+// schema (all columns w/ type/len/PK/FK); fall back to the mapped columns.
+function targetColumnsFor(g){
+  let fields = null;
+  try{
+    if(typeof getTargetSchema === "function"){
+      const meta = getTargetSchema();
+      if(meta && meta.entities){
+        const ent = meta.entities.find(e =>
+          e.name === g.entity || e.name === g.name || e.table === g.table || e.table === g.name);
+        if(ent && ent.fields && ent.fields.length) fields = ent.fields;
+      }
+    }
+  }catch(e){ /* fall back below */ }
+
+  if(fields){
+    return {source: "schema", columns: fields.map(f => ({
+      name: f.name,
+      dataType: (f.dataType || "varchar"),
+      length: (f.length != null && !isNaN(+f.length)) ? +f.length : null,
+      mandatory: !!f.mandatory, pk: !!f.pk, fk: !!f.fk, fkReference: f.fkReference || ""
+    }))};
+  }
+  // fallback: mapped target columns (best-effort — no PK/FK/len metadata)
+  return {source: "mapped", columns: (g.rows || []).map(m => ({
+    name: m.targetColumn,
+    dataType: (m.targetDataType || "varchar"),
+    length: (m.targetLength != null && !isNaN(+m.targetLength)) ? +m.targetLength : null,
+    mandatory: String(m.nullHandling || "").toLowerCase().indexOf("not null") !== -1,
+    pk: false, fk: false, fkReference: ""
+  })).filter(c => c.name)};
+}
+
+// "cs_claim.id" / "[cs_claim].[id]" -> {table, column}; null if not table.column
+function parseFkRef(ref){
+  if(!ref) return null;
+  const parts = String(ref).replace(/[\[\]]/g, "").trim().split(".");
+  if(parts.length >= 2) return {table: parts[parts.length - 2], column: parts[parts.length - 1]};
+  return null;
+}
+
+// Deterministic T-SQL CREATE TABLE for one table.
+// Returns {sql, columns:<count>, source:"schema"|"mapped", columns_meta:[...]}.
+function buildCreateTable(g){
+  const info = targetColumnsFor(g);
+  const cols = info.columns;
+  const tbl = g.name;
+  const short = sqlShortName(tbl);
+  const lenTypes = /^(char|varchar|nvarchar|nchar|decimal|numeric)$/i;
+
+  const lines = cols.map(c => {
+    let type = c.dataType || "varchar";
+    if(c.length && lenTypes.test(type)) type += "(" + c.length + ")";
+    return "    [" + c.name + "] " + type + (c.mandatory ? " NOT NULL" : " NULL");
+  });
+  const constraints = [];
+  const pkCols = cols.filter(c => c.pk).map(c => "[" + c.name + "]");
+  if(pkCols.length) constraints.push("    CONSTRAINT [PK_" + short + "] PRIMARY KEY (" + pkCols.join(", ") + ")");
+  cols.filter(c => c.fk && c.fkReference).forEach(c => {
+    const ref = parseFkRef(c.fkReference);
+    if(ref) constraints.push("    CONSTRAINT [FK_" + short + "_" + c.name + "] FOREIGN KEY ([" + c.name + "]) REFERENCES [" + ref.table + "] ([" + ref.column + "])");
+  });
+  const note = info.source === "mapped"
+    ? "-- (columns derived from mapped fields; full target schema not found for this table)\n" : "";
+  const sql = note + "CREATE TABLE [dbo].[" + tbl + "] (\n" + lines.concat(constraints).join(",\n") + "\n);";
+  return {sql: sql, columns: cols.length, source: info.source, columns_meta: cols};
+}
+
+async function generateDdl(){
+  const selected = etlGroups.filter(g => etlSelected.has(g.name));
+  if(!selected.length){ showNotification("Select at least one target table.", "warning"); return; }
+  const db = currentEtlDb();
+  const instr = currentEtlInstructions();
+  const info = document.getElementById("etlOutInfo");
+
+  etlConsoleShow(true);
+  etlLogReset();
+
+  // Deterministic mode (no instructions).
+  if(!instr){
+    etlLogInfo("Deterministic CREATE TABLE from the target schema (no AI instructions).");
+    let mapped = 0;
+    const parts = selected.map(g => {
+      const line = etlLogStep("Building CREATE TABLE for " + g.name + " …");
+      const built = buildCreateTable(g);
+      if(built.source === "mapped") mapped++;
+      etlLogDone(line, "Built " + g.name + " (" + built.columns + " columns" + (built.source === "mapped" ? ", from mapped fields" : "") + ")");
+      return "-- Table: " + g.name + "\n" + built.sql;
+    });
+    ddlLastSql = "USE [" + db + "]\nGO\n\n" + parts.join("\n\nGO\n\n\n");
+    etlView = "ddl"; renderOutput();
+    if(info) info.textContent = selected.length + " CREATE TABLE statement(s)";
+    etlLogInfo("Done — " + selected.length + " statement(s)." + (mapped ? (" " + mapped + " used mapped columns (no full schema).") : ""));
+    showNotification("Generated CREATE TABLE for " + selected.length + " table(s).", "success");
+    return;
+  }
+
+  // AI mode.
+  setEtlBusy(true, "ddl");
+  if(info) info.textContent = "Generating CREATE TABLE with AI…";
+  etlLogInfo("AI CREATE TABLE with your instructions. A few seconds per table…");
+  const parts = [];
+  let aiCount = 0, fbCount = 0;
+  const errors = [], warns = [];
+  try{
+    for(let i = 0; i < selected.length; i++){
+      const g = selected[i];
+      if(info) info.textContent = "AI generating " + (i+1) + " / " + selected.length + " (" + g.name + ")…";
+      const line = etlLogStep("[" + (i+1) + "/" + selected.length + "] AI CREATE TABLE " + g.name + " …");
+      const baseline = buildCreateTable(g);
+      let out2 = null;
+      try{ out2 = await aiGenerateDdl(g, db, instr, baseline); }
+      catch(e){ out2 = null; errors.push(g.name + ": " + (e && e.message ? e.message : e)); }
+      if(out2 && out2.sql && out2.sql.trim()){
+        parts.push("-- Table: " + g.name + "\n" + out2.sql.trim()); aiCount++;
+        if(out2.warnings && out2.warnings.length){
+          warns.push(g.name + ": " + out2.warnings.join(", "));
+          etlLogFail(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " generated — unknown identifiers: " + out2.warnings.join(", "));
+        } else {
+          etlLogDone(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " generated by AI");
+        }
+      } else {
+        parts.push("-- Table: " + g.name + "\n" + baseline.sql); fbCount++;
+        etlLogFail(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " AI failed — used template. " + (errors.length ? errors[errors.length-1] : ""));
+      }
+    }
+    ddlLastSql = parts.join("\n\nGO\n\n\n");
+    etlView = "ddl"; renderOutput();
+    if(info) info.textContent = selected.length + " CREATE TABLE" + (fbCount ? (" · " + fbCount + " fallback") : "") + (warns.length ? " · " + warns.length + " warning(s)" : "");
+    if(fbCount){
+      etlLogInfo("Finished with " + fbCount + " fallback(s). See errors above.");
+      showNotification("AI CREATE TABLE failed for " + fbCount + " table(s); used the template instead." + (errors.length ? (" Reason: " + errors[0]) : ""), "danger", 8000);
+      if(errors.length) console.error("DDL AI errors:\n" + errors.join("\n"));
+    } else if(warns.length){
+      showNotification("Generated with warnings — the AI referenced identifiers not in the schema: " + warns[0] + ". Review before running.", "warning", 9000);
+    } else {
+      etlLogInfo("Done — " + aiCount + " CREATE TABLE statement(s) generated by AI.");
+      showNotification("AI-generated CREATE TABLE for " + aiCount + " table(s).", "success");
+    }
+  }finally{
+    setEtlBusy(false);
+  }
+}
+
+async function aiGenerateDdl(g, db, instructions, baseline){
+  const payload = {
+    database: db, targetTable: g.name,
+    columns: baseline.columns_meta, baselineDdl: baseline.sql,
+    instructions: instructions || ""
+  };
+  let res;
+  try{
+    res = await fetch("/api/ai/generate-ddl", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+  }catch(netErr){
+    throw new Error("Cannot reach the backend (is python server/main.py running?)");
+  }
+  let data;
+  try{ data = await res.json(); }
+  catch(parseErr){ throw new Error("HTTP " + res.status + " - non-JSON response from server"); }
+  if(!res.ok || !data.ok) throw new Error(data && data.error ? data.error : ("HTTP " + res.status));
+  return {sql: data.sql, warnings: data.warnings || []};
+}
+
 function copyEtl(){
-  if(!etlLastSql) return;
-  navigator.clipboard.writeText(etlLastSql)
+  const sql = currentSql();
+  if(!sql) return;
+  navigator.clipboard.writeText(sql)
     .then(() => showNotification("SQL copied to clipboard.", "success"))
     .catch(() => showNotification("Could not copy to clipboard.", "danger"));
 }
 
 function downloadEtl(){
-  if(!etlLastSql) return;
-  const blob = new Blob([etlLastSql], {type:"text/sql"});
+  const sql = currentSql();
+  if(!sql) return;
+  const blob = new Blob([sql], {type:"text/sql"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = "etl_" + currentEtlDb() + "_procedures.sql";
+  const fname = (etlView === "ddl" ? "create_tables_" : "etl_") + currentEtlDb() + (etlView === "ddl" ? ".sql" : "_procedures.sql");
+  a.href = url; a.download = fname;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
 
-// Clear the generated SQL output (does NOT touch the table selection).
+// Clear ONLY the currently-shown output buffer (does NOT touch the table selection).
 function clearEtl(){
-  etlLastSql = "";
-  const out = document.getElementById("etlOutput");
-  if(out) out.innerHTML = '<code>-- Select one or more target tables on the left, then click "Generate ETL Code".</code>';
+  if(etlView === "ddl") ddlLastSql = ""; else etlLastSql = "";
+  renderOutput();
   const info = document.getElementById("etlOutInfo");
   if(info) info.textContent = "";
-  ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = true; });
-  showNotification("Cleared the generated SQL.", "primary", 1200);
+  showNotification("Cleared the " + (etlView === "ddl" ? "CREATE TABLE" : "ETL") + " output.", "primary", 1200);
 }
 
 /* ---- Target database name ---- */
@@ -490,7 +688,9 @@ function initDbName(){
   input.addEventListener("input", () => {
     lsSet(LS_ETL_DB, input.value);
     applyDbName(input.value);
-    if(etlLastSql) generateEtl();   // refresh output if already generated
+    // refresh whichever output is currently shown (SP names / USE depend on the DB name)
+    if(etlView === "ddl" && ddlLastSql) generateDdl();
+    else if(etlLastSql) generateEtl();
   });
 }
 function applyDbName(name){

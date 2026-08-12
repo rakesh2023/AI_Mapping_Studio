@@ -114,3 +114,25 @@ SOURCE_EXTRACT_SCHEMA = {
     "required": ["tables"],
     "additionalProperties": False,
 }
+
+
+# One new target column parsed from a natural-language instruction
+# (POST /api/ai/parse-column). confidence 0 means "could not confidently parse".
+COLUMN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "column": {"type": "string"},
+        "dataType": {"type": "string"},
+        "length": {"type": ["integer", "null"]},
+        "mandatory": {"type": "boolean"},
+        "pk": {"type": "boolean"},
+        "fk": {"type": "boolean"},
+        "fkReference": {"type": ["string", "null"]},
+        "afterColumn": {"type": ["string", "null"]},
+        "description": {"type": "string"},
+        "confidence": {"type": "integer"},
+        "note": {"type": "string"},
+    },
+    "required": ["column", "dataType", "mandatory", "pk", "fk", "confidence"],
+    "additionalProperties": False,
+}

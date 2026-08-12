@@ -45,3 +45,7 @@ body.theme-dark table.grid-table tbody tr.row-selected{background:#22304a;}
 body.theme-dark .pagination-bar button{background:var(--bg-card);color:var(--text-main);}
 body.theme-dark .metadata-tree .tree-node{color:var(--text-main);}
 body.theme-dark .metadata-tree .tree-node:hover{background:var(--gray-bg);}
+
+/* Newly-added grid row flash (Add Column feature) */
+@keyframes rowFlash{0%{background:var(--primary-soft);}60%{background:var(--primary-soft);}100%{background:transparent;}}
+table.grid-table tbody tr.row-flash{animation:rowFlash 2.2s ease-out;box-shadow:inset 3px 0 0 var(--primary);}
