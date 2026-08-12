@@ -5,12 +5,12 @@
 <title>ETL Code (SQL) - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260813b">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260813b">
-<link rel="stylesheet" href="../css/tables.css?v=20260813b">
-<link rel="stylesheet" href="../css/forms.css?v=20260813b">
-<link rel="stylesheet" href="../css/mapping.css?v=20260813b">
-<link rel="stylesheet" href="../css/responsive.css?v=20260813b">
+<link rel="stylesheet" href="../css/common.css?v=20260813o">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260813o">
+<link rel="stylesheet" href="../css/tables.css?v=20260813o">
+<link rel="stylesheet" href="../css/forms.css?v=20260813o">
+<link rel="stylesheet" href="../css/mapping.css?v=20260813o">
+<link rel="stylesheet" href="../css/responsive.css?v=20260813o">
 </head>
 <body>
 <div class="app-shell">
@@ -48,17 +48,7 @@
       </div>
 
       <div class="row g-3 mb-3">
-        <div class="col-md-4">
-          <div class="form-group">
-            <label>Target Database Name</label>
-            <input type="text" class="form-control" id="etlDbName" value="CommonStage" placeholder="e.g. CommonStage">
-            <div class="form-text-hint">
-              Scripts use <code>USE [<span id="dbEcho">CommonStage</span>]</code> and procedures named
-              <code id="spEcho">INSERT_CommonStage_&lt;Table&gt;</code>.
-            </div>
-          </div>
-        </div>
-        <div class="col-md-8">
+        <div class="col-12">
           <div class="form-group">
             <label>Additional AI Instructions <span class="text-muted-2 text-xs">(optional)</span></label>
             <textarea class="form-control" rows="2" id="etlInstructions" placeholder="ETL: 'use LEFT JOIN for lookups'  ·  Create Table: 'add NOT NULL + default 0 for int columns; add indexes on FK columns'"></textarea>
@@ -103,6 +93,7 @@
                 <button type="button" class="btn btn-sm btn-outline-soft" id="clearEtlBtn" disabled><i class="bi bi-eraser me-1"></i> Clear</button>
                 <button type="button" class="btn btn-sm btn-primary" id="generateDdlBtn2" disabled><i class="bi bi-table me-1"></i> Create Table</button>
                 <button type="button" class="btn btn-sm btn-primary" id="generateEtlBtn2" disabled><i class="bi bi-magic me-1"></i> Generate ETL Code</button>
+                <button type="button" class="btn btn-sm btn-approve" id="deployBtn" disabled title="Generate SQL and set a SQL Server target active first"><i class="bi bi-cloud-upload me-1"></i> Deploy to SQL Server</button>
               </div>
             </div>
             <pre class="etl-preview" id="etlOutput"><code>-- Select one or more target tables on the left, then click "Generate ETL Code" or "Create Table".</code></pre>
@@ -120,15 +111,98 @@
           </div>
         </div>
       </div>
+
+      <!-- Live deployment status — shown while/after a deploy runs -->
+      <div class="card-el mt-3" id="deployStatusCard" style="display:none;">
+        <div class="section-title d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-cloud-upload"></i> Deployment</span>
+          <span id="deployStateBadge"></span>
+        </div>
+        <div id="deployStatusBody"></div>
+      </div>
+
+      <!-- Deployment history (persisted in localStorage, mirrors Mapping History) -->
+      <div class="card-el mt-3" id="deployHistoryCard" style="display:none;">
+        <div class="section-title d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-clock-history"></i> Deployment History</span>
+          <button type="button" class="btn btn-sm btn-outline-soft" id="clearDeployHistoryBtn"><i class="bi bi-eraser me-1"></i> Clear History</button>
+        </div>
+        <div class="table-responsive-el">
+          <table class="grid-table" id="deployHistoryTable">
+            <thead><tr><th>When</th><th>Target</th><th>Type</th><th>Batches</th><th>Result</th><th>Attempts</th><th>Fixes</th></tr></thead>
+            <tbody id="deployHistoryBody"></tbody>
+          </table>
+        </div>
+      </div>
     </main>
   </div>
 </div>
+
+<!-- Deploy to SQL Server modal — enter/confirm the target connection, then deploy -->
+<div class="modal fade" id="deployModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-cloud-upload me-1"></i> Deploy to SQL Server</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="hint-note mb-3" id="deployScopeNote"><i class="bi bi-info-circle"></i> Runs the <span id="deployKind" class="mono">generated SQL</span> against the database below, in a single transaction (rolls back entirely on any error). Credentials are used only for this connection and are never stored or logged.</div>
+        <form id="deployForm" class="form-grid cols-2" novalidate>
+          <div class="form-group">
+            <label>Server / Host <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="depServer" autocomplete="off" placeholder="e.g. localhost\\SQLEXPRESS">
+            <div class="form-text-hint deperr" data-for="depServer"></div>
+          </div>
+          <div class="form-group">
+            <label>Database <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="depDatabase" autocomplete="off" placeholder="e.g. CommonStage">
+            <div class="form-text-hint deperr" data-for="depDatabase"></div>
+          </div>
+          <div class="form-group">
+            <label>ODBC Driver</label>
+            <select class="form-select" id="depDriver">
+              <option>ODBC Driver 17 for SQL Server</option>
+              <option>ODBC Driver 18 for SQL Server</option>
+              <option>SQL Server</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Authentication</label>
+            <select class="form-select" id="depAuth">
+              <option value="sql">SQL Login (username / password)</option>
+              <option value="trusted">Windows (Trusted)</option>
+            </select>
+          </div>
+          <div class="form-group" id="depUserGroup">
+            <label>Username <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="depUser" autocomplete="off">
+            <div class="form-text-hint deperr" data-for="depUser"></div>
+          </div>
+          <div class="form-group" id="depPassGroup">
+            <label>Password</label>
+            <input type="password" class="form-control" id="depPass" autocomplete="new-password">
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="d-flex align-items-center gap-2 mb-0"><input type="checkbox" id="depDryRun"> Validate only (dry run) — split &amp; check connectivity, do NOT execute</label>
+          </div>
+        </form>
+        <div id="deployFormError" class="mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-soft" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="deployRunBtn"><i class="bi bi-cloud-upload me-1"></i> Deploy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260813b"></script>
-<script src="../js/navigation.js?v=20260813b"></script>
-<script src="../js/target-schema.js?v=20260813b"></script>
-<script src="../js/etl-code.js?v=20260813b"></script>
+<script src="../js/common.js?v=20260813o"></script>
+<script src="../js/navigation.js?v=20260813o"></script>
+<script src="../js/target-schema.js?v=20260813o"></script>
+<script src="../js/etl-code.js?v=20260813o"></script>
 </body>
 </html>
 

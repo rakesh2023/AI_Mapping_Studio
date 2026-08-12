@@ -33,7 +33,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   etlGroups = groupByTargetTable(mappings, joins);
 
-  initDbName();
   initInstructions();
   renderTableList();
   wireControls();
@@ -221,6 +220,31 @@ function wireControls(){
   const conBtn = document.getElementById("etlConsoleToggle");
   if(conBtn) conBtn.addEventListener("click", (e) => { e.preventDefault(); etlConsoleHide(); });
 
+  // Deploy to SQL Server
+  const depBtn = document.getElementById("deployBtn");
+  if(depBtn) depBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    // Surface any unexpected error instead of silently failing to open.
+    try{ openDeployModal(); }
+    catch(err){
+      console.error("openDeployModal failed:", err);
+      showNotification("Could not open the deploy dialog: " + (err && err.message ? err.message : err), "danger", 8000);
+    }
+  });
+  const depRun = document.getElementById("deployRunBtn");
+  if(depRun) depRun.addEventListener("click", (e) => { e.preventDefault(); runDeploy(); });
+  const depAuth = document.getElementById("depAuth");
+  if(depAuth) depAuth.addEventListener("change", toggleDeployAuth);
+  // After EVERY hide of the deploy modal (incl. the programmatic hide() in
+  // runDeploy), scrub any leftover backdrop so the page never gets stuck behind
+  // an invisible overlay — the classic cause of "can't open/deploy again".
+  const depModalEl = document.getElementById("deployModal");
+  if(depModalEl) depModalEl.addEventListener("hidden.bs.modal", () => scrubModalBackdrop());
+  const clrHist = document.getElementById("clearDeployHistoryBtn");
+  if(clrHist) clrHist.addEventListener("click", (e) => { e.preventDefault(); clearDeployHistory(); });
+
+  renderDeployHistory();
+  updateDeployBtn();
   updateGenerateBtn();
 }
 
@@ -274,6 +298,7 @@ function updateViewToggle(){ /* view toggle removed — the panel shows the last
 function updateOutputButtons(){
   const has = !!currentSql();
   ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = !has; });
+  updateDeployBtn();
 }
 
 async function generateEtl(){
@@ -427,9 +452,7 @@ function buildProc(g, db){
   const selectLines = g.rows.map(selectLine).join(",\n").replace(/,\n$/, "");
   const fromJoin = g.join ? g.join : ("FROM " + (g.rows[0] && g.rows[0].sourceTable ? g.rows[0].sourceTable : "<source table>"));
 
-  return "USE [" + db + "]\n" +
-"GO\n" +
-"SET ANSI_NULLS ON\n" +
+  return "SET ANSI_NULLS ON\n" +
 "GO\n" +
 "SET QUOTED_IDENTIFIER ON\n" +
 "GO\n\n" +
@@ -550,7 +573,11 @@ function buildCreateTable(g){
   });
   const note = info.source === "mapped"
     ? "-- (columns derived from mapped fields; full target schema not found for this table)\n" : "";
-  const sql = note + "CREATE TABLE [dbo].[" + tbl + "] (\n" + lines.concat(constraints).join(",\n") + "\n);";
+  // Drop-and-recreate by default: if the table exists it is replaced. DROP and
+  // CREATE stay in ONE batch (no GO between them) so a single table deploys as a
+  // single batch — DROP TABLE + CREATE TABLE are both valid in the same batch.
+  const drop = "IF OBJECT_ID('[dbo].[" + tbl + "]', 'U') IS NOT NULL\n    DROP TABLE [dbo].[" + tbl + "];\n";
+  const sql = note + drop + "CREATE TABLE [dbo].[" + tbl + "] (\n" + lines.concat(constraints).join(",\n") + "\n);";
   return {sql: sql, columns: cols.length, source: info.source, columns_meta: cols};
 }
 
@@ -575,7 +602,7 @@ async function generateDdl(){
       etlLogDone(line, "Built " + g.name + " (" + built.columns + " columns" + (built.source === "mapped" ? ", from mapped fields" : "") + ")");
       return "-- Table: " + g.name + "\n" + built.sql;
     });
-    ddlLastSql = "USE [" + db + "]\nGO\n\n" + parts.join("\n\nGO\n\n\n");
+    ddlLastSql = parts.join("\n\nGO\n\n\n");
     etlView = "ddl"; renderOutput();
     if(info) info.textContent = selected.length + " CREATE TABLE statement(s)";
     etlLogInfo("Done — " + selected.length + " statement(s)." + (mapped ? (" " + mapped + " used mapped columns (no full schema).") : ""));
@@ -678,32 +705,332 @@ function clearEtl(){
   showNotification("Cleared the " + (etlView === "ddl" ? "CREATE TABLE" : "ETL") + " output.", "primary", 1200);
 }
 
-/* ---- Target database name ---- */
-function initDbName(){
-  const input = document.getElementById("etlDbName");
-  if(!input) return;
-  const saved = lsGet(LS_ETL_DB, null);
-  if(saved) input.value = saved;
-  applyDbName(input.value);
-  input.addEventListener("input", () => {
-    lsSet(LS_ETL_DB, input.value);
-    applyDbName(input.value);
-    // refresh whichever output is currently shown (SP names / USE depend on the DB name)
-    if(etlView === "ddl" && ddlLastSql) generateDdl();
-    else if(etlLastSql) generateEtl();
+/* =========================================================================
+   Deploy to SQL Server — runs the shown SQL in a background job on the backend,
+   polls status every 2s, self-corrects failures via AI (up to 3 tries), and
+   keeps history in localStorage. Credentials come from the active SQL Server
+   target connection and are sent only in the request body (never stored here).
+   ========================================================================= */
+const LS_DEPLOY_HISTORY = "aims_deploy_history";
+let deployPoll = null;
+
+// Build a pyodbc-style cfg from the ACTIVE target — only for SQL Server targets.
+function activeTargetCfg(){
+  try{
+    if(typeof getActiveTargetId !== "function") return null;
+    const id = getActiveTargetId();
+    const c = id ? getTargetConnection(id) : null;
+    if(!c) return null;
+    if((c.type || "").toLowerCase().indexOf("sql server") === -1) return null;   // deploy is SQL Server only
+    if(!(c.server || c.host) || !(c.database || c.db)) return null;
+    return {
+      driver: c.driver || "ODBC Driver 17 for SQL Server",
+      server: c.server || c.host || "", database: c.database || c.db || "",
+      schema: c.schema || null, trusted: !!c.trusted,
+      username: c.username || "", password: c.password || ""
+    };
+  }catch(e){ return null; }
+}
+
+function updateDeployBtn(){
+  const btn = document.getElementById("deployBtn");
+  if(!btn) return;
+  const hasSql = !!currentSql();
+  btn.disabled = !hasSql || !!deployPoll;
+  btn.title = !hasSql ? "Generate SQL first" : (deployPoll ? "A deployment is already running" : "Deploy the shown SQL to a SQL Server database");
+}
+
+let deployModal = null;
+
+// Remove any orphaned Bootstrap modal backdrop + body lock. A lingering backdrop
+// sits over the WHOLE page (z-index ~1050) and silently eats every click — the
+// root cause of "can't deploy again" after a programmatic modal .hide(). Guarded
+// so it never strips the backdrop of a modal that is legitimately open.
+function scrubModalBackdrop(){
+  if(document.querySelector(".modal.show")) return;   // a modal is genuinely open — leave it alone
+  document.querySelectorAll(".modal-backdrop").forEach(b => b.remove());
+  document.body.classList.remove("modal-open");
+  document.body.style.removeProperty("padding-right");
+  document.body.style.removeProperty("overflow");
+}
+
+// Open the deploy dialog; prefill from the active SQL Server target if there is one.
+function openDeployModal(){
+  const sql = currentSql();
+  if(!sql){ showNotification("Generate SQL first.", "warning"); return; }
+  document.querySelectorAll(".deperr").forEach(e => e.textContent = "");
+  const errBox0 = document.getElementById("deployFormError");
+  if(errBox0) errBox0.innerHTML = "";
+  // NOTE: #deployKind lives INSIDE #deployScopeNote, whose innerHTML we rewrite
+  // below — so after the first open that span no longer exists. Guard against
+  // null (the unguarded access here used to throw on the 2nd open and abort the
+  // whole function before the dialog could show). The rewritten note already
+  // states the kind, so this is only a nicety when the span is present.
+  const kindEl = document.getElementById("deployKind");
+  if(kindEl) kindEl.textContent = (etlView === "ddl" ? "Create Table script" : "ETL stored procedures");
+  // Create Table scripts DROP-and-recreate, so warn that existing tables are replaced.
+  const note = document.getElementById("deployScopeNote");
+  if(note){
+    if(etlView === "ddl"){
+      note.innerHTML = '<i class="bi bi-exclamation-triangle"></i> This <span class="mono">Create Table script</span> will <strong>DROP and recreate</strong> the selected table(s) on the database below — any existing table (and its data) will be <strong>replaced</strong>. Runs in one transaction (rolls back on any error). Credentials are used only for this connection and are never stored or logged.';
+      note.style.color = "var(--warning)";
+    } else {
+      note.innerHTML = '<i class="bi bi-info-circle"></i> Runs the <span class="mono">ETL stored procedures</span> against the database below, in a single transaction (rolls back entirely on any error). Credentials are used only for this connection and are never stored or logged.';
+      note.style.color = "";
+    }
+  }
+
+  const pre = activeTargetCfg();   // active target cfg (or null) — convenience prefill
+  document.getElementById("depServer").value = pre ? pre.server : "";
+  document.getElementById("depDatabase").value = pre ? pre.database : "";
+  document.getElementById("depDriver").value = (pre && pre.driver) || "ODBC Driver 17 for SQL Server";
+  document.getElementById("depAuth").value = (pre && pre.trusted) ? "trusted" : "sql";
+  document.getElementById("depUser").value = pre ? (pre.username || "") : "";
+  document.getElementById("depPass").value = pre ? (pre.password || "") : "";
+  document.getElementById("depDryRun").checked = false;
+  toggleDeployAuth();
+
+  showDeployModal();
+  setTimeout(() => { const s = document.getElementById("depServer"); if(s) s.focus(); }, 200);
+}
+
+// Bulletproof (re)open: Bootstrap's show() is a NO-OP if the cached instance's
+// internal _isShown/_isTransitioning is left inconsistent by a prior programmatic
+// hide() — which makes the dialog silently fail to reopen. So we fully dispose the
+// old instance, hard-reset the modal element + body/backdrop state, then create a
+// FRESH instance and show it. A fresh instance always has clean state.
+function showDeployModal(){
+  const el = document.getElementById("deployModal");
+  if(!el || !window.bootstrap || !bootstrap.Modal){ return; }
+
+  const prior = bootstrap.Modal.getInstance(el);
+  if(prior){ try{ prior.dispose(); }catch(e){} }
+
+  // Hard-reset the modal DOM so a stale "shown" state can't suppress the next show.
+  el.classList.remove("show");
+  el.style.display = "";
+  el.setAttribute("aria-hidden", "true");
+  el.removeAttribute("aria-modal");
+  el.removeAttribute("role");
+  // Remove any orphaned backdrop + body scroll-lock (guard-free: we are about to show).
+  document.querySelectorAll(".modal-backdrop").forEach(b => b.remove());
+  document.body.classList.remove("modal-open");
+  document.body.style.removeProperty("padding-right");
+  document.body.style.removeProperty("overflow");
+
+  deployModal = new bootstrap.Modal(el);
+  deployModal.show();
+}
+
+// Close the deploy dialog RELIABLY. Bootstrap's hide() fades out via a CSS
+// transition and only removes the backdrop on transitionend — but the heavy DOM
+// work we do right after (rendering the status card) can interrupt that
+// transition, so hidden.bs.modal never fires and a full-page .modal-backdrop is
+// left covering everything, silently eating every click (the Deploy button
+// included = "button looks normal, nothing happens"). So we ask Bootstrap to
+// hide, then unconditionally force the modal closed + strip ALL backdrops.
+function hideDeployModal(){
+  const el = document.getElementById("deployModal");
+  const inst = (el && window.bootstrap && bootstrap.Modal) ? bootstrap.Modal.getInstance(el) : null;
+  if(inst){ try{ inst.hide(); }catch(e){} }
+  setTimeout(() => {
+    if(el){
+      el.classList.remove("show");
+      el.style.display = "none";
+      el.setAttribute("aria-hidden", "true");
+      el.removeAttribute("aria-modal");
+      el.removeAttribute("role");
+    }
+    document.querySelectorAll(".modal-backdrop").forEach(b => b.remove());
+    document.body.classList.remove("modal-open");
+    document.body.style.removeProperty("padding-right");
+    document.body.style.removeProperty("overflow");
+  }, 350);
+}
+
+function toggleDeployAuth(){
+  const trusted = document.getElementById("depAuth").value === "trusted";
+  document.getElementById("depUserGroup").style.display = trusted ? "none" : "";
+  document.getElementById("depPassGroup").style.display = trusted ? "none" : "";
+}
+
+function _depErr(field, msg){ const el = document.querySelector('.deperr[data-for="' + field + '"]'); if(el){ el.textContent = msg; el.style.color = "var(--danger)"; } }
+
+function validateDeployForm(){
+  document.querySelectorAll(".deperr").forEach(e => e.textContent = "");
+  let ok = true;
+  const server = document.getElementById("depServer").value.trim();
+  const db = document.getElementById("depDatabase").value.trim();
+  const trusted = document.getElementById("depAuth").value === "trusted";
+  const user = document.getElementById("depUser").value.trim();
+  if(!server){ _depErr("depServer", "Server / host is required."); ok = false; }
+  if(!db){ _depErr("depDatabase", "Database is required."); ok = false; }
+  if(!trusted && !user){ _depErr("depUser", "Username is required for SQL Login (or switch to Windows auth)."); ok = false; }
+  return ok;
+}
+
+// Read the modal, confirm, POST /api/deploy, start polling, close the modal.
+async function runDeploy(){
+  if(!validateDeployForm()) return;
+  const sql = currentSql();
+  if(!sql){ showNotification("Generate SQL first.", "warning"); return; }
+
+  const trusted = document.getElementById("depAuth").value === "trusted";
+  const cfg = {
+    driver: document.getElementById("depDriver").value,
+    server: document.getElementById("depServer").value.trim(),
+    database: document.getElementById("depDatabase").value.trim(),
+    schema: null,
+    trusted: trusted,
+    username: trusted ? "" : document.getElementById("depUser").value.trim(),
+    password: trusted ? "" : document.getElementById("depPass").value
+  };
+  const dry = document.getElementById("depDryRun").checked;
+
+  const errBox = document.getElementById("deployFormError");
+  errBox.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-1"></span> Starting…</div>';
+  try{
+    const res = await fetch("/api/deploy", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({connection: cfg, sql: sql, dryRun: dry})});
+    const data = await res.json();
+    if(!data.ok){ errBox.innerHTML = failNote(data.error || "Could not start deployment."); return; }
+    errBox.innerHTML = "";
+    hideDeployModal();   // force-close + guaranteed backdrop removal (see below)
+    startDeployPolling(data.jobId, {kind: (etlView === "ddl" ? "Create Table" : "ETL Code"), dryRun: dry});
+  }catch(e){
+    errBox.innerHTML = failNote("Backend not reachable. Start it with: cd server && python main.py");
+  }
+}
+function failNote(msg){ return '<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;"><i class="bi bi-x-circle"></i> ' + escapeHtml(msg) + '</div>'; }
+
+function startDeployPolling(jobId, meta){
+  const card = document.getElementById("deployStatusCard");
+  if(card) card.style.display = "";
+  // Reset the status card so a re-deploy visibly starts fresh (not the prior result).
+  const badge = document.getElementById("deployStateBadge");
+  const body = document.getElementById("deployStatusBody");
+  if(badge) badge.innerHTML = '<span class="badge-soft badge-gray">queued</span>';
+  if(body) body.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-1"></span> Starting deployment…</div>';
+
+  if(deployPoll){ clearInterval(deployPoll); deployPoll = null; }
+  deployPoll = "starting";   // truthy sentinel so the button disables immediately
+  updateDeployBtn();         // disable Deploy while a job runs
+
+  const stopPolling = () => { if(deployPoll){ clearInterval(deployPoll); } deployPoll = null; updateDeployBtn(); };
+
+  const tick = async () => {
+    let data;
+    try{
+      const res = await fetch("/api/deploy/status/" + encodeURIComponent(jobId));
+      data = await res.json();
+    }catch(e){ return; /* network blip — keep polling */ }
+
+    if(!data || !data.ok){ stopPolling(); return; }   // unknown/expired job — release the button
+    const job = data.job || {};
+    const terminal = (job.state === "succeeded" || job.state === "failed");
+
+    // Stop the poll + RE-ENABLE the Deploy button BEFORE rendering, so a render
+    // error can never strand the button in a disabled state (the bug that made
+    // "deploy again" impossible). Rendering/history are best-effort after that.
+    if(terminal) stopPolling();
+    try{ renderDeployStatus(job); }catch(e){ /* non-fatal display error */ }
+
+    if(terminal){
+      try{ addDeployHistory(job, meta); }catch(e){}
+      if(job.state === "succeeded"){
+        showNotification((job.dryRun ? "Dry run OK" : "Deployed") + " to " + (job.database || "")
+          + ((job.fixes && job.fixes.length) ? (" with " + job.fixes.length + " AI fix(es)") : "") + ".", "success", 7000);
+      } else {
+        showNotification("Deployment failed: " + ((job.error && job.error.message) || "see details below") + " (target unchanged).", "danger", 9000);
+      }
+    }
+  };
+  deployPoll = setInterval(tick, 2000);
+  tick();
+}
+
+function renderDeployStatus(job){
+  const badge = document.getElementById("deployStateBadge");
+  const body = document.getElementById("deployStatusBody");
+  const cls = {queued:"badge-gray", running:"badge-medium", fixing_error:"badge-medium", retrying:"badge-medium", succeeded:"badge-high", failed:"badge-low"};
+  if(badge) badge.innerHTML = '<span class="badge-soft ' + (cls[job.state] || "badge-gray") + '">' + escapeHtml(job.state) + '</span>';
+
+  let html = '<div class="text-xs text-muted-2 mb-2">Target: <span class="mono">' + escapeHtml(job.server) + ' / ' + escapeHtml(job.database) +
+    '</span> &middot; ' + job.totalBatches + ' batch(es) &middot; attempt ' + job.attempts + '/' + job.maxAttempts + (job.dryRun ? ' &middot; dry run' : '') + '</div>';
+  html += '<div class="deploy-log">' +
+    (job.log || []).map(l => '<div class="deploy-log-line">' + escapeHtml(l.message) + '</div>').join("") + '</div>';
+
+  if((job.fixes || []).length){
+    html += '<div class="deploy-fixes"><div class="deploy-fixes-title">AI fixes applied (' + job.fixes.length + ')</div>';
+    job.fixes.forEach(fx => {
+      const num = (fx.error && fx.error.number) ? (' &middot; SQL ' + fx.error.number) : '';
+      html += '<details class="deploy-fix"><summary>Attempt ' + fx.attempt + ' &middot; batch ' + fx.batchIndex + num +
+        ' &mdash; ' + escapeHtml((fx.error && fx.error.message) || '') + '</summary>' +
+        '<div class="deploy-diff">' +
+          '<pre class="deploy-diff-before">' + escapeHtml(fx.before) + '</pre>' +
+          '<pre class="deploy-diff-after">' + escapeHtml(fx.after) + '</pre>' +
+        '</div></details>';
+    });
+    html += '</div>';
+  }
+  if(job.state === "failed" && job.error){
+    html += '<div class="hint-note mt-2" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;">' +
+      '<i class="bi bi-x-circle"></i> ' + (job.error.number ? ('SQL ' + job.error.number + ': ') : '') + escapeHtml(job.error.message || 'Failed') + '</div>';
+  }
+  if(body) body.innerHTML = html;
+}
+
+/* ---- deployment history (localStorage; mirrors Mapping History) ---- */
+function addDeployHistory(job, meta){
+  const list = lsGet(LS_DEPLOY_HISTORY, []) || [];
+  list.unshift({
+    at: new Date().toISOString(), server: job.server, database: job.database,
+    type: (meta && meta.kind) || "", batches: job.totalBatches, result: job.state,
+    attempts: job.attempts, fixes: (job.fixes || []).length, dryRun: !!job.dryRun
   });
+  lsSet(LS_DEPLOY_HISTORY, list.slice(0, 50));
+  renderDeployHistory();
 }
-function applyDbName(name){
-  const clean = currentEtlDb();
-  const dbEcho = document.getElementById("dbEcho");
-  const spEcho = document.getElementById("spEcho");
-  if(dbEcho) dbEcho.textContent = clean;
-  if(spEcho) spEcho.textContent = "INSERT_" + clean + "_<Table>";
+function renderDeployHistory(){
+  const list = lsGet(LS_DEPLOY_HISTORY, []) || [];
+  const card = document.getElementById("deployHistoryCard");
+  const body = document.getElementById("deployHistoryBody");
+  if(!body) return;
+  if(!list.length){ if(card) card.style.display = "none"; return; }
+  if(card) card.style.display = "";
+  body.innerHTML = list.map(h =>
+    '<tr>' +
+      '<td class="text-xs">' + escapeHtml(new Date(h.at).toLocaleString()) + '</td>' +
+      '<td class="mono text-xs">' + escapeHtml((h.server || "") + " / " + (h.database || "")) + '</td>' +
+      '<td>' + escapeHtml(h.type || "") + (h.dryRun ? ' <span class="badge-soft badge-gray">dry</span>' : '') + '</td>' +
+      '<td>' + (h.batches || 0) + '</td>' +
+      '<td>' + (h.result === "succeeded" ? '<span class="badge-soft badge-high">succeeded</span>' : '<span class="badge-soft badge-low">failed</span>') + '</td>' +
+      '<td>' + (h.attempts || 0) + '</td>' +
+      '<td>' + (h.fixes || 0) + '</td>' +
+    '</tr>'
+  ).join("");
 }
+async function clearDeployHistory(){
+  const ok = await confirmDialog("Clear the deployment history on this browser?", "Clear History");
+  if(!ok) return;
+  lsSet(LS_DEPLOY_HISTORY, []);
+  renderDeployHistory();
+  showNotification("Deployment history cleared.", "primary", 1200);
+}
+
+/* ---- DB name used in ETL stored-proc names (INSERT_<db>_<Table>) ----
+   Derived from the active target connection's database; deploy targets are
+   chosen separately in the Deploy dialog. Falls back to CommonStage. */
 function currentEtlDb(){
-  const input = document.getElementById("etlDbName");
-  const raw = input ? input.value : (lsGet(LS_ETL_DB, "CommonStage") || "CommonStage");
-  return (raw || "").trim().replace(/[^A-Za-z0-9_]/g, "") || "CommonStage";
+  try{
+    if(typeof getActiveTargetId === "function"){
+      const id = getActiveTargetId();
+      const c = id ? getTargetConnection(id) : null;
+      const name = c && (c.database || c.db);
+      if(name) return String(name).trim().replace(/[^A-Za-z0-9_]/g, "") || "CommonStage";
+    }
+  }catch(e){ /* fall through */ }
+  return "CommonStage";
 }
 
 function setText(id, val){

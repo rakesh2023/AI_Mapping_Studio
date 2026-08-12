@@ -65,3 +65,6 @@ EXTRACT_XLSX_ROW_CAP = 500     # rows per sheet-slice (tall sheets)
 EXTRACT_XLSX_COL_CAP = 150     # columns per sheet-slice (WIDE sheets)
 EXTRACT_XLSX_SAMPLE_ROWS = 8   # sample data rows per column-slice (wide sheets)
 EXTRACT_MAX_CHUNKS = 200       # safety cap on total model calls per file
+
+# --- Deployment (Deploy to SQL Server) --- #
+DEPLOY_MAX_ATTEMPTS = 3        # total execute attempts before giving up (incl. AI fixes)

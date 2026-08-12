@@ -90,8 +90,6 @@ def generate_etl(body: Dict[str, Any]) -> Result:
     instructions = (body.get("instructions") or "").strip()
 
     template = (
-        "USE [" + db + "]\n"
-        "GO\n"
         "SET ANSI_NULLS ON\n"
         "GO\n"
         "SET QUOTED_IDENTIFIER ON\n"
@@ -161,10 +159,13 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "Not Mapped or missing source -> NULL with a trailing comment '-- Not Mapped'.\n"
         "- Use ONLY the source tables/columns present in the mapping list and the provided "
         "FROM/JOIN. Do NOT invent tables or columns. This is the ONE hard rule that the "
-        "user's instructions cannot override.\n\n"
+        "user's instructions cannot override.\n"
+        "- Do NOT emit a 'USE [database]' statement. The target database is chosen at deploy "
+        "time; the procedure must NOT hard-code a database. Begin with the SET options, then "
+        "the ALTER PROCEDURE. (Only add USE if the user's instructions explicitly ask for it.)\n\n"
         "ADDITIONAL INSTRUCTIONS override the template. The user's instructions take FULL "
-        "priority and may change ANYTHING about the procedure — for example: remove the USE "
-        "statement, change the letter-casing of the procedure name / table names / columns, "
+        "priority and may change ANYTHING about the procedure — for example: "
+        "change the letter-casing of the procedure name / table names / columns, "
         "rename the procedure, adjust SET options, change join types, add WHERE filters, use "
         "TRY_CONVERT instead of CAST, etc. Apply every instruction the user gives. When an "
         "instruction conflicts with the template, follow the INSTRUCTION, not the template. "
@@ -198,6 +199,12 @@ def generate_etl(body: Dict[str, Any]) -> Result:
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
         sql = _strip_fences(text)
+        # The model tends to prepend a 'USE [db]' out of habit. The DB is chosen at
+        # deploy time, so strip it — unless the user explicitly asked for a USE statement.
+        wants_use = bool(re.search(r"use\s+\[|use\s+database|use\s+statement",
+                                   instructions or "", re.IGNORECASE))
+        if not wants_use:
+            sql = _strip_leading_use(sql)
         if not sql.strip():
             return {"ok": False, "error": "The AI returned no SQL for this table."}, 400
         return {"ok": True, "model": model, "targetTable": target_table,
@@ -216,6 +223,16 @@ def _strip_fences(text: str) -> str:
         t = re.sub(r"^```[a-zA-Z]*\n", "", t)
         t = re.sub(r"\n```$", "", t)
     return t.strip()
+
+
+def _strip_leading_use(sql: str) -> str:
+    """Drop a leading 'USE [db]' statement (and its trailing GO), if present.
+
+    The target database is selected at deploy time, so a hard-coded USE would
+    override it. Only removes it when it's the very first statement.
+    """
+    return re.sub(r"^\s*USE\s+[^\n;]+;?[ \t]*\n(?:[ \t]*GO[ \t]*\n)?", "",
+                  sql or "", count=1, flags=re.IGNORECASE)
 
 
 def generate_ddl(body: dict):

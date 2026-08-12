@@ -8,4 +8,8 @@ from app import app
 from app.core.config import port
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=port(), debug=True)
+    # use_reloader=False: the reloader spawns a watcher + a serving child and
+    # restarts the child on file changes — that would kill in-flight background
+    # deployment threads and wipe the in-memory job store. Keep debug (debugger +
+    # error pages) but disable the auto-reloader so deploys survive.
+    app.run(host="127.0.0.1", port=port(), debug=True, use_reloader=False)

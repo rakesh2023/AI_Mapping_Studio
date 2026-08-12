@@ -77,3 +77,37 @@ def test_generate_ddl_refusal(monkeypatch):
     monkeypatch.setattr(es, "anthropic_client", lambda: _client("", refusal=True))
     p, s = es.generate_ddl({"targetTable": "cs_activity", "columns": COLS})
     assert s == 400 and "declined" in p["error"].lower()
+
+
+# ---- generate_etl: the model habitually prepends USE [db]; we strip it by default ----
+
+_PROC = ("USE [CommonStage]\nGO\nSET ANSI_NULLS ON\nGO\n"
+         "ALTER   PROCEDURE [dbo].[INSERT_CommonStage_ACTIVITY]\nAS\nBEGIN\n  SELECT 1;\nEND")
+_ETL_BODY = {"targetTable": "CMT_ACTIVITY", "database": "CommonStage",
+             "joinCondition": "FROM cs_activity a",
+             "mappings": [{"targetColumn": "PMT_ID", "sourceTable": "cs_activity",
+                           "sourceColumn": "activityid", "mappingType": "Direct"}]}
+
+
+def test_generate_etl_strips_leading_use(monkeypatch):
+    monkeypatch.setattr(es, "anthropic_client", lambda: _client(_PROC))
+    p, s = es.generate_etl(dict(_ETL_BODY))
+    assert s == 200 and p["ok"] is True
+    assert "USE [" not in p["sql"]
+    assert p["sql"].startswith("SET ANSI_NULLS ON")
+
+
+def test_generate_etl_keeps_use_when_instructed(monkeypatch):
+    monkeypatch.setattr(es, "anthropic_client", lambda: _client(_PROC))
+    body = dict(_ETL_BODY, instructions="keep the USE [CommonStage] statement at the top")
+    p, s = es.generate_etl(body)
+    assert s == 200 and p["sql"].startswith("USE [CommonStage]")
+
+
+def test_strip_leading_use_only_first_statement():
+    # a USE that is NOT the leading statement is left untouched
+    sql = "SET ANSI_NULLS ON\nGO\nUSE [Other]\nGO\nSELECT 1"
+    assert es._strip_leading_use(sql) == sql
+    # leading USE (with/without trailing GO) is removed
+    assert es._strip_leading_use("USE [DB]\nGO\nSELECT 1") == "SELECT 1"
+    assert es._strip_leading_use("USE [DB]\nSELECT 1") == "SELECT 1"

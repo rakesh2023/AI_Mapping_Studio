@@ -20,10 +20,12 @@ def create_app() -> Flask:
     from app.api.static_routes import bp as static_bp
     from app.api.db_routes import bp as db_bp
     from app.api.ai_routes import bp as ai_bp
+    from app.api.deploy_routes import bp as deploy_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(db_bp)
     application.register_blueprint(ai_bp)
+    application.register_blueprint(deploy_bp)
     return application
 
 

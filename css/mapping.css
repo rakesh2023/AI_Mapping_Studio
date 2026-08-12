@@ -215,3 +215,18 @@ body.theme-dark .src-table-head{background:#2a2118;}
 body.theme-dark .src-table-head.nosrc{background:#242424;}
 body.theme-dark .src-col-row:hover{background:#2a2118;}
 body.theme-dark .entity-card .ec-col:hover{background:var(--gray-bg);}
+
+/* ETL Deploy — status log + AI fix diffs (self-contained; no overlap with the AI console) */
+.deploy-log{background:#0f1b34;color:#cbd5e1;border-radius:8px;padding:10px 12px;
+  font-family:"Consolas",monospace;font-size:.76rem;line-height:1.55;max-height:240px;overflow:auto;}
+.deploy-log-line{padding:2px 0;white-space:pre-wrap;word-break:break-word;}
+body.theme-dark .deploy-log{background:#0b1220;}
+.deploy-fixes{margin-top:12px;}
+.deploy-fixes-title{font-size:.76rem;font-weight:700;margin-bottom:6px;color:var(--text-main);}
+.deploy-fix{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:8px;background:var(--bg-card);}
+.deploy-fix summary{cursor:pointer;font-size:.75rem;color:var(--text-main);}
+.deploy-diff{display:grid;gap:8px;margin-top:8px;}
+.deploy-diff pre{margin:0;padding:8px 10px;border-radius:6px;font-family:"Consolas",monospace;
+  font-size:.72rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;}
+.deploy-diff-before{background:var(--danger-bg);color:var(--danger);border:1px solid #f3c9c6;}
+.deploy-diff-after{background:var(--success-bg);color:var(--success);border:1px solid #bfe8cf;}
