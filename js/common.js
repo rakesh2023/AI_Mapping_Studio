@@ -13,7 +13,8 @@ const SIDEBAR_SECTIONS = [
   {title:"Setup", items:[
     {label:"Project Setup", icon:"bi-kanban", href:"project-setup.html"},
     {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
-    {label:"Staging Area", icon:"bi-hdd-network", href:"target-system.html"}
+    {label:"Staging Area", icon:"bi-hdd-network", href:"target-system.html"},
+    {label:"Target System", icon:"bi-bullseye", href:"final-target.html"}
   ]},
   {title:"Discover", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
@@ -22,6 +23,7 @@ const SIDEBAR_SECTIONS = [
   {title:"Mapping", items:[
     {label:"AI Mapping Generator", icon:"bi-stars", href:"ai-mapping-generator.html"},
     {label:"Mapping Workspace", icon:"bi-grid-3x3-gap", href:"mapping-workspace.html"},
+    {label:"Visual Mapping", icon:"bi-diagram-2", href:"visual-mapping.html"},
     {label:"Validation", icon:"bi-shield-check", href:"validation.html"}
   ]},
   {title:"Build", items:[
@@ -149,12 +151,15 @@ async function resetApplication(){
    Streams NDJSON events from /api/ai/extract-source-stream and calls onEvent for each
    ({type:'start'|'progress'|'done'|'error', ...}). Resolves with the 'done' payload
    (or throws on error). Falls back to the non-streaming endpoint if streaming fails. */
-async function streamExtractFile(file, onEvent){
+async function streamExtractFile(file, onEvent, opts){
+  // opts.base lets callers pick the extraction pipeline; default = source.
+  // The Target System passes "/api/ai/extract-target" for rich FK/polymorphic extraction.
+  const base = (opts && opts.base) || "/api/ai/extract-source";
   // Non-streaming extraction (reliable; no progress). Used as a fallback if streaming
   // isn't available or the stream connection drops mid-way on a very large file.
   async function nonStreaming(){
     const f = new FormData(); f.append("file", file);
-    const r = await fetch("/api/ai/extract-source", {method:"POST", body:f});
+    const r = await fetch(base, {method:"POST", body:f});
     let out; try{ out = await r.json(); }catch(e){ out = {ok:false, error:"Server returned an invalid response (HTTP " + r.status + ")."}; }
     if(!out.ok) throw new Error(out.error || "Extraction failed.");
     if(onEvent) onEvent({type:"done", ...out});
@@ -163,7 +168,7 @@ async function streamExtractFile(file, onEvent){
 
   let res;
   try{
-    res = await fetch("/api/ai/extract-source-stream", {method:"POST", body:(function(){const f=new FormData();f.append("file",file);return f;})()});
+    res = await fetch(base + "-stream", {method:"POST", body:(function(){const f=new FormData();f.append("file",file);return f;})()});
   }catch(e){
     // couldn't even open the stream — try the plain endpoint before giving up
     try{ return await nonStreaming(); }

@@ -6,7 +6,8 @@ streaming Response (application/x-ndjson), exactly as before.
 """
 from flask import Blueprint, request, jsonify, Response
 
-from app.services import ai_client, mapping_service, extraction_service, etl_service, schema_service
+from app.services import (ai_client, mapping_service, extraction_service, etl_service,
+                          schema_service, final_mapping_service)
 
 bp = Blueprint("ai_api", __name__, url_prefix="/api/ai")
 
@@ -51,6 +52,18 @@ def parse_entity():
     return jsonify(payload), status
 
 
+@bp.route("/final-map-instruction")
+def final_map_instruction():
+    return jsonify(ok=True, instruction=final_mapping_service.base_instruction())
+
+
+@bp.route("/suggest-final-mappings", methods=["POST"])
+def suggest_final_mappings():
+    body = request.get_json(force=True) or {}
+    payload, status = final_mapping_service.suggest(body)
+    return jsonify(payload), status
+
+
 @bp.route("/generate-ddl", methods=["POST"])
 def generate_ddl():
     body = request.get_json(force=True) or {}
@@ -77,4 +90,25 @@ def extract_source_stream():
     filename = up.filename or "upload"
     raw = up.read()
     return Response(extraction_service.extract_source_stream(filename, raw),
+                    mimetype="application/x-ndjson")
+
+
+@bp.route("/extract-target", methods=["POST"])
+def extract_target():
+    up = request.files.get("file")
+    if up is None:
+        return jsonify(ok=False, error="No file uploaded. Attach a file in the 'file' field."), 400
+    raw = up.read()
+    payload, status = extraction_service.extract_target(up.filename or "upload", raw)
+    return jsonify(payload), status
+
+
+@bp.route("/extract-target-stream", methods=["POST"])
+def extract_target_stream():
+    up = request.files.get("file")
+    if up is None:
+        return jsonify(ok=False, error="No file uploaded."), 400
+    filename = up.filename or "upload"
+    raw = up.read()
+    return Response(extraction_service.extract_target_stream(filename, raw),
                     mimetype="application/x-ndjson")

@@ -20,7 +20,7 @@ from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET, EXTRACT_MAX_CHUNKS
 from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary
 from app.parsers.sql_ddl_parser import parse_sql_ddl
-from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA
+from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA, TARGET_EXTRACT_SCHEMA
 from app.services.ai_client import (
     anthropic_client, schema_attempts, parse_mapping_json,
 )
@@ -240,6 +240,189 @@ def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
         import traceback
         traceback.print_exc()
         yield ev({"type": "error", "error": (str(exc) or exc.__class__.__name__)})
+
+
+# ============================ TARGET (rich) extraction ============================
+# The Target System always uses AI (no deterministic fast-paths) so it can reason
+# about relationships: PK, FK + reference, descriptions/rules, and POLYMORPHIC FKs.
+
+def extract_target(filename: str, raw: bytes) -> Result:
+    """Non-streaming rich TARGET extraction (fallback for the streaming endpoint)."""
+    if not raw:
+        return {"ok": False, "error": "The uploaded file is empty."}, 400
+    if anthropic is None:
+        return {"ok": False, "error": "The 'anthropic' SDK is not installed on the server."}, 400
+    chunks, err = extract_file_chunks(filename, raw)
+    if err:
+        return {"ok": False, "error": err}, 400
+    chunks = [c for c in (chunks or []) if c and c.strip()]
+    if not chunks:
+        return {"ok": False, "error": "No readable text could be extracted from the file."}, 400
+    truncated = len(chunks) > EXTRACT_MAX_CHUNKS
+    if truncated:
+        chunks = chunks[:EXTRACT_MAX_CHUNKS]
+    model = ai_model()
+    merged: Dict[str, Any] = {}
+    order: List[str] = []
+    for idx, chunk in enumerate(chunks):
+        try:
+            part = _ai_extract_target(model, filename, chunk, idx + 1, len(chunks))
+        except Exception:  # noqa: BLE001
+            try:
+                part = _ai_extract_target(model, filename, chunk, idx + 1, len(chunks))
+            except Exception:  # noqa: BLE001
+                part = []
+        _merge_part_into(part, merged, order)
+    tables, col_count = [], 0
+    for key in order:
+        b = merged[key]
+        if b["columns"]:
+            tables.append({"name": b["name"], "columns": b["columns"]})
+            col_count += len(b["columns"])
+    if not tables:
+        return {"ok": False, "error": "The AI could not identify any target tables/columns in this file."}, 400
+    return {"ok": True, "model": model, "fileName": filename, "tables": tables,
+            "tableCount": len(tables), "columnCount": col_count,
+            "chunks": len(chunks), "truncatedChunks": truncated}, 200
+
+
+def extract_target_stream(filename: str, raw: bytes) -> Iterator[str]:
+    """Streaming rich TARGET extraction (always AI). Same NDJSON event shape as source."""
+    def ev(obj: Dict[str, Any]) -> str:
+        return json.dumps(obj) + "\n"
+
+    if not raw:
+        yield ev({"type": "error", "error": "The uploaded file is empty."}); return
+    if anthropic is None:
+        yield ev({"type": "error", "error": "The 'anthropic' SDK is not installed on the server."}); return
+    chunks, err = extract_file_chunks(filename, raw)
+    if err:
+        yield ev({"type": "error", "error": err}); return
+    chunks = [c for c in (chunks or []) if c and c.strip()]
+    if not chunks:
+        yield ev({"type": "error", "error": "No readable text could be extracted from the file."}); return
+    truncated = len(chunks) > EXTRACT_MAX_CHUNKS
+    if truncated:
+        chunks = chunks[:EXTRACT_MAX_CHUNKS]
+    unit = "parts"
+    head = (chunks[0].split("\n", 1)[0] if chunks else "").lower()
+    if "columns " in head: unit = "column-slices"
+    elif "rows " in head: unit = "row-slices"
+    elif filename.lower().endswith(".pdf"): unit = "page-groups"
+    yield ev({"type": "start", "chunks": len(chunks), "fileName": filename, "unit": unit})
+
+    model = ai_model()
+    merged: Dict[str, Any] = {}
+    order: List[str] = []
+    try:
+        for idx, chunk in enumerate(chunks):
+            label = chunk.split("\n", 1)[0][:80]
+            part: List[Dict[str, Any]] = []
+            try:
+                part = _ai_extract_target(model, filename, chunk, idx + 1, len(chunks))
+            except Exception:  # noqa: BLE001
+                try:
+                    part = _ai_extract_target(model, filename, chunk, idx + 1, len(chunks))
+                except Exception:  # noqa: BLE001
+                    part = []
+            _merge_part_into(part, merged, order)
+            tcount = sum(1 for k in order if merged[k]["columns"])
+            ccount = sum(len(merged[k]["columns"]) for k in order)
+            yield ev({"type": "progress", "done": idx + 1, "total": len(chunks),
+                      "tables": tcount, "columns": ccount, "label": label})
+        tables, col_count = [], 0
+        for key in order:
+            b = merged[key]
+            if b["columns"]:
+                tables.append({"name": b["name"], "columns": b["columns"]})
+                col_count += len(b["columns"])
+        if not tables:
+            yield ev({"type": "error", "error": "The AI could not identify any target tables/columns in this file."}); return
+        yield ev({"type": "done", "ok": True, "model": model, "fileName": filename,
+                  "tables": tables, "tableCount": len(tables), "columnCount": col_count,
+                  "chunks": len(chunks), "truncatedChunks": truncated})
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        yield ev({"type": "error", "error": (str(exc) or exc.__class__.__name__)})
+
+
+def _ai_extract_target(model: str, filename: str, text: str,
+                       part_no: int, part_total: int) -> List[Dict[str, Any]]:
+    """One model call: rich TARGET extraction incl. PK/FK/description/polymorphic FK."""
+    if len(text) > EXTRACT_TEXT_BUDGET:
+        text = text[:EXTRACT_TEXT_BUDGET] + "\n... (truncated)"
+
+    system = (
+        "You are a data-migration analyst reading part of a TARGET data dictionary (the final "
+        "destination schema). Extract EVERY table and column in THIS PART and capture their "
+        "RELATIONSHIPS and rules:\n"
+        "- pk: true if the column is (part of) the primary key.\n"
+        "- fk: true if the column is a foreign key to another table. Put the referenced target "
+        "in fkReference EXACTLY as written (e.g. 'entity.User', 'Policy', or 'Policy.id').\n"
+        "- description: any definition / rule / comment given for the column (include FK rules).\n"
+        "- businessTerm: a business/glossary term if present.\n"
+        "- POLYMORPHIC FOREIGN KEYS: some FK columns do NOT point to a fixed table — the target "
+        "table is decided by a sibling DISCRIMINATOR column (often named <Column>_Type or a "
+        "'type'/'Multiple FK Type' column) whose values enumerate the possible target entities. "
+        "When you detect this, set polymorphic=true, fk=true, typeColumn=<the discriminator "
+        "column name>, and possibleTypes=[the list of possible target entities/tables from that "
+        "discriminator's values]. ALSO output the discriminator column itself as a normal column "
+        "(its enumerated values in description).\n"
+        "  Example: column 'ClaimantDenorm' has a sibling 'ClaimantDenorm_Type' with values "
+        "Person, Company, Doctor, Attorney → for ClaimantDenorm: fk=true, polymorphic=true, "
+        "typeColumn='ClaimantDenorm_Type', possibleTypes=['Person','Company','Doctor','Attorney'].\n"
+        "- length: integer or null. Never invent columns. Do NOT summarise/omit — return EVERY "
+        "column in THIS PART.\n"
+        "Respond with ONLY JSON: {\"tables\":[{\"name\":\"...\",\"columns\":[{\"name\":\"...\","
+        "\"dataType\":\"...\",\"length\":null,\"businessTerm\":\"\",\"description\":\"\",\"pk\":false,"
+        "\"fk\":false,\"fkReference\":\"\",\"polymorphic\":false,\"typeColumn\":\"\","
+        "\"possibleTypes\":[]}]}]}. No prose, no markdown fences."
+    )
+    user = ("TARGET FILE: " + filename + " (part " + str(part_no) + " of " + str(part_total) +
+            ")\n\nFILE CONTENTS:\n" + text)
+
+    client = anthropic_client()
+    base_kwargs = dict(model=model, max_tokens=16000, system=system,
+                       messages=[{"role": "user", "content": user}])
+
+    def run(extra):
+        with client.messages.stream(**base_kwargs, **extra) as stream:
+            return stream.get_final_message()
+
+    resp = call_ai("Target Dictionary Extraction", run, schema_attempts(TARGET_EXTRACT_SCHEMA))
+    if getattr(resp, "stop_reason", None) == "refusal":
+        return []
+    out = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+    data = parse_mapping_json(out)
+    raw_tables = data.get("tables") if isinstance(data, dict) else data
+    if not isinstance(raw_tables, list):
+        return []
+    result = []
+    for t in raw_tables:
+        if not isinstance(t, dict) or not t.get("name"):
+            continue
+        cols = []
+        for c in (t.get("columns") or []):
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            pt = c.get("possibleTypes")
+            cols.append({
+                "name": str(c.get("name", "")),
+                "dataType": str(c.get("dataType", "") or ""),
+                "length": c.get("length"),
+                "businessTerm": str(c.get("businessTerm", "") or ""),
+                "description": str(c.get("description", "") or ""),
+                "pk": bool(c.get("pk")),
+                "fk": bool(c.get("fk")),
+                "fkReference": str(c.get("fkReference", "") or ""),
+                "polymorphic": bool(c.get("polymorphic")),
+                "typeColumn": str(c.get("typeColumn", "") or ""),
+                "possibleTypes": [str(x) for x in pt] if isinstance(pt, list) else [],
+            })
+        if cols:
+            result.append({"name": str(t["name"]), "columns": cols})
+    return result
 
 
 def _ai_extract_tables_from_text(model: str, filename: str, text: str,

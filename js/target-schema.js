@@ -37,6 +37,18 @@ function clearTargetSchema(){ localStorage.removeItem(LS_TARGET_SCHEMA); }
 function hasTargetSchema(){ const s = getTargetSchema(); return !!(s && s.entities && s.entities.length); }
 
 /* =========================================================================
+   FINAL TARGET — the downstream "Target" schema (uploaded + AI-extracted),
+   distinct from the Staging Area. Single file-based schema; re-upload replaces.
+   Same entity/field shape as the staging schema. Consumed by the Visual
+   Mapping page (Staging Area -> Target).
+   ========================================================================= */
+const LS_FINAL_TARGET = "aims_final_target";
+function getFinalTarget(){ return lsGet(LS_FINAL_TARGET, null); }
+function setFinalTarget(schema){ lsSet(LS_FINAL_TARGET, schema); }   // may throw on quota — caller handles
+function clearFinalTarget(){ localStorage.removeItem(LS_FINAL_TARGET); }
+function hasFinalTarget(){ const s = getFinalTarget(); return !!(s && s.entities && s.entities.length); }
+
+/* =========================================================================
    Dynamic TARGET CONNECTIONS (SQL Server or File System), mirroring the
    source-connection store. Multiple targets can be saved; ONE is "active",
    and the active connection is materialized into the single getTargetSchema()
@@ -114,26 +126,36 @@ function dbMetadataToEntities(data){
   }));
 }
 
-/* Convert /api/ai/extract-source tables[] -> target entities[]/fields[]. */
+/* Convert /api/ai/extract-source|target tables[] -> target entities[]/fields[].
+   Preserves any rich fields the target extractor provides (pk/fk/fkReference and
+   polymorphic FK info); they default cleanly for the plain source extractor. */
 function extractedToEntities(tables){
   return (tables || []).map(t => ({
     name: t.name,
     table: t.name,
     description: "",
     isListTable: false,
-    fields: (t.columns || []).map(c => ({
-      name: c.name,
-      dataType: (c.dataType || "").toLowerCase(),
-      length: c.length ?? null,
-      mandatory: false,
-      pk: false,
-      fk: false,
-      fkReference: "",
-      description: c.description || "",
-      businessTerm: c.businessTerm || "",
-      accepted: null,
-      default: null
-    }))
+    fields: (t.columns || []).map(c => {
+      const poly = !!c.polymorphic;
+      const types = Array.isArray(c.possibleTypes) ? c.possibleTypes : [];
+      return {
+        name: c.name,
+        dataType: (c.dataType || "").toLowerCase(),
+        length: c.length ?? null,
+        mandatory: c.mandatory != null ? !!c.mandatory : !!c.pk,
+        pk: !!c.pk,
+        fk: !!c.fk || poly,
+        fkReference: c.fkReference || "",
+        polymorphic: poly,
+        typeColumn: c.typeColumn || "",
+        possibleTypes: types,
+        description: c.description || "",
+        businessTerm: c.businessTerm || "",
+        // surface the polymorphic target list as accepted values for display
+        accepted: (poly && types.length) ? types.join(", ") : null,
+        default: null
+      };
+    })
   }));
 }
 

@@ -1,0 +1,55 @@
+/* Visual Mapping — two-column connector view (Staging Area -> Target).
+   Theme-aware via existing tokens. */
+
+.vm-toolbar{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:start;margin-bottom:10px;}
+.vm-col-head{display:flex;flex-direction:column;gap:6px;font-weight:700;font-size:.9rem;}
+.vm-col-name{display:flex;align-items:center;gap:6px;}
+.vm-head-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.vm-col-head .vm-search{border:1px solid var(--border);border-radius:8px;padding:4px 10px;font-size:.78rem;background:var(--bg-card);color:var(--text-main);max-width:160px;}
+.vm-col-head .vm-select{border:1px solid var(--border);border-radius:8px;padding:4px 8px;font-size:.78rem;background:var(--bg-card);color:var(--text-main);font-weight:600;max-width:220px;}
+.vm-hint{text-align:center;align-self:center;}
+
+/* Canvas: two columns with a gap; the SVG overlays the whole thing. */
+.vm-canvas{position:relative;display:grid;grid-template-columns:1fr 120px 1fr;gap:0;align-items:start;}
+.vm-svg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2;overflow:visible;}
+.vm-spacer{min-height:1px;}
+.vm-col{display:flex;flex-direction:column;gap:14px;z-index:1;}
+
+/* Entity group card */
+.vm-entity{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg-card);}
+.vm-entity-head{padding:8px 12px;font-weight:700;font-size:.82rem;background:var(--gray-bg);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;}
+.vm-fields{display:flex;flex-direction:column;}
+
+/* A field row with a connection anchor on the near edge */
+.vm-field{position:relative;display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:.8rem;border-bottom:1px solid var(--border);}
+.vm-field:last-child{border-bottom:none;}
+.vm-field:hover{background:var(--primary-soft);}
+.vm-field.vm-linked{background:var(--success-bg);}
+.vm-field.vm-hover-pair{background:var(--primary-soft);}
+.vm-field .vm-fname{font-family:Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vm-field .vm-ftype{color:var(--text-muted);font-size:.68rem;flex:none;}
+.vm-left .vm-field{padding-right:22px;cursor:grab;}
+.vm-right .vm-field{padding-left:22px;justify-content:flex-start;}
+/* while dragging a connector, don't select text and keep the crosshair */
+body.vm-dragging, body.vm-dragging *{user-select:none;}
+
+/* Anchor dot (drag handle / drop target) */
+.vm-anchor{position:absolute;top:50%;transform:translateY(-50%);width:13px;height:13px;border-radius:50%;
+  background:var(--bg-card);border:2px solid var(--primary);cursor:crosshair;z-index:3;}
+.vm-left .vm-anchor{right:-7px;}
+.vm-right .vm-anchor{left:-7px;}
+.vm-anchor:hover,.vm-anchor.vm-anchor-hot{background:var(--primary);box-shadow:0 0 0 4px rgba(208,74,2,.18);}
+.vm-anchor.vm-anchor-linked{background:var(--success);border-color:var(--success);}
+
+/* Connector lines */
+.vm-line{fill:none;stroke:var(--primary);stroke-width:2;opacity:.55;pointer-events:stroke;cursor:pointer;}
+.vm-line:hover,.vm-line.vm-line-active{opacity:1;stroke-width:3;}
+.vm-line.vm-line-temp{stroke-dasharray:5 4;opacity:.9;pointer-events:none;}
+
+/* Link editor popover */
+.vm-popover{position:absolute;z-index:1080;width:280px;background:var(--bg-card);border:1px solid var(--border);
+  border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.22);padding:12px;}
+.vm-pop-head{font-weight:700;font-size:.78rem;margin-bottom:8px;word-break:break-word;}
+
+body.theme-dark .vm-anchor{background:#1f1f1f;}

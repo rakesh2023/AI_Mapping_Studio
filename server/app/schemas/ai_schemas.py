@@ -116,6 +116,77 @@ SOURCE_EXTRACT_SCHEMA = {
 }
 
 
+# Rich TARGET data-dictionary extraction (POST /api/ai/extract-target[-stream]).
+# Captures relationships: PK, FK (+ reference), descriptions, and POLYMORPHIC FKs
+# (a column whose target table is decided by a sibling discriminator "_Type" column).
+TARGET_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tables": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "columns": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "dataType": {"type": "string"},
+                                "length": {"type": ["integer", "null"]},
+                                "businessTerm": {"type": "string"},
+                                "description": {"type": "string"},
+                                "pk": {"type": "boolean"},
+                                "fk": {"type": "boolean"},
+                                "fkReference": {"type": "string"},
+                                "polymorphic": {"type": "boolean"},
+                                "typeColumn": {"type": "string"},
+                                "possibleTypes": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["name", "dataType"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["name", "columns"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["tables"],
+    "additionalProperties": False,
+}
+
+
+# Auto-suggested Staging Area -> Target column links (POST /api/ai/suggest-final-mappings).
+FINAL_MAP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "stagingEntity": {"type": "string"},
+                    "stagingColumn": {"type": "string"},
+                    "targetEntity": {"type": "string"},
+                    "targetColumn": {"type": "string"},
+                    "mappingType": {"type": "string"},
+                    "transformationRule": {"type": "string"},
+                    "confidence": {"type": "integer"},
+                },
+                "required": ["stagingEntity", "stagingColumn", "targetEntity", "targetColumn"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["links"],
+    "additionalProperties": False,
+}
+
+
 # One new target ENTITY (table + its columns) parsed from a natural-language
 # instruction (POST /api/ai/parse-entity). confidence 0 means "could not parse".
 ENTITY_SCHEMA = {
