@@ -5,12 +5,12 @@
 <title>Target System - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260813r">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260813r">
-<link rel="stylesheet" href="../css/forms.css?v=20260813r">
-<link rel="stylesheet" href="../css/tables.css?v=20260813r">
-<link rel="stylesheet" href="../css/mapping.css?v=20260813r">
-<link rel="stylesheet" href="../css/responsive.css?v=20260813r">
+<link rel="stylesheet" href="../css/common.css?v=20260813w">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260813w">
+<link rel="stylesheet" href="../css/forms.css?v=20260813w">
+<link rel="stylesheet" href="../css/tables.css?v=20260813w">
+<link rel="stylesheet" href="../css/mapping.css?v=20260813w">
+<link rel="stylesheet" href="../css/responsive.css?v=20260813w">
 </head>
 <body>
 <div class="app-shell">
@@ -85,7 +85,10 @@
       <div class="row g-4" id="browseLayout" style="display:none;">
         <div class="col-lg-3">
           <div class="card-el">
-            <div class="section-title"><i class="bi bi-diagram-3"></i> Target Entities</div>
+            <div class="section-title d-flex align-items-center justify-content-between gap-2">
+              <span><i class="bi bi-diagram-3"></i> Target Entities</span>
+              <button type="button" class="btn btn-sm btn-primary" id="addEntityBtn" style="display:none;white-space:nowrap;"><i class="bi bi-plus-lg me-1"></i> Add Entity</button>
+            </div>
             <ul class="metadata-tree" id="targetTree"></ul>
           </div>
         </div>
@@ -204,13 +207,72 @@
   </div>
 </div>
 
+<!-- Add Entity modal (Manual + AI Instruction) -->
+<div class="modal fade" id="addEntityModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-square me-1"></i> Add Target Entity</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="hint-note mb-3"><i class="bi bi-info-circle"></i> Adds a new table (entity) to this target's stored schema in the app. It does not CREATE a table on a real database.</div>
+
+        <ul class="nav nav-pills mb-3" id="aeTabs">
+          <li class="nav-item"><button type="button" class="btn btn-sm btn-outline-soft active" id="aeTabManual" data-tab="manual">Manual</button></li>
+          <li class="nav-item ms-2"><button type="button" class="btn btn-sm btn-outline-soft" id="aeTabAI" data-tab="ai"><i class="bi bi-stars me-1"></i>AI Instruction</button></li>
+        </ul>
+
+        <!-- AI instruction panel -->
+        <div id="aeAIPanel" style="display:none;">
+          <label class="form-label">Describe the table — or paste its full column list / data dictionary</label>
+          <textarea class="form-control mb-2 mono" rows="6" id="aeInstruction" spellcheck="false" placeholder="A short description, e.g. 'policy term table with term id (pk), start & end dates, status code'&#10;&#10;— or paste a dictionary (with its header row), e.g.&#10;TableName  Field Name  Data Type  IsNull  Is Primary Key  Type Key  Foreign Key&#10;Claim  PMT_ID  varchar(100)  not null  primary key&#10;Claim  AccidentType  varchar(2)  nullable    typekey.AccidentType"></textarea>
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-primary" id="aeParseBtn"><i class="bi bi-stars me-1"></i> Generate with AI</button>
+            <span class="text-xs text-muted-2" id="aeAIStatus"></span>
+          </div>
+          <div id="aeAIError" class="mt-2"></div>
+          <div class="form-text-hint mt-2">You can paste a whole dictionary here — the AI transcribes every column for you to review. Nothing is added until you click Add Entity.</div>
+          <hr>
+        </div>
+
+        <!-- Manual / preview form (shared) -->
+        <form id="aeForm" class="form-grid" novalidate>
+          <!-- Single name field: used as BOTH the entity name and the physical table
+               name (they are always identical for targets in this app). id stays
+               aeName because the entity name is the app-wide identifier. -->
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>Table Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="aeName" autocomplete="off" placeholder="e.g. POLICY_TERM">
+            <div class="form-text-hint aeerr" data-for="aeName"></div>
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>Description <span class="text-muted-2 text-xs">(optional)</span></label>
+            <input type="text" class="form-control" id="aeDesc" autocomplete="off">
+          </div>
+        </form>
+
+        <div class="mt-2">
+          <label class="form-label mb-1">Columns <span class="text-muted-2 text-xs" id="aeColsCount">(none yet)</span></label>
+          <div id="aeColsPreview"></div>
+          <div class="form-text-hint">Leave empty and use <strong>Add Column</strong> after creating the table, or switch to the <strong>AI Instruction</strong> tab to propose columns.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-soft" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="aeSaveBtn"><i class="bi bi-plus-lg me-1"></i> Add Entity</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="../js/common.js?v=20260813r"></script>
-<script src="../js/navigation.js?v=20260813r"></script>
-<script src="../js/target-schema.js?v=20260813r"></script>
-<script src="../js/target-system.js?v=20260813r"></script>
+<script src="../js/common.js?v=20260813w"></script>
+<script src="../js/navigation.js?v=20260813w"></script>
+<script src="../js/target-schema.js?v=20260813w"></script>
+<script src="../js/target-system.js?v=20260813w"></script>
 </body>
 </html>
 

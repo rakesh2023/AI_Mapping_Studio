@@ -116,6 +116,41 @@ SOURCE_EXTRACT_SCHEMA = {
 }
 
 
+# One new target ENTITY (table + its columns) parsed from a natural-language
+# instruction (POST /api/ai/parse-entity). confidence 0 means "could not parse".
+ENTITY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "entity": {"type": "string"},
+        "table": {"type": "string"},
+        "description": {"type": "string"},
+        "isListTable": {"type": "boolean"},
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "dataType": {"type": "string"},
+                    "length": {"type": ["integer", "null"]},
+                    "mandatory": {"type": "boolean"},
+                    "pk": {"type": "boolean"},
+                    "fk": {"type": "boolean"},
+                    "fkReference": {"type": ["string", "null"]},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "dataType"],
+                "additionalProperties": False,
+            },
+        },
+        "confidence": {"type": "integer"},
+        "note": {"type": "string"},
+    },
+    "required": ["entity", "columns", "confidence"],
+    "additionalProperties": False,
+}
+
+
 # One new target column parsed from a natural-language instruction
 # (POST /api/ai/parse-column). confidence 0 means "could not confidently parse".
 COLUMN_SCHEMA = {

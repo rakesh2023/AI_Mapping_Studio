@@ -83,3 +83,74 @@ def test_parse_column_unparseable_returns_soft_error(monkeypatch):
     monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client("I cannot do that"))
     payload, status = ss.parse_column({"instruction": "do something vague", "existingColumns": []})
     assert status == 200 and payload["ok"] is False   # soft error, not a crash
+
+
+# --------------------------- parse_entity (Add Entity) --------------------------- #
+
+def test_parse_entity_requires_instruction():
+    payload, status = ss.parse_entity({"instruction": "", "existingEntities": []})
+    assert status == 400 and payload["ok"] is False
+
+
+def test_parse_entity_happy_path(monkeypatch):
+    reply = json.dumps({
+        "entity": "POLICY_TERM", "table": "POLICY_TERM", "description": "policy terms",
+        "isListTable": False, "confidence": 92, "note": "",
+        "columns": [
+            {"name": "TERM_ID", "dataType": "int", "length": None, "mandatory": True, "pk": True, "fk": False},
+            {"name": "START_DT", "dataType": "date", "mandatory": True, "pk": False, "fk": False},
+            {"name": "STATUS_CD", "dataType": "varchar", "length": 3, "mandatory": False, "pk": False, "fk": False},
+        ],
+    })
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, status = ss.parse_entity({
+        "instruction": "policy term table with term id (pk), start date, status code",
+        "existingEntities": ["CLAIM_MASTER"],
+    })
+    assert status == 200 and payload["ok"] is True
+    ent = payload["entity"]
+    assert ent["name"] == "POLICY_TERM" and ent["table"] == "POLICY_TERM"
+    assert ent["duplicate"] is False and len(ent["fields"]) == 3
+    f0 = ent["fields"][0]
+    assert f0["name"] == "TERM_ID" and f0["pk"] is True and f0["length"] is None
+    # length nulled for date, kept for varchar; full field shape present
+    assert ent["fields"][1]["length"] is None
+    assert ent["fields"][2]["length"] == 3
+    assert set(["name", "dataType", "length", "mandatory", "pk", "fk", "fkReference",
+                "description", "businessTerm", "accepted", "default"]).issubset(f0.keys())
+
+
+def test_parse_entity_table_defaults_to_entity(monkeypatch):
+    reply = json.dumps({"entity": "REF_STATE", "table": "", "isListTable": True,
+                        "confidence": 80, "columns": []})
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, _ = ss.parse_entity({"instruction": "state lookup table", "existingEntities": []})
+    ent = payload["entity"]
+    assert ent["table"] == "REF_STATE" and ent["isListTable"] is True
+
+
+def test_parse_entity_dedupes_columns_and_fixes_bad_type(monkeypatch):
+    reply = json.dumps({"entity": "T", "table": "T", "confidence": 75, "columns": [
+        {"name": "id", "dataType": "int", "pk": True},
+        {"name": "ID", "dataType": "int"},                 # dup (case-insensitive) -> dropped
+        {"name": "data", "dataType": "jsonb"},             # unsupported -> varchar
+    ]})
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, _ = ss.parse_entity({"instruction": "make T", "existingEntities": []})
+    fields = payload["entity"]["fields"]
+    assert len(fields) == 2                                  # dup removed
+    assert fields[1]["dataType"] == "varchar"               # jsonb -> varchar
+
+
+def test_parse_entity_flags_duplicate_entity(monkeypatch):
+    reply = json.dumps({"entity": "CLAIM_MASTER", "table": "CLAIM_MASTER",
+                        "confidence": 88, "columns": []})
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, _ = ss.parse_entity({"instruction": "claim master", "existingEntities": ["claim_master"]})
+    assert payload["entity"]["duplicate"] is True           # case-insensitive clash
+
+
+def test_parse_entity_refusal(monkeypatch):
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client("", refusal=True))
+    payload, status = ss.parse_entity({"instruction": "x", "existingEntities": []})
+    assert status == 400 and "declined" in payload["error"].lower()

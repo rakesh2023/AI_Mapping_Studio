@@ -5,7 +5,6 @@
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("dashboard.html");
-  renderWorkflowStepper("workflowStepper", 9);
 
   const project = await loadProject();
   // Prefer the REAL AI-generated mappings (same source as the Mapping Workspace);
@@ -15,6 +14,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const rawMappings = (aiRows !== null) ? aiRows : (await fetchJSON("mappings.json") || []);
 
   const mappings = applyOverrides(rawMappings || []);
+  // Reflect REAL progress (was hardcoded to 9) from stored project state.
+  renderWorkflowStepper("workflowStepper", computeWorkflowIndex(mappings));
   // Derive validation issues from the REAL mappings (same rules as the Validation page)
   // instead of a static file, so the summary reflects the current document.
   const validation = deriveValidationIssues(mappings);
@@ -28,6 +29,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderLowConfidence(mappings);
   renderValidationSummary(validation, mappings);
 });
+
+/* Compute how far the migration workflow has really progressed, from stored
+   state (was previously hardcoded to 9, which always showed 9 green steps).
+   A step is only "done" when there's a genuine signal for it (or a LATER step's
+   signal is present — a linear pipeline, so we fill gaps up to the furthest
+   milestone reached). Returns the index of the first not-yet-done step. */
+function computeWorkflowIndex(mappings){
+  const filled = (v) => Array.isArray(v) ? v.length > 0 : !!v;
+  const rows = Array.isArray(mappings) ? mappings : [];
+  const hasMappings = rows.length > 0;
+  const reviewed = rows.some(m => (m.reviewStatus || "").trim() !== "");
+  const allApproved = hasMappings && rows.every(m => (m.reviewStatus || "").indexOf("Approved") === 0);
+
+  // WORKFLOW_STEPS indices (see common.js) -> best available signal.
+  const signal = {
+    0: filled(lsGet("aims_current_project", null)),      // Project Creation
+    1: filled(lsGet("aims_db_connections", [])),          // Source Configuration
+    2: filled(lsGet("aims_db_connections", [])),          // Source Connection
+    4: filled(lsGet("aims_db_connections", [])),          // Metadata Discovery
+    6: filled(lsGet("aims_target_connections", [])),      // Target Configuration
+    7: filled(lsGet("aims_active_target", null)),         // Target Metadata
+    8: hasMappings,                                        // AI Mapping Generation
+    9: reviewed,                                           // Mapping Review
+    12: filled(lsGet("aims_deploy_history", [])),          // ETL Code Generation (deployed)
+    13: allApproved,                                       // Approval
+  };
+  let maxDone = -1;
+  Object.keys(signal).forEach(k => { if(signal[k]) maxDone = Math.max(maxDone, Number(k)); });
+  return maxDone + 1;   // first step without a completion signal is "active"
+}
 
 /* Derive validation issues from the current mappings using the same rules as the
    Validation page, so the dashboard summary is dynamic (Critical/Error/Warning/Info). */

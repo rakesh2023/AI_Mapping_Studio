@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("cAuth").addEventListener("change", toggleTargetFields);
   document.getElementById("targetSearch").addEventListener("input", debounce(renderTargetFields, 150));
   wireAddColumn();
+  wireAddEntity();
 });
 
 function isSqlServer(type){ return (type || "").toLowerCase().indexOf("sql server") !== -1; }
@@ -304,6 +305,8 @@ function renderActiveBrowser(){
   document.getElementById("activeTargetBar").style.display = has ? "" : "none";
   document.getElementById("browseLayout").style.display = has ? "" : "none";
   document.getElementById("noTargetState").style.display = (getTargetConnections().length ? "none" : (has ? "none" : ""));
+  const addEntBtn = document.getElementById("addEntityBtn");
+  if(addEntBtn) addEntBtn.style.display = has ? "" : "none";   // enable Add Entity once a target is loaded
   if(!has) return;
 
   document.getElementById("schemaMeta").innerHTML =
@@ -637,6 +640,193 @@ function showColumnAddedToast(colName, entityName){
     removeColumn(entityName, colName);
     remove();
     showNotification("Removed '" + colName + "'.", "primary", 1500);
+  });
+  setTimeout(remove, 7000);
+}
+
+/* =========================================================================
+   Add Entity (new target table) — manual or AI. Persists to the ACTIVE target
+   connection's entities[] (mirrors Add Column, one level up). AI proposes the
+   columns; you review/remove them before confirming.
+   ========================================================================= */
+let aeModal = null;
+let aeProposedCols = [];   // proposed target fields for the new entity (from AI or empty)
+
+function wireAddEntity(){
+  const openBtn = document.getElementById("addEntityBtn");
+  if(openBtn) openBtn.addEventListener("click", openAddEntityModal);
+  document.querySelectorAll("#aeTabs [data-tab]").forEach(b => b.addEventListener("click", () => aeSwitchTab(b.dataset.tab)));
+  const parseBtn = document.getElementById("aeParseBtn");
+  if(parseBtn) parseBtn.addEventListener("click", aeParse);
+  const saveBtn = document.getElementById("aeSaveBtn");
+  if(saveBtn) saveBtn.addEventListener("click", aeSave);
+  const nameEl = document.getElementById("aeName");
+  if(nameEl) nameEl.addEventListener("input", () => aeClearErr("aeName"));
+}
+
+function openAddEntityModal(){
+  if(!getActiveTargetId() || !hasTargetSchema()){ showNotification("Load or activate a target first.", "warning"); return; }
+  document.getElementById("aeForm").reset();
+  document.querySelectorAll(".aeerr").forEach(e => e.textContent = "");
+  document.getElementById("aeAIError").innerHTML = "";
+  document.getElementById("aeAIStatus").textContent = "";
+  document.getElementById("aeInstruction").value = "";
+  aeProposedCols = [];
+  aeRenderCols();
+  aeSwitchTab("manual");
+  if(!aeModal) aeModal = new bootstrap.Modal(document.getElementById("addEntityModal"));
+  aeModal.show();
+  setTimeout(() => { const n = document.getElementById("aeName"); if(n) n.focus(); }, 200);
+}
+
+function aeSwitchTab(tab){
+  const ai = tab === "ai";
+  document.getElementById("aeAIPanel").style.display = ai ? "" : "none";
+  document.getElementById("aeTabManual").classList.toggle("active", !ai);
+  document.getElementById("aeTabAI").classList.toggle("active", ai);
+}
+
+function aeSetErr(field, msg){ const el = document.querySelector('.aeerr[data-for="' + field + '"]'); if(el){ el.textContent = msg; el.style.color = "var(--danger)"; } }
+function aeClearErr(field){ const el = document.querySelector('.aeerr[data-for="' + field + '"]'); if(el) el.textContent = ""; }
+
+/* Render the proposed-columns preview (each removable). */
+function aeRenderCols(){
+  const box = document.getElementById("aeColsPreview");
+  const cnt = document.getElementById("aeColsCount");
+  if(cnt) cnt.textContent = aeProposedCols.length ? ("(" + aeProposedCols.length + " column" + (aeProposedCols.length > 1 ? "s" : "") + ")") : "(none yet)";
+  if(!box) return;
+  if(!aeProposedCols.length){ box.innerHTML = '<div class="text-xs text-muted-2">No columns yet.</div>'; return; }
+  box.innerHTML = aeProposedCols.map((f, i) =>
+    '<div class="d-flex align-items-center justify-content-between gap-2 py-1" style="border-bottom:1px solid var(--border);">' +
+      '<span class="text-xs"><span class="mono">' + escapeHtml(f.name) + '</span> <span class="text-muted-2">' +
+        escapeHtml(f.dataType + (f.length ? "(" + f.length + ")" : "")) +
+        (f.pk ? " &middot; PK" : "") + (f.fk ? " &middot; FK" : "") + (f.mandatory ? " &middot; NOT NULL" : "") +
+      '</span></span>' +
+      '<button type="button" class="btn btn-sm btn-outline-soft ae-col-rm" data-i="' + i + '" title="Remove column"><i class="bi bi-x"></i></button>' +
+    '</div>'
+  ).join("");
+  box.querySelectorAll(".ae-col-rm").forEach(b => b.addEventListener("click", () => {
+    aeProposedCols.splice(parseInt(b.dataset.i, 10), 1);
+    aeRenderCols();
+  }));
+}
+
+/* AI: describe a table -> prefill name/table/desc + propose columns for review. */
+async function aeParse(){
+  const instruction = (document.getElementById("aeInstruction").value || "").trim();
+  const status = document.getElementById("aeAIStatus");
+  const errBox = document.getElementById("aeAIError");
+  errBox.innerHTML = "";
+  if(!instruction){ errBox.innerHTML = failNote("Describe the table first."); return; }
+  status.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Generating…';
+  try{
+    const meta = getTargetSchema();
+    const existingEntities = (meta.entities || []).map(e => e.name);
+    const res = await fetch("/api/ai/parse-entity", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({instruction, existingEntities})});
+    const data = await res.json();
+    status.textContent = "";
+    if(!data.ok){ errBox.innerHTML = failNote(data.error || "Could not parse the instruction."); return; }
+    const en = data.entity;
+    if((en.confidence || 0) < 45){
+      errBox.innerHTML = failNote("Not confident about that request" + (en.note ? ": " + en.note : ".") + " Review/edit below or rephrase.");
+    }
+    document.getElementById("aeName").value = en.name || en.table || "";
+    document.getElementById("aeDesc").value = en.description || "";
+    aeProposedCols = (en.fields || []).slice();
+    aeRenderCols();
+    if(en.duplicate) aeSetErr("aeName", "An entity named '" + en.name + "' already exists.");
+    aeSwitchTab("manual");   // show the pre-filled form + proposed columns to confirm
+    showNotification("AI proposed " + aeProposedCols.length + " column(s) — review and click Add Entity.", "primary", 2500);
+  }catch(err){
+    status.textContent = "";
+    errBox.innerHTML = failNote("Backend not reachable. Start it with: cd server && python main.py");
+  }
+}
+
+function aeValidate(){
+  document.querySelectorAll(".aeerr").forEach(e => e.textContent = "");
+  let ok = true;
+  const name = (document.getElementById("aeName").value || "").trim();
+  const ents = (getTargetSchema() || {}).entities || [];
+  if(!name){ aeSetErr("aeName", "Table name is required."); ok = false; }
+  else if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)){ aeSetErr("aeName", "Use letters, numbers and underscores only (no spaces)."); ok = false; }
+  // one value is both entity and table name -> reject if it clashes with either on any existing entity
+  else if(ents.some(e => (e.name || "").toLowerCase() === name.toLowerCase() || ((e.table || e.name) || "").toLowerCase() === name.toLowerCase())){
+    aeSetErr("aeName", "A table named '" + name + "' already exists."); ok = false;
+  }
+  return ok;
+}
+
+function aeEntityFromForm(){
+  const name = (document.getElementById("aeName").value || "").trim();
+  return {
+    name: name,
+    table: name,   // entity name and physical table name are the same
+    description: (document.getElementById("aeDesc").value || "").trim(),
+    isListTable: false,   // list/lookup flag is set only via dictionary upload, not here
+    fields: aeProposedCols.slice()
+  };
+}
+
+function aeSave(){
+  if(!aeValidate()) return;
+  const entity = aeEntityFromForm();
+  const res = persistEntity(entity);
+  if(!res.ok){ showNotification(res.error || "Could not add the entity.", "danger"); return; }
+  if(aeModal) aeModal.hide();
+  renderActiveBrowser();
+  selectEntity(entity.name);   // renderActiveBrowser selects the first entity; re-select the new one
+  showEntityAddedToast(entity.name, entity.fields.length);
+}
+
+/* Push the new entity into the ACTIVE target connection and re-materialise. */
+function persistEntity(entity){
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn || !conn.entities){ return {ok:false, error:"No active target connection to modify."}; }
+  const dup = conn.entities.some(e =>
+    (e.name || "").toLowerCase() === entity.name.toLowerCase() ||
+    ((e.table || e.name) || "").toLowerCase() === entity.table.toLowerCase());
+  if(dup){ return {ok:false, error:"An entity/table named '" + entity.name + "' already exists."}; }
+  conn.entities.push(entity);
+  conn.columnCount = (conn.entities || []).reduce((a, e) => a + (e.fields || []).length, 0);
+  conn.tableCount = (conn.entities || []).length;
+  try{
+    upsertTargetConnection(conn);
+    if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);   // re-materialise getTargetSchema()
+  }catch(err){ return {ok:false, error:"Could not persist (storage full?): " + err.message}; }
+  return {ok:true};
+}
+
+/* Remove a just-added entity (Undo). */
+function removeEntity(name){
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn) return;
+  conn.entities = (conn.entities || []).filter(e => e.name !== name);
+  conn.columnCount = (conn.entities || []).reduce((a, e) => a + (e.fields || []).length, 0);
+  conn.tableCount = (conn.entities || []).length;
+  upsertTargetConnection(conn);
+  if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);
+  renderActiveBrowser();
+}
+
+/* success toast with an Undo action */
+function showEntityAddedToast(name, colCount){
+  const stack = document.getElementById("toast-stack");
+  const cols = colCount ? (" with " + colCount + " column" + (colCount > 1 ? "s" : "")) : " (no columns yet)";
+  if(!stack){ showNotification("Entity '" + name + "' added" + cols + ".", "success"); return; }
+  const el = document.createElement("div");
+  el.className = "toast-item success";
+  el.innerHTML = '<div class="d-flex align-items-center justify-content-between gap-3">' +
+    '<span><i class="bi bi-check-circle me-1"></i> Entity <strong>' + escapeHtml(name) + '</strong> added' + escapeHtml(cols) + '.</span>' +
+    '<button type="button" class="btn btn-sm btn-outline-soft aeundo">Undo</button></div>';
+  stack.appendChild(el);
+  const remove = () => { if(el.parentNode) el.parentNode.removeChild(el); };
+  el.querySelector(".aeundo").addEventListener("click", () => {
+    removeEntity(name);
+    remove();
+    showNotification("Removed '" + name + "'.", "primary", 1500);
   });
   setTimeout(remove, 7000);
 }

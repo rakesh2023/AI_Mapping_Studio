@@ -16,7 +16,7 @@ from app.core.capabilities import anthropic
 from app.core.config import ai_model
 from app.services.ai_client import anthropic_client, parse_mapping_json
 from app.services.ai_client_service import call_ai
-from app.schemas.ai_schemas import COLUMN_SCHEMA
+from app.schemas.ai_schemas import COLUMN_SCHEMA, ENTITY_SCHEMA
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
@@ -109,6 +109,157 @@ def parse_column(body: Dict[str, Any]) -> Result:
 
         col = _normalise(parsed, existing_names)
         return {"ok": True, "model": model, "column": col}, 200
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": (str(exc) or exc.__class__.__name__)}, 400
+
+
+def _norm_field(c: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce one AI column into the exact target-field shape the UI expects."""
+    dtype = str(c.get("dataType") or "varchar").lower().strip()
+    if dtype not in SUPPORTED_TYPES:
+        dtype = "varchar"
+    length = c.get("length")
+    if dtype in LENGTH_TYPES:
+        try:
+            length = int(length) if length not in (None, "") else (100 if dtype in ("varchar", "nvarchar", "char") else 18)
+        except (TypeError, ValueError):
+            length = 100 if dtype in ("varchar", "nvarchar", "char") else 18
+    else:
+        length = None
+    fk = bool(c.get("fk"))
+    return {
+        "name": str(c.get("name") or "").strip(),
+        "dataType": dtype,
+        "length": length,
+        "mandatory": bool(c.get("mandatory")),
+        "pk": bool(c.get("pk")),
+        "fk": fk,
+        "fkReference": (str(c.get("fkReference")).strip() if (fk and c.get("fkReference")) else ""),
+        "description": str(c.get("description") or ""),
+        "businessTerm": "",
+        "accepted": None,
+        "default": None,
+    }
+
+
+def parse_entity(body: Dict[str, Any]) -> Result:
+    """Parse an add-a-table instruction into a target entity + its columns.
+
+    Body: {
+      instruction: str,
+      existingEntities: [str]   # existing entity/table names, to avoid duplicates
+    }
+    Returns {ok, entity:{name, table, description, isListTable, fields:[...],
+    confidence, note, duplicate}}.
+    """
+    if anthropic is None:
+        return {"ok": False, "error": "The 'anthropic' SDK is not installed on the server. Run: pip install anthropic"}, 400
+
+    instruction = (body.get("instruction") or "").strip()
+    existing = [str(n).strip() for n in (body.get("existingEntities") or []) if str(n).strip()]
+    if not instruction:
+        return {"ok": False, "error": "No instruction provided."}, 400
+
+    existing_block = ("\n".join("- " + n for n in existing)) or "(none yet)"
+
+    system = (
+        "You turn a request into ONE new database TABLE (entity) definition with its columns, "
+        "for a data-migration target schema. The request may be a short natural-language "
+        "description OR a pasted column list / data dictionary (rows, possibly tab- or "
+        "pipe-separated, often with a header like TableName / Field Name / Data Type / IsNull / "
+        "Is Primary Key / Type Key / Foreign Key). "
+        "Return a single JSON object with keys: entity, table, description, isListTable, "
+        "columns, confidence, note.\n\n"
+        "RULES:\n"
+        "- entity: a valid identifier (letters, digits, underscore; no spaces). Match the "
+        "casing/naming convention of the EXISTING entities. It MUST NOT duplicate an existing "
+        "entity name (case-insensitive).\n"
+        "- table: the physical table name; default it to the same value as entity unless the "
+        "request clearly gives a different one.\n"
+        "- isListTable: true only if the request says it is a lookup/reference/code/list table.\n"
+        "- columns: an array of the table's columns. Each column: {name, dataType, length, "
+        "mandatory, pk, fk, fkReference, description}.\n"
+        "- COMPLETENESS: if the request LISTS columns (a dictionary/table/enumeration), you MUST "
+        "output EVERY column, in order, exactly as given — same names, types, lengths, "
+        "nullability, PK and FK. Do NOT summarize, sample, deduplicate away, or omit ANY column, "
+        "no matter how many there are. Only when the request is a vague description (no explicit "
+        "list) should you infer a sensible minimal set (incl. a primary key) without padding.\n"
+        "- Map any given SQL type to the closest of: " + ", ".join(SUPPORTED_TYPES) + " "
+        "(e.g. timestamp->datetime2, bool->bit, int4->int, int8->bigint, numeric->numeric). "
+        "Keep the original name/length; length is an integer for length/precision types (" +
+        ", ".join(sorted(LENGTH_TYPES)) + "), otherwise null.\n"
+        "- mandatory: true when the source says 'not null'/required; false for 'nullable'. A "
+        "primary key is mandatory.\n"
+        "- fk: true if a column references another table (e.g. a 'Foreign Key' value like "
+        "entity.User); set fkReference to that value, else null. Do NOT invent references.\n"
+        "- confidence: 0-100. Use a LOW value (<=40) and explain in 'note' if the request is "
+        "ambiguous or missing a table name. NEVER invent a table name the user did not give.\n"
+        "Respond with ONLY the JSON object. No prose, no markdown fences."
+    )
+    user = "EXISTING ENTITIES:\n" + existing_block + "\n\nREQUEST:\n" + instruction
+
+    model = ai_model()
+    try:
+        client = anthropic_client()
+        # High ceiling: a full dictionary (100+ columns) must not truncate.
+        base_kwargs = dict(model=model, max_tokens=16000, system=system,
+                           messages=[{"role": "user", "content": user}])
+
+        def run(extra):
+            with client.messages.stream(**base_kwargs, **extra) as stream:
+                return stream.get_final_message()
+
+        resp = call_ai("Target System - Add Entity (AI)", run, [
+            {"output_config": {"format": {"type": "json_schema", "schema": ENTITY_SCHEMA}}},
+            {},
+        ])
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
+        truncated = getattr(resp, "stop_reason", None) == "max_tokens"
+        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        parsed = parse_mapping_json(text)
+        if not isinstance(parsed, dict) or not parsed.get("entity"):
+            if truncated:
+                return {"ok": False, "error": "That table is too large to generate in one pass "
+                        "(the response was cut off). Add it in a few smaller parts (e.g. paste "
+                        "the first ~60 columns, add the entity, then use Add Column for the rest)."}, 200
+            return {"ok": False, "error": "Could not understand that instruction. Try naming the table, or use the Manual tab."}, 200
+
+        name = str(parsed.get("entity") or "").strip()
+        table = str(parsed.get("table") or "").strip() or name
+        # normalise + dedupe columns by name (case-insensitive)
+        fields: List[Dict[str, Any]] = []
+        seen = set()
+        for c in (parsed.get("columns") or []):
+            f = _norm_field(c)
+            key = f["name"].lower()
+            if not f["name"] or key in seen:
+                continue
+            seen.add(key)
+            fields.append(f)
+        dup = name.lower() in {n.lower() for n in existing} or table.lower() in {n.lower() for n in existing}
+        note = str(parsed.get("note") or "")
+        confidence = int(parsed.get("confidence") or 0)
+        if truncated:
+            # We salvaged partial JSON — warn that the tail was cut off.
+            note = ("Only the first " + str(len(fields)) + " columns were returned — the response "
+                    "was cut off. Review, add this entity, then add the remaining columns (Add "
+                    "Column) or paste the rest as a second entity part. " + note).strip()
+            confidence = min(confidence, 40)
+        entity = {
+            "name": name,
+            "table": table,
+            "description": str(parsed.get("description") or ""),
+            "isListTable": bool(parsed.get("isListTable")),
+            "fields": fields,
+            "confidence": confidence,
+            "note": note,
+            "duplicate": dup,
+            "truncated": truncated,
+        }
+        return {"ok": True, "model": model, "entity": entity}, 200
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()

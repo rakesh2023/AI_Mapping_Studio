@@ -44,6 +44,13 @@ def parse_column():
     return jsonify(payload), status
 
 
+@bp.route("/parse-entity", methods=["POST"])
+def parse_entity():
+    body = request.get_json(force=True) or {}
+    payload, status = schema_service.parse_entity(body)
+    return jsonify(payload), status
+
+
 @bp.route("/generate-ddl", methods=["POST"])
 def generate_ddl():
     body = request.get_json(force=True) or {}
