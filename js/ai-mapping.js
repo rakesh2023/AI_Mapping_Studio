@@ -198,7 +198,7 @@ function buildTargetSummary(){
       '<span class="badge-soft badge-gray">' + targetSchema.columnCount + ' fields</span> ' +
       '<a href="target-system.html" class="text-xs" style="text-decoration:none;">change target</a>';
   } else {
-    el.innerHTML = '<span class="badge-soft badge-medium"><i class="bi bi-exclamation-triangle"></i> No active target — add one on <a href="target-system.html">Target System</a>.</span>';
+    el.innerHTML = '<span class="badge-soft badge-medium"><i class="bi bi-exclamation-triangle"></i> No active Staging Area — add one on <a href="target-system.html">Staging Area</a>.</span>';
   }
 }
 
@@ -475,7 +475,7 @@ async function generateMappings(){
       // Guard: nothing selected for this table (shouldn't happen, but be safe).
       if(!nFields){
         logFail(line, "[" + (i+1) + "/" + chosen.length + "] '" + e.name + "' has no selected columns.");
-        throw new Error("Target table '" + e.name + "' has no selected columns to map.");
+        throw new Error("Staging Area table '" + e.name + "' has no selected columns to map.");
       }
 
       const payload = {
@@ -586,7 +586,7 @@ function buildMappingRows(items){
     const srcCol = (!unmapped && srcIndex[(m.sourceTable||"") + "||" + (m.sourceColumn||"")]) || {};
     return {
       id: "AI-" + String(i+1).padStart(4,"0"),
-      targetSystem: targetSchema.application || "Target",
+      targetSystem: targetSchema.application || "Staging Area",
       targetEntity: m.targetEntity, targetTable: ent.table || "",
       targetColumn: m.targetColumn, targetDataType: field.dataType || "", targetLength: field.length ?? null,
       targetDescription: field.description || "",
@@ -618,7 +618,7 @@ function renderResult(rows, usage, tableCount, totalInDoc){
     '<div class="kv-list mb-2">' +
       '<span class="k">High Confidence</span><span>' + high + '</span>' +
       '<span class="k">Needs Review</span><span>' + review + '</span>' +
-      '<span class="k">Unmapped Target Fields</span><span>' + unmapped + '</span>' +
+      '<span class="k">Unmapped Staging Area Fields</span><span>' + unmapped + '</span>' +
       '<span class="k">Total in Document</span><span>' + totalInDoc + '</span>' +
       (usage ? '<span class="k">Tokens (in/out)</span><span>' + usage.input_tokens + ' / ' + usage.output_tokens + '</span>' : '') +
     '</div>' +
