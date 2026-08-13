@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Staging Area - AI Mapping Studio</title>
+<title>Target System - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260813x">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260813x">
-<link rel="stylesheet" href="../css/forms.css?v=20260813x">
-<link rel="stylesheet" href="../css/tables.css?v=20260813x">
-<link rel="stylesheet" href="../css/mapping.css?v=20260813x">
-<link rel="stylesheet" href="../css/responsive.css?v=20260813x">
+<link rel="stylesheet" href="../css/common.css?v=20260813w">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260813w">
+<link rel="stylesheet" href="../css/forms.css?v=20260813w">
+<link rel="stylesheet" href="../css/tables.css?v=20260813w">
+<link rel="stylesheet" href="../css/mapping.css?v=20260813w">
+<link rel="stylesheet" href="../css/responsive.css?v=20260813w">
 </head>
 <body>
 <div class="app-shell">
@@ -19,19 +19,19 @@
     <header id="header-container"></header>
     <main class="content-area">
       <div class="breadcrumb-bar">
-        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Staging Area</div>
-        <h2>Staging Area Configuration</h2></div>
-        <button class="btn btn-primary" id="addConnBtn"><i class="bi bi-plus-lg me-1"></i> Add Staging Area</button>
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Target System</div>
+        <h2>Target System Configuration</h2></div>
+        <button class="btn btn-primary" id="addConnBtn"><i class="bi bi-plus-lg me-1"></i> Add Target System</button>
       </div>
 
       <div id="connectionCards" class="row g-4 mb-4"></div>
 
       <div class="card-el" id="connFormCard" style="display:none;">
-        <div class="section-title" id="connFormTitle"><i class="bi bi-hdd-network"></i> Staging Area Connection Details</div>
+        <div class="section-title" id="connFormTitle"><i class="bi bi-hdd-network"></i> Target Connection Details</div>
         <form id="connForm">
           <div class="form-grid cols-3">
             <div class="form-group"><label>Connection Name</label><input class="form-control" id="cName"></div>
-            <div class="form-group"><label>Staging Area Type</label>
+            <div class="form-group"><label>Target Type</label>
               <select class="form-select" id="cType">
                 <option>SQL Server</option><option>File System</option>
                 <option>Oracle</option><option>PostgreSQL</option><option>MySQL</option>
@@ -52,9 +52,9 @@
           <div id="fileGroup" style="display:none;">
             <div class="form-grid cols-2">
               <div class="form-group">
-                <label>Staging Area Schema File</label>
+                <label>Target Schema File</label>
                 <input type="file" class="form-control" id="cFile" accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.sql,.txt,.json,.xml">
-                <div class="text-xs text-muted-2 mt-1">Excel, CSV, PDF, Word, SQL script, JSON, or XML. Excel is read in the browser; other formats are read by the AI to extract the Staging Area tables &amp; columns.</div>
+                <div class="text-xs text-muted-2 mt-1">Excel, CSV, PDF, Word, SQL script, JSON, or XML. Excel is read in the browser; other formats are read by the AI to extract target tables &amp; columns.</div>
               </div>
               <div class="form-group d-flex align-items-end gap-2">
                 <button type="button" class="btn btn-outline-soft" id="extractFileBtn"><i class="bi bi-stars me-1"></i> Load / Extract</button>
@@ -63,12 +63,12 @@
             <div id="extractResult" class="mt-2"></div>
           </div>
 
-          <div class="hint-note mt-2 mb-3" id="sqlHint"><i class="bi bi-info-circle"></i> A SQL Server Staging Area is read live via the local backend (<code>python server/app.py</code>): use <strong>Load Tables</strong> to pull every table &amp; column. Credentials are stored locally in your browser only for this prototype.</div>
+          <div class="hint-note mt-2 mb-3" id="sqlHint"><i class="bi bi-info-circle"></i> SQL Server targets are read live via the local backend (<code>python server/app.py</code>): use <strong>Load Tables</strong> to pull every table &amp; column. Credentials are stored locally in your browser only for this prototype.</div>
           <div class="form-actions">
             <button type="button" class="btn btn-outline-soft" id="testConnBtn"><i class="bi bi-broadcast me-1"></i> Test Connection</button>
             <button type="button" class="btn btn-outline-soft" id="loadTablesBtn"><i class="bi bi-box-arrow-in-down me-1"></i> Load Tables</button>
             <button type="button" class="btn btn-outline-soft" id="cancelConnBtn">Cancel</button>
-            <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i> Save Staging Area</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i> Save Target</button>
           </div>
           <div id="testConnResult" class="mt-3"></div>
         </form>
@@ -77,7 +77,7 @@
       <!-- Active target browser: entity tree + fields grid -->
       <div class="card-el mb-3" id="activeTargetBar" style="display:none;">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-          <div class="section-title mb-0"><i class="bi bi-hdd-network"></i> Active Staging Area</div>
+          <div class="section-title mb-0"><i class="bi bi-hdd-network"></i> Active Target</div>
           <div id="schemaMeta" class="d-flex align-items-center gap-2 flex-wrap"></div>
         </div>
       </div>
@@ -86,7 +86,7 @@
         <div class="col-lg-3">
           <div class="card-el">
             <div class="section-title d-flex align-items-center justify-content-between gap-2">
-              <span><i class="bi bi-diagram-3"></i> Staging Area Entities</span>
+              <span><i class="bi bi-diagram-3"></i> Target Entities</span>
               <button type="button" class="btn btn-sm btn-primary" id="addEntityBtn" style="display:none;white-space:nowrap;"><i class="bi bi-plus-lg me-1"></i> Add Entity</button>
             </div>
             <ul class="metadata-tree" id="targetTree"></ul>
@@ -107,7 +107,7 @@
                   <th>Entity</th><th>Table</th><th>Column</th><th>Type</th><th>Len</th><th>Mandatory</th><th>PK</th><th>FK</th><th>List Table</th>
                   <th class="wrap">Description</th><th>Business Term</th><th>Accepted Values</th><th>Default</th>
                 </tr></thead>
-                <tbody id="targetFieldsBody"><tr><td colspan="13"><div class="empty-state"><i class="bi bi-mouse2"></i><h4>Select an entity to view its fields.</h4></div></td></tr></tbody>
+                <tbody id="targetFieldsBody"><tr><td colspan="13"><div class="empty-state"><i class="bi bi-mouse2"></i><h4>Select an entity to view target fields.</h4></div></td></tr></tbody>
               </table>
             </div>
           </div>
@@ -118,9 +118,9 @@
       <div class="card-el" id="noTargetState" style="display:none;">
         <div class="empty-state">
           <i class="bi bi-hdd-network"></i>
-          <h4>No Staging Area configured yet</h4>
-          <p class="text-xs text-muted-2">Add a Staging Area to define what the AI maps INTO. It can be a live <strong>SQL Server</strong> database or a <strong>file</strong> (Excel, CSV, PDF, Word, SQL, JSON, XML).</p>
-          <button class="btn btn-primary" onclick="document.getElementById('addConnBtn').click()"><i class="bi bi-plus-lg me-1"></i> Add Staging Area</button>
+          <h4>No target system configured yet</h4>
+          <p class="text-xs text-muted-2">Add a target system to define what the AI maps INTO. It can be a live <strong>SQL Server</strong> database or a <strong>file</strong> (Excel, CSV, PDF, Word, SQL, JSON, XML).</p>
+          <button class="btn btn-primary" onclick="document.getElementById('addConnBtn').click()"><i class="bi bi-plus-lg me-1"></i> Add Target System</button>
         </div>
       </div>
     </main>
@@ -136,7 +136,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="hint-note mb-3" id="acScopeNote"><i class="bi bi-info-circle"></i> Adds a column to this Staging Area's stored schema in the app. It does not run ALTER TABLE on a real database.</div>
+        <div class="hint-note mb-3" id="acScopeNote"><i class="bi bi-info-circle"></i> Adds a column to this target's stored schema in the app. It does not run ALTER TABLE on a real database.</div>
 
         <ul class="nav nav-pills mb-3" id="acTabs">
           <li class="nav-item"><button type="button" class="btn btn-sm btn-outline-soft active" id="acTabManual" data-tab="manual">Manual</button></li>
@@ -212,11 +212,11 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-plus-square me-1"></i> Add Staging Area Entity</h5>
+        <h5 class="modal-title"><i class="bi bi-plus-square me-1"></i> Add Target Entity</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="hint-note mb-3"><i class="bi bi-info-circle"></i> Adds a new table (entity) to this Staging Area's stored schema in the app. It does not CREATE a table on a real database.</div>
+        <div class="hint-note mb-3"><i class="bi bi-info-circle"></i> Adds a new table (entity) to this target's stored schema in the app. It does not CREATE a table on a real database.</div>
 
         <ul class="nav nav-pills mb-3" id="aeTabs">
           <li class="nav-item"><button type="button" class="btn btn-sm btn-outline-soft active" id="aeTabManual" data-tab="manual">Manual</button></li>
@@ -269,10 +269,10 @@
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="../js/common.js?v=20260813x"></script>
-<script src="../js/navigation.js?v=20260813x"></script>
-<script src="../js/target-schema.js?v=20260813x"></script>
-<script src="../js/target-system.js?v=20260813x"></script>
+<script src="../js/common.js?v=20260813w"></script>
+<script src="../js/navigation.js?v=20260813w"></script>
+<script src="../js/target-schema.js?v=20260813w"></script>
+<script src="../js/target-system.js?v=20260813w"></script>
 </body>
 </html>
 

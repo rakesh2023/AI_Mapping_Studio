@@ -108,8 +108,8 @@ function openForm(id){
   document.getElementById("testConnResult").innerHTML = "";
   document.getElementById("extractResult").innerHTML = "";
   document.getElementById("connFormTitle").innerHTML = id
-    ? '<i class="bi bi-pencil-square"></i> Edit Staging Area Connection'
-    : '<i class="bi bi-hdd-network"></i> Staging Area Connection Details';
+    ? '<i class="bi bi-pencil-square"></i> Edit Target Connection'
+    : '<i class="bi bi-hdd-network"></i> Target Connection Details';
 
   if(id){
     const c = getTargetConnection(id);
@@ -182,7 +182,7 @@ async function loadSqlTables(){
     if(!data.ok){ el.innerHTML = failNote(data.error || "Could not read metadata."); return; }
     stagedEntities = dbMetadataToEntities(data);
     const cols = stagedEntities.reduce((a,e)=>a+(e.fields||[]).length,0);
-    el.innerHTML = okNote("Loaded " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(data.connection || cfg.database) + ". Save the Staging Area to keep it.");
+    el.innerHTML = okNote("Loaded " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(data.connection || cfg.database) + ". Save the target to keep it.");
     if(!document.getElementById("cName").value.trim()) document.getElementById("cName").value = data.connection || cfg.database;
   }catch(err){ el.innerHTML = failNote("Backend not reachable. Start it with python server/app.py."); }
 }
@@ -201,7 +201,7 @@ async function loadFileTarget(){
       // In-browser parse (SheetJS) using the existing target-schema parser.
       const schema = await ingestTargetSchemaFile(file);   // also sets legacy blob; fine
       stagedEntities = schema.entities;
-      el.innerHTML = okNote("Parsed " + schema.tableCount + " tables, " + schema.columnCount + " columns from " + escapeHtml(file.name) + ". Save the Staging Area to keep it.");
+      el.innerHTML = okNote("Parsed " + schema.tableCount + " tables, " + schema.columnCount + " columns from " + escapeHtml(file.name) + ". Save the target to keep it.");
     } else {
       // Other formats: let the backend + AI extract the structure, with progress.
       const out = await streamExtractFile(file, (evt) => {
@@ -214,7 +214,7 @@ async function loadFileTarget(){
       stagedEntities = extractedToEntities(out.tables);
       const cols = stagedEntities.reduce((a,e)=>a+(e.fields||[]).length,0);
       el.innerHTML = okNote("Extracted " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(out.fileName || file.name) +
-        (out.truncatedChunks ? " (file was large — capped at " + out.chunks + " parts)" : "") + ". Save the Staging Area to keep it.");
+        (out.truncatedChunks ? " (file was large — capped at " + out.chunks + " parts)" : "") + ". Save the target to keep it.");
     }
     document.getElementById("cFile")._fileName = file.name;
     if(!document.getElementById("cName").value.trim()) document.getElementById("cName").value = file.name.replace(/\.[^.]+$/, "");
@@ -238,12 +238,12 @@ function readConfig(){
 function saveConnectionForm(e){
   e.preventDefault();
   const type = document.getElementById("cType").value;
-  const name = document.getElementById("cName").value.trim() || "New Staging Area";
+  const name = document.getElementById("cName").value.trim() || "New Target";
 
   if(!stagedEntities || !stagedEntities.length){
     const where = isFileSystem(type) ? "Upload a file and click 'Load / Extract'" : "Click 'Load Tables'";
     document.getElementById(isFileSystem(type) ? "extractResult" : "testConnResult").innerHTML =
-      failNote(where + " to read the Staging Area tables before saving.");
+      failNote(where + " to read the target tables before saving.");
     return;
   }
 
@@ -275,7 +275,7 @@ function saveConnectionForm(e){
   renderConnections();
   renderActiveBrowser();
   closeForm();
-  showNotification("Staging Area '" + conn.name + "' saved" + (getActiveTargetId() === conn.id ? " and set active." : "."), "success");
+  showNotification("Target '" + conn.name + "' saved" + (getActiveTargetId() === conn.id ? " and set active." : "."), "success");
 }
 
 function activateConn(id){
@@ -283,19 +283,19 @@ function activateConn(id){
   renderConnections();
   renderActiveBrowser();
   const c = getTargetConnection(id);
-  showNotification("'" + (c ? c.name : "Staging Area") + "' is now the active Staging Area. AI mapping and the workspace will map into it.", "success");
+  showNotification("'" + (c ? c.name : "Target") + "' is now the active target. AI mapping and the workspace will map into it.", "success");
 }
 
 function editConn(id){ openForm(id); }
 async function deleteConn(id){
   const c = getTargetConnection(id);
   if(!c) return;
-  const ok = await confirmDialog('Delete Staging Area "' + escapeHtml(c.name) + '"?', "Delete");
+  const ok = await confirmDialog('Delete target "' + escapeHtml(c.name) + '"?', "Delete");
   if(!ok) return;
   deleteTargetConnection(id);
   renderConnections();
   renderActiveBrowser();
-  showNotification("Staging Area deleted.", "primary");
+  showNotification("Target deleted.", "primary");
 }
 
 /* ---- active-target browser (entity tree + fields) ---- */
@@ -310,7 +310,7 @@ function renderActiveBrowser(){
   if(!has) return;
 
   document.getElementById("schemaMeta").innerHTML =
-    '<span class="badge-soft badge-high"><i class="bi bi-hdd-network"></i> ' + escapeHtml(meta.application || "Staging Area") + '</span> ' +
+    '<span class="badge-soft badge-high"><i class="bi bi-hdd-network"></i> ' + escapeHtml(meta.application || "Target") + '</span> ' +
     '<span class="badge-soft badge-gray">' + escapeHtml(meta.version || "") + '</span> ' +
     '<span class="badge-soft badge-gray">' + meta.tableCount + ' tables</span> ' +
     '<span class="badge-soft badge-gray">' + meta.columnCount + ' columns</span>';
@@ -327,7 +327,7 @@ function renderTargetTree(meta){
     items += '<li><div class="tree-node" data-entity="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> ' + escapeHtml(e.name) + '</div></li>';
   });
   tree.innerHTML =
-    '<li><div class="tree-node"><i class="bi bi-box"></i> ' + escapeHtml(meta.application || "Staging Area Schema") + '</div>' +
+    '<li><div class="tree-node"><i class="bi bi-box"></i> ' + escapeHtml(meta.application || "Target Schema") + '</div>' +
       '<ul class="tree-children">' + items + '</ul>' +
     '</li>';
   document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => selectEntity(n.dataset.entity)));
@@ -414,7 +414,7 @@ function wireAddColumn(){
 }
 
 function openAddColumnModal(){
-  if(!activeEntity){ showNotification("Select a Staging Area table first.", "warning"); return; }
+  if(!activeEntity){ showNotification("Select a target table first.", "warning"); return; }
   const meta = getTargetSchema();
   // reset form
   document.getElementById("acForm").reset();
@@ -531,7 +531,7 @@ function acValidate(){
   else if(fk && fkRef){
     const meta = getTargetSchema();
     const exists = (meta.entities || []).some(e => (e.fields || []).some(f => ((e.table||e.name) + "." + f.name).toLowerCase() === fkRef.toLowerCase()));
-    if(!exists) acSetErr("acFkRef", "Warning: '" + fkRef + "' isn't a known Staging Area table.column.");   // warn, not block
+    if(!exists) acSetErr("acFkRef", "Warning: '" + fkRef + "' isn't a known target table.column.");   // warn, not block
   }
   return ok;
 }
@@ -585,9 +585,9 @@ function acSave(){
 function persistColumn(entityName, field, afterCol){
   const activeId = getActiveTargetId();
   const conn = activeId ? getTargetConnection(activeId) : null;
-  if(!conn || !conn.entities){ return {ok:false, error:"No active Staging Area connection to modify."}; }
+  if(!conn || !conn.entities){ return {ok:false, error:"No active target connection to modify."}; }
   const ent = conn.entities.find(e => e.name === entityName || e.table === entityName);
-  if(!ent){ return {ok:false, error:"Staging Area table '" + entityName + "' was not found."}; }
+  if(!ent){ return {ok:false, error:"Target table '" + entityName + "' was not found."}; }
   ent.fields = ent.fields || [];
   if(ent.fields.some(f => f.name.toLowerCase() === field.name.toLowerCase())){
     return {ok:false, error:"A column named '" + field.name + "' already exists."};
@@ -665,7 +665,7 @@ function wireAddEntity(){
 }
 
 function openAddEntityModal(){
-  if(!getActiveTargetId() || !hasTargetSchema()){ showNotification("Load or activate a Staging Area first.", "warning"); return; }
+  if(!getActiveTargetId() || !hasTargetSchema()){ showNotification("Load or activate a target first.", "warning"); return; }
   document.getElementById("aeForm").reset();
   document.querySelectorAll(".aeerr").forEach(e => e.textContent = "");
   document.getElementById("aeAIError").innerHTML = "";
@@ -783,7 +783,7 @@ function aeSave(){
 function persistEntity(entity){
   const activeId = getActiveTargetId();
   const conn = activeId ? getTargetConnection(activeId) : null;
-  if(!conn || !conn.entities){ return {ok:false, error:"No active Staging Area connection to modify."}; }
+  if(!conn || !conn.entities){ return {ok:false, error:"No active target connection to modify."}; }
   const dup = conn.entities.some(e =>
     (e.name || "").toLowerCase() === entity.name.toLowerCase() ||
     ((e.table || e.name) || "").toLowerCase() === entity.table.toLowerCase());

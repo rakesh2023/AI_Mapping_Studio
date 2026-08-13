@@ -13,7 +13,7 @@ const SIDEBAR_SECTIONS = [
   {title:"Setup", items:[
     {label:"Project Setup", icon:"bi-kanban", href:"project-setup.html"},
     {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
-    {label:"Staging Area", icon:"bi-hdd-network", href:"target-system.html"}
+    {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"}
   ]},
   {title:"Discover", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
@@ -39,7 +39,7 @@ const SIDEBAR_SECTIONS = [
 
 const WORKFLOW_STEPS = [
   "Project Creation","Source Configuration","Source Connection","File Upload",
-  "Metadata Discovery","Source Profiling","Staging Area Configuration","Staging Area Metadata",
+  "Metadata Discovery","Source Profiling","Target Configuration","Target Metadata",
   "AI Mapping Generation","Mapping Review","Prompt Refinement","Validation",
   "ETL Code Generation","Approval","Export"
 ];

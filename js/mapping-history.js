@@ -142,7 +142,7 @@ function changeTypeBadge(type){
 function exportHistoryCSV(){
   const rows = hState.filtered;
   if(!rows.length){ showNotification("No history records to export.", "warning"); return; }
-  const headers = ["Timestamp","Mapping ID","Source Field","Staging Area Field","Change Type","Previous Value","New Value","Reason","User","Origin"];
+  const headers = ["Timestamp","Mapping ID","Source Field","Target Field","Change Type","Previous Value","New Value","Reason","User","Origin"];
   const lines = [headers.join(",")];
   rows.forEach(r => {
     const line = [formatDateTime(r.date), r.mappingId, r.sourceField, r.targetField, r.changeType, r.previousValue, r.newValue, r.reason, r.user, r.source]

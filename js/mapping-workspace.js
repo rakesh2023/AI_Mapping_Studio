@@ -8,8 +8,8 @@
 
 const COLUMNS = [
   {key:"id", label:"Mapping ID"},
-  {key:"targetTable", label:"Staging Area Table"},
-  {key:"targetColumn", label:"Staging Area Column", editable:true},
+  {key:"targetTable", label:"Target Table"},
+  {key:"targetColumn", label:"Target Column", editable:true},
   {key:"sourceTable", label:"Source Table"},
   {key:"sourceColumn", label:"Source Column"},
   {key:"sampleSourceValue", label:"Sample Value"},
@@ -731,7 +731,7 @@ function showMappingDetails(id){
   ).join("") : '<p class="text-xs text-muted-2">No changes recorded yet.</p>';
 
   document.getElementById("drawerBody").innerHTML =
-    '<div class="drawer-section"><h6>Staging Area Metadata</h6>' +
+    '<div class="drawer-section"><h6>Target Metadata</h6>' +
       '<div class="kv-list">' +
         '<span class="k">System</span><span>' + (m.targetSystem||"-") + '</span>' +
         '<span class="k">Entity / Table</span><span>' + m.targetEntity + ' / <span class="mono">' + m.targetTable + '</span></span>' +
@@ -755,7 +755,7 @@ function showMappingDetails(id){
         '<span class="k">Default Value</span><span>' + escapeHtml(m.defaultValue||"-") + '</span>' +
         '<span class="k">Lookup Table</span><span>' + escapeHtml(m.lookupTable||"-") + '</span>' +
         '<span class="k">Null Handling</span><span>' + escapeHtml(m.nullHandling||"-") + '</span>' +
-        '<span class="k">Sample Staging Area</span><span class="mono">' + escapeHtml(transformSample(m)) + '</span>' +
+        '<span class="k">Sample Target</span><span class="mono">' + escapeHtml(transformSample(m)) + '</span>' +
       '</div></div>' +
     '<div class="drawer-section"><h6>AI Confidence &amp; Explanation</h6>' + confidenceBadge(m.confidence) +
       '<ul class="explain-list mt-2">' + explanationItems + '</ul></div>' +
@@ -811,9 +811,9 @@ function downloadMappingCsv(){
   // then the source/legacy details that feed each target column, then the rule metadata.
   const EXPORT_COLS = [
     {key:"id",                 label:"Mapping ID"},
-    {key:"targetEntity",       label:"Staging Area Entity"},
-    {key:"targetTable",        label:"Staging Area Table"},
-    {key:"targetColumn",       label:"Staging Area Column"},
+    {key:"targetEntity",       label:"Target Entity"},
+    {key:"targetTable",        label:"Target Table"},
+    {key:"targetColumn",       label:"Target Column"},
     {key:"sourceTable",        label:"Source (Legacy) Table"},
     {key:"sourceColumn",       label:"Source (Legacy) Column"},
     {key:"sampleSourceValue",  label:"Sample Source Value"},
