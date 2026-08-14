@@ -133,6 +133,9 @@ async function loadLiveObjects(conn){
     if(!sourceMeta) renderNoConnectionState();
     return;
   }
+  const pw = await ensureConnPassword(conn);
+  if(pw === null) return;   // cancelled
+  cfg.password = pw;
   showNotification("Reading objects from " + (conn.name || cfg.database) + "…", "primary", 1500);
   try{
     const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});

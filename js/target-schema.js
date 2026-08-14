@@ -33,7 +33,7 @@ function setTargetSchema(schema){
   // the authoritative copy and getTargetSchema() derives from it).
   try{ lsSet(LS_TARGET_SCHEMA, schema); }catch(e){ console.warn("target schema blob not cached (quota):", e.message); }
 }
-function clearTargetSchema(){ localStorage.removeItem(LS_TARGET_SCHEMA); }
+function clearTargetSchema(){ lsRemove(LS_TARGET_SCHEMA); }
 function hasTargetSchema(){ const s = getTargetSchema(); return !!(s && s.entities && s.entities.length); }
 
 /* =========================================================================
@@ -62,7 +62,7 @@ function deleteTargetConnection(id){
     // Re-point to another connection if one remains, else clear the active target.
     const rest = getTargetConnections();
     if(rest.length) setActiveTarget(rest[0].id);
-    else { localStorage.removeItem(LS_ACTIVE_TARGET); clearTargetSchema(); }
+    else { lsRemove(LS_ACTIVE_TARGET); clearTargetSchema(); }
   }
 }
 

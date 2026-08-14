@@ -74,8 +74,10 @@ function connToConfig(c){
 
 async function loadLiveTables(conn){
   const tableSel = document.getElementById("tableSelect");
+  const pw = await ensureConnPassword(conn);
+  if(pw === null) return;   // cancelled
   try{
-    const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(conn))});
+    const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(Object.assign({}, conn, {password: pw})))});
     const data = await res.json();
     if(!data.ok || !data.tables.length){
       liveTables = [];
@@ -114,7 +116,9 @@ async function runProfiling(){
   document.getElementById("profileCards").innerHTML = "";
   document.getElementById("profileSummary").innerHTML = "";
   try{
-    const cfg = Object.assign(connToConfig(conn), {schema, table, topN:6});
+    const pw = await ensureConnPassword(conn);
+    if(pw === null){ setConsole("Cancelled — a password is required."); btn.disabled = false; return; }
+    const cfg = Object.assign(connToConfig(Object.assign({}, conn, {password: pw})), {schema, table, topN:6});
     const res = await fetch("/api/db/profile", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
     const data = await res.json();
     if(!data.ok){ setConsole("Profiling failed: " + (data.error||"")); showNotification("Profiling failed: " + (data.error||""), "danger"); btn.disabled=false; return; }

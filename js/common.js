@@ -69,13 +69,62 @@ const LS_KEYS = {
   history: "aims_mapping_history"
 };
 
+/* ---- Per-client data now lives server-side (multi-tenant), scoped by the
+   logged-in user + active client. These 13 stores are routed through an in-memory
+   CLIENT_STATE cache (hydrated once per page from GET /api/state) so existing
+   synchronous lsGet/lsSet callers keep working unchanged; writes are debounced to
+   PUT /api/state/<key>. Everything else (device/UI prefs) stays in localStorage. */
+const TENANT_DOC_KEYS = ["current_project","db_connections","target_connections",
+  "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
+  "mapping_history","deploy_history","exports","business_context","etl_instructions"];
+const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
+TENANT_DOC_KEYS.forEach(k => { TENANT_LS["aims_" + k] = k; });
+function isTenantKey(key){ return Object.prototype.hasOwnProperty.call(TENANT_LS, key); }
+
+let CLIENT_STATE = {};                                 // doc_key -> value
+let CLIENT_STATE_READY = false;
+const _pendingWrites = {};                             // doc_key -> setTimeout id
+
+async function hydrateClientState(){
+  try{
+    const res = await fetch("/api/state", {headers:{"Accept":"application/json"}});
+    if(res.ok){ const j = await res.json(); CLIENT_STATE = (j && j.state) ? j.state : {}; }
+    else { CLIENT_STATE = {}; }
+  }catch(e){ CLIENT_STATE = {}; }
+  CLIENT_STATE_READY = true;
+}
+function clientGet(docKey, fallback){
+  const v = CLIENT_STATE[docKey];
+  return (v === undefined || v === null) ? fallback : v;
+}
+function clientSet(docKey, value){
+  CLIENT_STATE[docKey] = value;
+  if(_pendingWrites[docKey]) clearTimeout(_pendingWrites[docKey]);
+  _pendingWrites[docKey] = setTimeout(() => _flushClientWrite(docKey), 300);
+}
+function clientRemove(docKey){ CLIENT_STATE[docKey] = null; clientSet(docKey, null); }
+function _flushClientWrite(docKey, keepalive){
+  if(_pendingWrites[docKey]){ clearTimeout(_pendingWrites[docKey]); delete _pendingWrites[docKey]; }
+  const opts = {method:"PUT", headers:{"Content-Type":"application/json"},
+                body: JSON.stringify({value: CLIENT_STATE[docKey]})};
+  if(keepalive) opts.keepalive = true;   // let the write survive page navigation/unload
+  try{ fetch("/api/state/" + encodeURIComponent(docKey), opts).catch(()=>{}); }catch(e){}
+}
+function _flushAllPending(){ Object.keys(_pendingWrites).forEach(k => _flushClientWrite(k, true)); }
+if(typeof window !== "undefined"){
+  window.addEventListener("pagehide", _flushAllPending);
+  document.addEventListener("visibilitychange", () => { if(document.visibilityState === "hidden") _flushAllPending(); });
+}
+
 function lsGet(key, fallback){
+  if(isTenantKey(key)) return clientGet(TENANT_LS[key], fallback);
   try{
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
   }catch(e){ return fallback; }
 }
 function lsSet(key, value){
+  if(isTenantKey(key)){ clientSet(TENANT_LS[key], value); return; }
   try{
     localStorage.setItem(key, JSON.stringify(value));
   }catch(e){
@@ -86,6 +135,11 @@ function lsSet(key, value){
       "The data set may be too large for localStorage (~5MB). Try a smaller target/source, or clear old data.");
   }
 }
+// Tenant-aware remove: server-backed keys are cleared server-side; others hit localStorage.
+function lsRemove(key){
+  if(isTenantKey(key)){ clientRemove(TENANT_LS[key]); return; }
+  try{ localStorage.removeItem(key); }catch(e){}
+}
 
 function getMappingOverrides(){ return lsGet(LS_KEYS.overrides, {}); }
 function saveMappingOverride(id, changes){
@@ -93,7 +147,7 @@ function saveMappingOverride(id, changes){
   all[id] = Object.assign({}, all[id] || {}, changes);
   lsSet(LS_KEYS.overrides, all);
 }
-function clearMappingOverrides(){ localStorage.removeItem(LS_KEYS.overrides); }
+function clearMappingOverrides(){ lsRemove(LS_KEYS.overrides); }
 
 function applyOverrides(mappings){
   const overrides = getMappingOverrides();
@@ -132,7 +186,16 @@ async function resetApplication(){
     ? await confirmDialog("Reset the entire application? This permanently clears ALL data — source & target connections, uploaded schema, generated mappings, join conditions, validation results, history, settings and preferences. This cannot be undone.", "Reset Everything")
     : window.confirm("Reset the entire application? This clears ALL data and cannot be undone.");
   if(!ok) return;
-  // Remove every app key (prefix "aims_") so nothing is missed as new keys are added.
+  // Clear this client's server-side data (scoped to the logged-in user + active client).
+  // Then re-store the mapping document as explicitly EMPTY ([]) so the workspace/
+  // dashboard/history/validation don't fall back to the bundled sample data on reload.
+  // Other clients (and other users) are untouched.
+  try{
+    await fetch("/api/state", {method:"DELETE"}).catch(()=>{});
+    await fetch("/api/state/ai_mappings", {method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({value: []})}).catch(()=>{});
+  }catch(e){ /* ignore */ }
+  // Sweep any local device prefs too.
   try{
     const keys = [];
     for(let i = 0; i < localStorage.length; i++){
@@ -140,11 +203,9 @@ async function resetApplication(){
       if(k && k.indexOf("aims_") === 0) keys.push(k);
     }
     keys.forEach(k => localStorage.removeItem(k));
-    // Mark the mapping document as explicitly EMPTY (not missing) so the workspace,
-    // dashboard, history and validation don't fall back to the bundled sample data.
-    localStorage.setItem("aims_ai_mappings", "[]");
   }catch(e){ /* ignore */ }
-  if(typeof showNotification === "function") showNotification("Application reset. Reloading…", "primary", 1500);
+  CLIENT_STATE = {ai_mappings: []};
+  if(typeof showNotification === "function") showNotification("Client data reset. Reloading…", "primary", 1500);
   setTimeout(() => { window.location.href = "dashboard.html"; }, 700);
 }
 
@@ -469,8 +530,185 @@ function buildClientSwitcherHTML(){
     escapeHtml(c.name) + '</option>').join("");
   return '<div class="client-switch" title="Active client">' +
     '<i class="bi bi-building"></i>' +
-    '<select id="clientSwitcher" aria-label="Active client">' + opts + '</select>' +
+    '<select id="clientSwitcher" aria-label="Active client">' + opts +
+      '<option disabled>──────────</option>' +
+      '<option value="__new__">+ New client…</option>' +
+      '<option value="__manage__">⚙ Manage clients…</option>' +
+    '</select>' +
   '</div>';
+}
+
+/* ---- Client management modal (create / edit / switch) ---- */
+function injectClientModal(){
+  if(document.getElementById("clientModal")) return;
+  const html =
+    '<div class="modal fade" id="clientModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-building me-1"></i> Clients</h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body">' +
+      '<div class="hint-note mb-2" id="cmErr" style="display:none;background:var(--danger-bg);color:var(--danger);border-color:#f3c9c6;"></div>' +
+      '<div class="section-title mb-1"><i class="bi bi-list-ul"></i> Your clients</div>' +
+      '<div id="cmList" class="mb-3"></div><hr>' +
+      '<div class="section-title mb-2" id="cmFormTitle"><i class="bi bi-plus-lg"></i> New client</div>' +
+      '<input type="hidden" id="cmEditId">' +
+      '<div class="form-group"><label>Name <span class="text-danger">*</span></label><input class="form-control" id="cmName" autocomplete="off"></div>' +
+      '<div class="form-group"><label>Industry</label><input class="form-control" id="cmIndustry" autocomplete="off"></div>' +
+      '<div class="d-flex gap-2 mt-2">' +
+        '<button type="button" class="btn btn-primary btn-sm" id="cmSave"><i class="bi bi-check2 me-1"></i> Create client</button>' +
+        '<button type="button" class="btn btn-outline-soft btn-sm" id="cmCancelEdit" style="display:none;">Cancel edit</button>' +
+      '</div>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.getElementById("cmSave").addEventListener("click", saveClientFromModal);
+  document.getElementById("cmCancelEdit").addEventListener("click", () => setClientForm(null));
+}
+function _cmErr(msg){ const e = document.getElementById("cmErr"); if(!e) return; if(msg){ e.textContent = msg; e.style.display = ""; } else { e.style.display = "none"; } }
+function setClientForm(client){
+  document.getElementById("cmEditId").value = client ? client.id : "";
+  document.getElementById("cmName").value = client ? client.name : "";
+  document.getElementById("cmIndustry").value = client ? (client.industry || "") : "";
+  document.getElementById("cmFormTitle").innerHTML = client
+    ? '<i class="bi bi-pencil"></i> Edit client'
+    : '<i class="bi bi-plus-lg"></i> New client';
+  document.getElementById("cmSave").innerHTML = client
+    ? '<i class="bi bi-check2 me-1"></i> Save changes'
+    : '<i class="bi bi-check2 me-1"></i> Create client';
+  document.getElementById("cmCancelEdit").style.display = client ? "" : "none";
+  _cmErr(null);
+}
+async function renderClientModalList(){
+  const el = document.getElementById("cmList");
+  let clients = AUTH ? AUTH.clients : [];
+  try{
+    const res = await fetch("/api/clients", {headers:{"Accept":"application/json"}});
+    if(res.ok){ const j = await res.json(); if(j.ok){ clients = j.clients; if(AUTH){ AUTH.clients = j.clients; AUTH.activeClientId = j.activeClientId; } } }
+  }catch(e){ /* use cached */ }
+  if(!clients.length){ el.innerHTML = '<div class="text-xs text-muted-2">No clients yet.</div>'; return; }
+  el.innerHTML = clients.map(c => {
+    const active = c.id === (AUTH && AUTH.activeClientId);
+    return '<div class="d-flex align-items-center justify-content-between" style="padding:6px 0;border-bottom:1px solid var(--border);">' +
+      '<div><div style="font-weight:600;">' + escapeHtml(c.name) +
+        (active ? ' <span class="badge-soft badge-high">active</span>' : '') + '</div>' +
+        '<div class="text-xs text-muted-2">' + escapeHtml(c.industry || "—") + '</div></div>' +
+      '<div class="d-flex gap-2">' +
+        (active ? '' : '<button type="button" class="btn btn-sm btn-outline-soft cm-switch" data-id="' + c.id + '">Switch</button>') +
+        '<button type="button" class="btn btn-sm btn-outline-soft cm-edit" data-id="' + c.id + '">Edit</button>' +
+      '</div></div>';
+  }).join("");
+  el.querySelectorAll(".cm-switch").forEach(b => b.addEventListener("click", async () => {
+    try{
+      const res = await fetch("/api/auth/select-client", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({clientId: Number(b.dataset.id)})});
+      if(res.ok){ window.location.reload(); } else { _cmErr("Could not switch client."); }
+    }catch(e){ _cmErr("Could not switch client."); }
+  }));
+  el.querySelectorAll(".cm-edit").forEach(b => b.addEventListener("click", () => {
+    const c = (AUTH.clients || []).find(x => x.id === Number(b.dataset.id));
+    if(c) setClientForm(c);
+  }));
+}
+async function saveClientFromModal(){
+  _cmErr(null);
+  const id = document.getElementById("cmEditId").value;
+  const name = document.getElementById("cmName").value.trim();
+  const industry = document.getElementById("cmIndustry").value.trim();
+  if(!name){ _cmErr("Client name is required."); return; }
+  const btn = document.getElementById("cmSave"); btn.disabled = true;
+  try{
+    const url = id ? ("/api/clients/" + encodeURIComponent(id)) : "/api/clients";
+    const method = id ? "PUT" : "POST";
+    const res = await fetch(url, {method: method, headers:{"Content-Type":"application/json"}, body: JSON.stringify({name, industry, config:{}})});
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || !j.ok){ _cmErr(j.error || "Could not save the client."); return; }
+    // Create -> it becomes the active client (server side) -> reload into its context.
+    // Edit -> reload so the renamed client shows everywhere.
+    window.location.reload();
+  }catch(e){ _cmErr("Cannot reach the server."); }
+  finally{ btn.disabled = false; }
+}
+function openClientModal(mode){
+  injectClientModal();
+  setClientForm(null);
+  renderClientModalList();
+  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("clientModal")).show(); }
+}
+
+/* ---- DB connection passwords are NOT persisted (server-side or local). They're
+   kept only in memory for this page session and prompted for when connecting. ---- */
+const RUNTIME_PW = {};                              // connId -> password (session only)
+function rememberConnPassword(id, pw){ if(id && pw) RUNTIME_PW[id] = pw; }
+function ensureConnPassword(conn){
+  return new Promise((resolve) => {
+    if(!conn) return resolve("");
+    if(conn.trusted) return resolve("");                 // Windows auth — no password
+    if(conn.password) return resolve(conn.password);     // fresh from a form / legacy
+    if(conn.id && RUNTIME_PW[conn.id] != null) return resolve(RUNTIME_PW[conn.id]);
+    promptPassword(conn.name || "this connection").then(pw => {
+      if(pw == null) return resolve(null);               // user cancelled
+      rememberConnPassword(conn.id, pw);
+      resolve(pw);
+    });
+  });
+}
+function promptPassword(name){
+  return new Promise((resolve) => {
+    let m = document.getElementById("pwPromptModal");
+    if(!m){
+      document.body.insertAdjacentHTML("beforeend",
+        '<div class="modal fade" id="pwPromptModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">' +
+        '<div class="modal-header"><h5 class="modal-title"><i class="bi bi-key me-1"></i> Enter password</h5>' +
+        '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+        '<div class="modal-body"><div class="text-xs text-muted-2 mb-2" id="pwPromptMsg"></div>' +
+        '<input type="password" class="form-control" id="pwPromptInput" autocomplete="off"></div>' +
+        '<div class="modal-footer"><button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" id="pwPromptOk">Connect</button></div>' +
+        '</div></div></div>');
+      m = document.getElementById("pwPromptModal");
+    }
+    const input = document.getElementById("pwPromptInput");
+    document.getElementById("pwPromptMsg").textContent =
+      "Password for " + name + " — used only for this connection and never stored.";
+    input.value = "";
+    const modal = new bootstrap.Modal(m);
+    let done = false;
+    const finish = (val) => { if(done) return; done = true; resolve(val); };
+    document.getElementById("pwPromptOk").onclick = () => { finish(input.value); modal.hide(); };
+    input.onkeydown = (e) => { if(e.key === "Enter"){ finish(input.value); modal.hide(); } };
+    m.addEventListener("hidden.bs.modal", () => finish(null), {once:true});
+    modal.show();
+    setTimeout(() => input.focus(), 200);
+  });
+}
+
+/* ---- One-time import of pre-sign-in browser data into the active client ---- */
+async function maybeOfferLegacyImport(){
+  if(!AUTH || !AUTH.activeClientId) return;
+  const flag = "aims_import_done_" + AUTH.activeClientId;
+  if(localStorage.getItem(flag)) return;
+  // Find legacy tenant data still sitting in this browser's localStorage.
+  const found = TENANT_DOC_KEYS.filter(k => localStorage.getItem("aims_" + k) != null);
+  if(!found.length){ return; }
+  const main = document.querySelector(".content-area");
+  if(!main) return;
+  const bar = document.createElement("div");
+  bar.className = "hint-note mb-3";
+  bar.style.cssText = "background:var(--primary-soft);color:var(--primary-dark);border-color:var(--primary);";
+  bar.innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i> We found data saved in this browser from before sign-in (' +
+    found.length + ' item' + (found.length===1?'':'s') + '). Import it into <strong>' + escapeHtml(activeClientName()) + '</strong>? ' +
+    '<button type="button" class="btn btn-sm btn-primary ms-2" id="legacyImportBtn">Import</button> ' +
+    '<button type="button" class="btn btn-sm btn-outline-soft" id="legacyDismissBtn">Dismiss</button>';
+  main.insertBefore(bar, main.firstChild);
+  document.getElementById("legacyDismissBtn").addEventListener("click", () => { localStorage.setItem(flag, "1"); bar.remove(); });
+  document.getElementById("legacyImportBtn").addEventListener("click", async () => {
+    bar.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing…';
+    for(const k of found){
+      let val; try{ val = JSON.parse(localStorage.getItem("aims_" + k)); }catch(e){ continue; }
+      try{ await fetch("/api/state/" + encodeURIComponent(k), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({value: val})}); }catch(e){}
+    }
+    localStorage.setItem(flag, "1");
+    showNotification("Imported your previous data into " + activeClientName() + ". Reloading…", "success", 1500);
+    setTimeout(() => window.location.reload(), 800);
+  });
 }
 
 async function fetchAuth(){
@@ -492,6 +730,10 @@ async function initShell(activeHref){
   if(!AUTH){ window.location.href = "/login"; return; }
   if(!AUTH.activeClientId){ window.location.href = "/onboarding"; return; }
 
+  // Load this client's server-side data into the in-memory cache BEFORE any page
+  // controller reads it (controllers await initShell, so the cache is ready in time).
+  await hydrateClientState();
+
   const sidebarEl = document.getElementById("sidebar-container");
   if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(activeHref); }
 
@@ -501,6 +743,8 @@ async function initShell(activeHref){
 
   wireShellEvents();
   applySidebarCollapsedState();
+  injectClientModal();
+  maybeOfferLegacyImport();
 }
 
 function wireShellEvents(){
@@ -540,11 +784,18 @@ function wireShellEvents(){
     resetBtn.addEventListener("click", resetApplication);
   }
 
-  // Client switcher: change the active client server-side, then reload that client's context.
+  // Client switcher: switch the active client (reload its context), or open the
+  // manage/new modal for the special entries.
   const clientSwitcher = document.getElementById("clientSwitcher");
   if(clientSwitcher){
     clientSwitcher.addEventListener("change", async () => {
-      const cid = Number(clientSwitcher.value);
+      const val = clientSwitcher.value;
+      if(val === "__new__" || val === "__manage__"){
+        clientSwitcher.value = String(AUTH.activeClientId || "");   // don't leave the action selected
+        openClientModal(val === "__new__" ? "new" : "manage");
+        return;
+      }
+      const cid = Number(val);
       try{
         const res = await fetch("/api/auth/select-client", {method:"POST",
           headers:{"Content-Type":"application/json"}, body: JSON.stringify({clientId: cid})});

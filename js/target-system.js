@@ -266,6 +266,9 @@ function saveConnectionForm(e){
     loadedAt: new Date().toISOString()
   });
   if(!conn.id) conn.id = uid("TGT");
+  // Never persist the DB password (target schema is already read into entities[]).
+  rememberConnPassword(conn.id, conn.password);
+  delete conn.password;
   upsertTargetConnection(conn);
 
   // Auto-activate if it's the first target, or if we edited the active one.

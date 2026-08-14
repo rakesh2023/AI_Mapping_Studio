@@ -6,6 +6,8 @@ session. All DB access goes through app.db.app_db (stdlib sqlite3).
 """
 import re
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
@@ -17,6 +19,45 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MIN_PASSWORD = 8
 _MAX_EMAIL = 254
 _MAX_NAME = 120
+
+# --- Simple in-memory login throttling (per-email) --- #
+# Not distributed (single-process dev server), but blunts brute-forcing: after
+# MAX_FAILS failures within WINDOW seconds, the account is locked for LOCKOUT seconds.
+_FAIL_LOCK = threading.Lock()
+_FAILS: Dict[str, list] = {}      # email -> [failure epoch seconds]
+_MAX_FAILS = 5
+_WINDOW = 15 * 60
+_LOCKOUT = 15 * 60
+
+
+def _prune(email: str, now: float) -> list:
+    hits = [t for t in _FAILS.get(email, []) if now - t < _WINDOW]
+    _FAILS[email] = hits
+    return hits
+
+
+def login_locked_seconds(email: str) -> int:
+    """Seconds remaining before this email may try again, or 0 if not locked."""
+    email = (email or "").strip().lower()
+    now = time.time()
+    with _FAIL_LOCK:
+        hits = _prune(email, now)
+        if len(hits) >= _MAX_FAILS:
+            return max(0, int(_LOCKOUT - (now - hits[-1])))
+    return 0
+
+
+def record_login_result(email: str, success: bool) -> None:
+    """Clear the counter on success; record a timestamped failure otherwise."""
+    email = (email or "").strip().lower()
+    now = time.time()
+    with _FAIL_LOCK:
+        if success:
+            _FAILS.pop(email, None)
+        else:
+            hits = _prune(email, now)
+            hits.append(now)
+            _FAILS[email] = hits
 
 
 def _now() -> str:

@@ -49,7 +49,13 @@ def signup():
 @bp.route("/login", methods=["POST"])
 def login():
     body = request.get_json(silent=True) or {}
-    user = auth_service.authenticate(body.get("email", ""), body.get("password", ""))
+    email = body.get("email", "")
+    locked = auth_service.login_locked_seconds(email)
+    if locked:
+        mins = max(1, locked // 60)
+        return jsonify({"ok": False, "error": "Too many failed attempts. Try again in about %d minute(s)." % mins}), 429
+    user = auth_service.authenticate(email, body.get("password", ""))
+    auth_service.record_login_result(email, bool(user))
     if not user:
         return jsonify({"ok": False, "error": "Invalid email or password."}), 401
     _set_login(user)

@@ -106,7 +106,7 @@ function initBizContext(){
   });
   if(resetBtn) resetBtn.addEventListener("click", () => {
     ta.value = defaultBizContext;
-    localStorage.removeItem(LS_BIZ_CONTEXT);
+    lsRemove(LS_BIZ_CONTEXT);
     bizCtxState("default");
     if(typeof showNotification === "function") showNotification("Business Context restored to the default prompt.", "primary");
   });
@@ -386,7 +386,9 @@ async function loadSource(){
     return sourceCache;
   }
 
-  const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(conn))});
+  const pw = await ensureConnPassword(conn);
+  if(pw === null) throw new Error("A password is required to read this source.");
+  const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(Object.assign({}, conn, {password: pw})))});
   const data = await res.json();
   if(!data.ok) throw new Error(data.error || "Could not read source metadata.");
   sourceCache = {_id:id, connection:data.connection, schema:data.schema,

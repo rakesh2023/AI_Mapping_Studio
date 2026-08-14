@@ -31,6 +31,16 @@ def test_signup_duplicate_email_conflicts():
     assert status == 409 and payload["ok"] is False
 
 
+def test_login_throttle_locks_after_failures_and_clears_on_success():
+    email = "throttle@example.com"
+    assert A.login_locked_seconds(email) == 0
+    for _ in range(5):
+        A.record_login_result(email, False)
+    assert A.login_locked_seconds(email) > 0          # locked after 5 failures
+    A.record_login_result(email, True)                # a success resets the counter
+    assert A.login_locked_seconds(email) == 0
+
+
 def test_password_is_hashed_not_plaintext():
     A.signup("hash@example.com", "password123", "H")
     from app.db.app_db import connect

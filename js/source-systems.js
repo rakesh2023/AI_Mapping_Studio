@@ -219,6 +219,9 @@ function saveConnectionForm(e){
   const conn = Object.assign({}, existing || {}, data);
   if(!conn.id) conn.id = uid("CONN");
   if(!conn.status) conn.status = "Not Tested";
+  // Never persist the DB password. Keep it in memory for this session, then strip it.
+  rememberConnPassword(conn.id, conn.password);
+  delete conn.password;
   upsertDbConnection(conn);
   renderConnections();
   closeForm();
@@ -256,9 +259,11 @@ async function quickTest(id){
   const c = getDbConnection(id);
   if(!c) return;
   if(!isSqlServer(c.type)){ showNotification("Live testing is only available for SQL Server connections.", "warning"); return; }
+  const pw = await ensureConnPassword(c);
+  if(pw === null) return;   // user cancelled the password prompt
   showNotification("Testing '" + c.name + "'...", "primary", 1500);
   try{
-    const res = await fetch("/api/db/test", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(c))});
+    const res = await fetch("/api/db/test", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(connToConfig(Object.assign({}, c, {password: pw})))});
     const out = await res.json();
     c.status = out.ok ? "Connected" : "Failed";
     upsertDbConnection(c);

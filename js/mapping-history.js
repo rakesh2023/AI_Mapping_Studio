@@ -24,8 +24,8 @@ async function clearAllHistory(){
   if(!ok) return;
   // Clear both keys — the store writes under LS_KEYS.history while this page read
   // from a legacy 'aims_history' key; wipe both so nothing lingers.
-  localStorage.removeItem("aims_mapping_history");
-  localStorage.removeItem("aims_history");
+  lsRemove("aims_mapping_history");
+  lsRemove("aims_history");
   hState.all = []; hState.filtered = []; hState.page = 1;
   renderHistory();
   showNotification("Mapping history cleared.", "primary");

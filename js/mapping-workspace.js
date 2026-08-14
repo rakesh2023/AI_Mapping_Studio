@@ -576,7 +576,7 @@ async function clearAllMappings(){
   // Store an explicit EMPTY document (not remove the key) so the page doesn't fall
   // back to the bundled sample mappings.json on reload — cleared must stay cleared.
   lsSet("aims_ai_mappings", []);
-  localStorage.removeItem("aims_ai_joins");
+  lsRemove("aims_ai_joins");
   if(typeof clearMappingOverrides === "function") clearMappingOverrides();
   allMappings = [];
   joinConditions = {};
@@ -715,8 +715,11 @@ async function loadSourceSchema(){
       } else {
         const cfg = {driver:c.driver||"ODBC Driver 17 for SQL Server", server:c.server||c.host||"",
           database:c.database||c.db||"", schema:c.schema||null, trusted:!!c.trusted,
-          username:c.username||"", password:c.password||""};
+          username:c.username||"", password:""};
         if(!cfg.server || !cfg.database) return;
+        const pw = await ensureConnPassword(c);
+        if(pw === null) return;   // skip this source if no password provided
+        cfg.password = pw;
         const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
         const data = await res.json();
         if(data.ok) (data.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));

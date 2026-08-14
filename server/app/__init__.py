@@ -36,6 +36,7 @@ def create_app() -> Flask:
     from app.api.static_routes import bp as static_bp
     from app.api.auth_routes import bp as auth_bp
     from app.api.client_routes import bp as client_bp
+    from app.api.state_routes import bp as state_bp
     from app.api.db_routes import bp as db_bp
     from app.api.ai_routes import bp as ai_bp
     from app.api.deploy_routes import bp as deploy_bp
@@ -44,6 +45,7 @@ def create_app() -> Flask:
     application.register_blueprint(static_bp)
     application.register_blueprint(auth_bp)
     application.register_blueprint(client_bp)
+    application.register_blueprint(state_bp)
     application.register_blueprint(db_bp)
     application.register_blueprint(ai_bp)
     application.register_blueprint(deploy_bp)
