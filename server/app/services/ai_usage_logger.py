@@ -107,6 +107,28 @@ def ensure_usage_table() -> None:
         print("[ai_usage_logger] ensure_usage_table failed:\n" + traceback.format_exc())
 
 
+def delete_user_logs(user_id: int) -> int:
+    """Delete ALL usage rows for a user (every client) — used when an admin deletes
+    the account. The usage log lives in a separate SQLite file with no FK to users,
+    so it must be purged explicitly. Returns the number of rows removed."""
+    if not user_id:
+        return 0
+    try:
+        with _WRITE_LOCK:
+            conn = _connect()
+            try:
+                conn.execute(_CREATE_SQL)
+                _ensure_owner_columns(conn)
+                cur = conn.execute("DELETE FROM ai_usage_log WHERE user_id=?", (user_id,))
+                conn.commit()
+                return int(cur.rowcount or 0)
+            finally:
+                conn.close()
+    except Exception as exc:  # noqa: BLE001
+        print("[ai_usage_logger] delete_user_logs failed: " + repr(exc))
+        return 0
+
+
 def clear_logs(user_id: int, client_id: int) -> Dict[str, Any]:
     """Delete this tenant's usage rows (irreversible). Returns {ok, deleted}.
 

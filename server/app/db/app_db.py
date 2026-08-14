@@ -30,11 +30,24 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_user_columns(conn: sqlite3.Connection) -> None:
+    """Add columns to a pre-existing (legacy) users table.
+
+    CREATE TABLE IF NOT EXISTS won't add new columns to a table that already
+    exists, so migrate in place: add `is_admin` when missing. Idempotent; caller
+    holds _WRITE_LOCK.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "is_admin" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+
 def ensure_app_tables() -> None:
     """Create the app tables if they don't exist (idempotent).
 
-    Called once at startup. Guarded so a failure here (e.g. read-only dir) is
-    logged but never prevents the app from starting.
+    Called once at startup. Also migrates a legacy users table to add newer
+    columns (is_admin). Guarded so a failure here (e.g. read-only dir) is logged
+    but never prevents the app from starting.
     """
     try:
         with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
@@ -43,6 +56,7 @@ def ensure_app_tables() -> None:
             conn = connect()
             try:
                 conn.executescript(script)
+                _ensure_user_columns(conn)
                 conn.commit()
             finally:
                 conn.close()

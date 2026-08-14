@@ -4,7 +4,7 @@ Thin: parse JSON -> call auth_service/client_service -> set the Flask session ->
 jsonify. The session (signed cookie) is the ONLY source of the logged-in user id;
 no endpoint trusts a client-supplied user_id.
 """
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, current_app
 
 from app.services import auth_service, client_service
 
@@ -37,6 +37,10 @@ def _me_payload():
 
 @bp.route("/signup", methods=["POST"])
 def signup():
+    # The tool is closed: users are created by an admin, not by self-registration.
+    if not current_app.config.get("SIGNUP_ENABLED"):
+        return jsonify({"ok": False,
+                        "error": "Self-registration is disabled. Contact your administrator."}), 403
     body = request.get_json(silent=True) or {}
     payload, status = auth_service.signup(
         body.get("email", ""), body.get("password", ""), body.get("name", ""))

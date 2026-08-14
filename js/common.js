@@ -225,7 +225,7 @@ async function resetApplication(){
   }catch(e){ /* ignore */ }
   // Only reset THIS client's in-memory cache. Device/UI prefs in localStorage are left intact.
   CLIENT_STATE = {ai_mappings: []};
-  RUNTIME_PW && Object.keys(RUNTIME_PW).forEach(k => delete RUNTIME_PW[k]);   // drop cached passwords
+  clearConnPasswords();   // drop session-cached DB passwords
   if(typeof showNotification === "function") showNotification(who + " data reset. Reloading…", "primary", 1500);
   setTimeout(() => { window.location.href = "dashboard.html"; }, 700);
 }
@@ -482,15 +482,20 @@ function buildSidebarHTML(activeHref){
       '<div class="brand-text"><b>PwC</b><span>AI Mapping Studio</span></div>' +
     '</div>' +
     '<nav class="sidebar-nav">' +
-      SIDEBAR_SECTIONS.map(section =>
-        (section.title ? '<div class="nav-section-title">' + section.title + '</div>' : '') +
-        section.items.map(item =>
-          '<div class="nav-item">' +
-            '<a class="nav-link ' + (item.href === activeHref ? "active" : "") + '" href="' + item.href + '" title="' + item.label + '">' +
-              '<i class="bi ' + item.icon + '"></i><span>' + item.label + '</span>' +
-            '</a>' +
-          '</div>').join("")
-      ).join("") +
+      ((AUTH && AUTH.user && AUTH.user.isAdmin)
+        // Admins manage users only — show just the Administration link, no mapping nav.
+        ? '<div class="nav-section-title">Administration</div>' +
+          '<div class="nav-item"><a class="nav-link ' + ("admin.html" === activeHref ? "active" : "") +
+            '" href="admin.html" title="User Admin"><i class="bi bi-shield-lock"></i><span>User Admin</span></a></div>'
+        : SIDEBAR_SECTIONS.map(section =>
+            (section.title ? '<div class="nav-section-title">' + section.title + '</div>' : '') +
+            section.items.map(item =>
+              '<div class="nav-item">' +
+                '<a class="nav-link ' + (item.href === activeHref ? "active" : "") + '" href="' + item.href + '" title="' + item.label + '">' +
+                  '<i class="bi ' + item.icon + '"></i><span>' + item.label + '</span>' +
+                '</a>' +
+              '</div>').join("")
+          ).join("")) +
     '</nav>' +
     '<div class="sidebar-footer">' +
       '<button class="sidebar-toggle-btn" id="sidebarToggleBtn"><i class="bi bi-layout-sidebar-inset"></i><span id="sidebarToggleLabel">Collapse</span></button>' +
@@ -646,14 +651,40 @@ function openClientModal(mode){
 
 /* ---- DB connection passwords are NOT persisted (server-side or local). They're
    kept only in memory for this page session and prompted for when connecting. ---- */
-const RUNTIME_PW = {};                              // connId -> password (session only)
-function rememberConnPassword(id, pw){ if(id && pw) RUNTIME_PW[id] = pw; }
+// Passwords are cached for the BROWSER TAB SESSION only (sessionStorage): survives page
+// navigation so the user is prompted once per session, cleared when the tab closes or on
+// logout. Never written to localStorage, the server, or disk.
+const RUNTIME_PW = {};                              // connId -> password (in-memory mirror)
+const PW_SS_PREFIX = "aims_pw_";
+function rememberConnPassword(id, pw){
+  if(!id || !pw) return;
+  RUNTIME_PW[id] = pw;
+  try{ sessionStorage.setItem(PW_SS_PREFIX + id, pw); }catch(e){}
+}
+function cachedConnPassword(id){
+  if(!id) return null;
+  if(RUNTIME_PW[id] != null) return RUNTIME_PW[id];
+  try{ const v = sessionStorage.getItem(PW_SS_PREFIX + id); if(v != null){ RUNTIME_PW[id] = v; return v; } }catch(e){}
+  return null;
+}
+function clearConnPasswords(){
+  Object.keys(RUNTIME_PW).forEach(k => delete RUNTIME_PW[k]);
+  try{
+    const rm = [];
+    for(let i = 0; i < sessionStorage.length; i++){
+      const k = sessionStorage.key(i);
+      if(k && k.indexOf(PW_SS_PREFIX) === 0) rm.push(k);
+    }
+    rm.forEach(k => sessionStorage.removeItem(k));
+  }catch(e){}
+}
 function ensureConnPassword(conn){
   return new Promise((resolve) => {
     if(!conn) return resolve("");
     if(conn.trusted) return resolve("");                 // Windows auth — no password
-    if(conn.password) return resolve(conn.password);     // fresh from a form / legacy
-    if(conn.id && RUNTIME_PW[conn.id] != null) return resolve(RUNTIME_PW[conn.id]);
+    if(conn.password){ rememberConnPassword(conn.id, conn.password); return resolve(conn.password); }
+    const cached = cachedConnPassword(conn.id);
+    if(cached != null) return resolve(cached);           // entered earlier this session
     promptPassword(conn.name || "this connection").then(pw => {
       if(pw == null) return resolve(null);               // user cancelled
       rememberConnPassword(conn.id, pw);
@@ -678,7 +709,7 @@ function promptPassword(name){
     }
     const input = document.getElementById("pwPromptInput");
     document.getElementById("pwPromptMsg").textContent =
-      "Password for " + name + " — used only for this connection and never stored.";
+      "Password for " + name + " — remembered for this browser session only; never saved to the server.";
     input.value = "";
     const modal = new bootstrap.Modal(m);
     let done = false;
@@ -739,7 +770,10 @@ async function initShell(activeHref){
   // header in sync and handles a session that expired after the page loaded.)
   AUTH = await fetchAuth();
   if(!AUTH){ window.location.href = "/login"; return; }
-  if(!AUTH.activeClientId){ window.location.href = "/onboarding"; return; }
+  // Admins manage users only — they have no active client and must NOT be sent to
+  // onboarding (they live on the Admin page). Everyone else needs a client.
+  const _isAdmin = !!(AUTH.user && AUTH.user.isAdmin);
+  if(!AUTH.activeClientId && !_isAdmin){ window.location.href = "/onboarding"; return; }
 
   // Load this client's server-side data into the in-memory cache BEFORE any page
   // controller reads it (controllers await initShell, so the cache is ready in time).
@@ -826,6 +860,7 @@ function wireShellEvents(){
   const logoutBtn = document.getElementById("logoutBtn");
   if(logoutBtn){
     logoutBtn.addEventListener("click", async () => {
+      clearConnPasswords();   // drop session-cached DB passwords on logout
       try{ await fetch("/api/auth/logout", {method:"POST"}); }catch(e){}
       window.location.href = "/login";
     });

@@ -23,7 +23,7 @@ def create_app() -> Flask:
     application = Flask(__name__, static_folder=None)
 
     # --- Session signing key (required for auth) --- #
-    from app.core.config import secret_key, session_hours, csrf_enabled
+    from app.core.config import secret_key, session_hours, csrf_enabled, signup_enabled
     sk = secret_key()
     if not sk:
         sk = secrets.token_hex(32)
@@ -33,6 +33,7 @@ def create_app() -> Flask:
     application.permanent_session_lifetime = timedelta(hours=session_hours())
     application.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     application.config["CSRF_ENABLED"] = csrf_enabled()
+    application.config["SIGNUP_ENABLED"] = signup_enabled()
 
     from app.api.static_routes import bp as static_bp
     from app.api.auth_routes import bp as auth_bp
@@ -42,6 +43,7 @@ def create_app() -> Flask:
     from app.api.ai_routes import bp as ai_bp
     from app.api.deploy_routes import bp as deploy_bp
     from app.api.ai_usage import bp as ai_usage_bp
+    from app.api.admin_routes import bp as admin_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(auth_bp)
@@ -51,15 +53,19 @@ def create_app() -> Flask:
     application.register_blueprint(ai_bp)
     application.register_blueprint(deploy_bp)
     application.register_blueprint(ai_usage_bp)
+    application.register_blueprint(admin_bp)
 
     _register_auth_guard(application)
     _register_csrf(application)
 
-    # Create local SQLite tables if missing (idempotent, non-fatal).
+    # Create local SQLite tables if missing (idempotent, non-fatal), then ensure the
+    # env-configured admin account exists (self-signup is disabled).
     from app.services.ai_usage_logger import ensure_usage_table
     from app.db.app_db import ensure_app_tables
+    from app.services.auth_service import ensure_admin
     ensure_usage_table()
     ensure_app_tables()
+    ensure_admin()
     return application
 
 
@@ -79,15 +85,29 @@ def _register_auth_guard(application: Flask) -> None:
         if application.config.get("AUTH_DISABLED"):
             return None   # pure routing/unit tests opt out of the session gate
         p = request.path or "/"
+        # Admins never onboard (they don't own clients) — bounce them to their console.
+        if p == "/onboarding" and session.get("uid"):
+            from app.services.admin_service import is_admin
+            if is_admin(session.get("uid")):
+                return redirect("/pages/admin.html")
         if p in PUBLIC_PATHS or p.startswith(PUBLIC_PREFIXES) or p.startswith("/api/auth/"):
             return None
         if not session.get("uid"):
             if p.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Not authenticated."}), 401
             return redirect("/login")
-        # Logged in but hasn't picked/created a client yet -> force onboarding for app pages.
-        if not session.get("cid") and p.startswith("/pages/"):
-            return redirect("/onboarding")
+        # App pages: admins manage users only. Confine them to the Admin page (which
+        # needs no active client / no onboarding); send non-admins away from it. The
+        # /api/admin/* endpoints are guarded inside their blueprint (403).
+        if p.startswith("/pages/"):
+            from app.services.admin_service import is_admin
+            if is_admin(session.get("uid")):
+                return None if p == "/pages/admin.html" else redirect("/pages/admin.html")
+            if p == "/pages/admin.html":
+                return redirect("/pages/dashboard.html")
+            # Non-admin with no active client yet -> onboarding.
+            if not session.get("cid"):
+                return redirect("/onboarding")
         return None
 
 

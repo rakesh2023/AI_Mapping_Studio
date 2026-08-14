@@ -53,6 +53,20 @@ def test_logout_clears_session(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_admin_cannot_create_client(client):
+    # Create an account, promote it to admin in the DB, then it must not create clients.
+    client.post("/api/auth/signup", json={"email": "adm@example.com", "password": "password123", "name": "Adm"})
+    from app.db.app_db import connect
+    conn = connect()
+    try:
+        conn.execute("UPDATE users SET is_admin=1 WHERE email=?", ("adm@example.com",))
+        conn.commit()
+    finally:
+        conn.close()
+    r = client.post("/api/clients", json={"name": "ShouldFail", "config": {}})
+    assert r.status_code == 403 and r.get_json()["ok"] is False
+
+
 def test_cannot_select_another_users_client(client):
     # User A creates a client.
     ca = create_app().test_client()

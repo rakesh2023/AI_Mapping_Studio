@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,                 -- werkzeug scrypt/pbkdf2; never returned
     name          TEXT,
     role          TEXT DEFAULT 'Migration Lead',
+    is_admin      INTEGER NOT NULL DEFAULT 0,    -- 1 = admin (env-seeded); manages users
     created_at    TEXT NOT NULL,
     last_login_at TEXT
 );

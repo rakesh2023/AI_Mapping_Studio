@@ -10,6 +10,19 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Admin-managed users; self-signup disabled** (uncommitted).
+  The tool is now closed: `POST /api/auth/signup` returns 403 unless `AIMS_SIGNUP_ENABLED`
+  is set (default OFF; the login page no longer offers signup). Added an `is_admin` column
+  to `users` (idempotent migration in `app_db.ensure_app_tables`) and an env-seeded admin:
+  `AIMS_ADMIN_EMAIL` + `AIMS_ADMIN_PASSWORD` create/promote the admin on startup
+  (`auth_service.ensure_admin`). New **Admin page** (`pages/admin.html` + `js/admin.js`, shown
+  via an admins-only sidebar link) backed by `admin_service` + `/api/admin/users`
+  (GET/POST/DELETE, admin-only, CSRF-protected). Creating a user makes a STANDARD account;
+  **deleting a user is permanent** — the `users` row cascades to their clients + all
+  `tenant_documents`, and their `ai_usage_log` rows are purged. Guards: can't delete yourself
+  or another admin. `conftest` enables signup so the existing suite still bootstraps users;
+  new `test_admin.py`. Suite: 176 passed.
+
 - **Removed the Project Setup page (full cleanup)** (uncommitted).
   Deleted `pages/project-setup.html`, `js/project-setup.js`, and the unused seed `data/projects.json`.
   Stripped the dead project plumbing: sidebar nav link, `loadProject()`/`setCurrentProject()`/

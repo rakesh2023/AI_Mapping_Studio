@@ -7,6 +7,7 @@ makes it the session's active client.
 from flask import Blueprint, request, jsonify, session
 
 from app.services import client_service
+from app.services.admin_service import is_admin
 
 bp = Blueprint("client_api", __name__, url_prefix="/api/clients")
 
@@ -29,6 +30,9 @@ def create_client():
     uid = _uid()
     if not uid:
         return jsonify({"ok": False, "error": "Not authenticated."}), 401
+    # Admins manage users only — they do not own clients or mapping data.
+    if is_admin(uid):
+        return jsonify({"ok": False, "error": "Administrators cannot create clients."}), 403
     body = request.get_json(silent=True) or {}
     payload, status = client_service.create_client(
         uid, body.get("name", ""), body.get("industry", ""), body.get("config") or {})

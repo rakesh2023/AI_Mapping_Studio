@@ -71,6 +71,7 @@ def _row_to_user(row: sqlite3.Row) -> Dict[str, Any]:
         "email": row["email"],
         "name": row["name"] or "",
         "role": row["role"] or "",
+        "isAdmin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
         "createdAt": row["created_at"],
         "lastLoginAt": row["last_login_at"],
     }
@@ -153,3 +154,43 @@ def get_user(uid: int) -> Optional[Dict[str, Any]]:
     finally:
         conn.close()
     return _row_to_user(row) if row else None
+
+
+def ensure_admin() -> None:
+    """Bootstrap the admin account from the environment (AIMS_ADMIN_EMAIL / _PASSWORD).
+
+    Since self-signup is disabled, at least one admin must exist to manage users.
+    If AIMS_ADMIN_EMAIL matches an existing account, promote it (is_admin=1);
+    otherwise create it with AIMS_ADMIN_PASSWORD. No-op (with a warning) when the
+    email is unset, or when the account is missing and no password is provided.
+    Called once at startup; guarded so it can never block app boot.
+    """
+    from app.core.config import admin_email, admin_password
+    email = admin_email()
+    if not email:
+        return
+    pw = admin_password()
+    try:
+        with write_lock():
+            conn = connect()
+            try:
+                row = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+                if row:
+                    conn.execute("UPDATE users SET is_admin=1 WHERE id=?", (row["id"],))
+                    conn.commit()
+                    print("[auth] admin ensured (promoted existing account): " + email)
+                elif pw:
+                    conn.execute(
+                        "INSERT INTO users (email, password_hash, name, role, is_admin, created_at) "
+                        "VALUES (?,?,?,?,1,?)",
+                        (email, generate_password_hash(pw), "Administrator", "Administrator", _now()),
+                    )
+                    conn.commit()
+                    print("[auth] admin ensured (created new account): " + email)
+                else:
+                    print("[auth] WARNING: AIMS_ADMIN_EMAIL is set but the account does not exist "
+                          "and AIMS_ADMIN_PASSWORD is not set — no admin was created.")
+            finally:
+                conn.close()
+    except Exception as exc:  # noqa: BLE001 - admin bootstrap must never block startup
+        print("[auth] ensure_admin failed: " + repr(exc))

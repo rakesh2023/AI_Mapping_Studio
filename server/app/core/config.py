@@ -19,6 +19,40 @@ SERVER_DIR = os.path.abspath(os.path.join(_HERE, "..", ".."))
 ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
 
 
+def _load_dotenv() -> None:
+    """Load simple KEY=VALUE lines from server/.env into the environment.
+
+    A tiny, dependency-free loader (no python-dotenv). Real environment variables
+    ALWAYS win — we only fill keys that aren't already set. Supports blank lines,
+    '#' comments, an optional 'export ' prefix, and surrounding quotes. The file
+    is gitignored, so secrets (AIMS_ADMIN_EMAIL/PASSWORD, AIMS_SECRET_KEY, …) live
+    only on the machine. Tests set AIMS_DISABLE_DOTENV to stay isolated from it.
+    """
+    if os.environ.get("AIMS_DISABLE_DOTENV"):
+        return
+    path = os.path.join(SERVER_DIR, ".env")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 - a bad .env must never block startup
+        print("[config] .env load skipped: " + repr(exc))
+
+
+_load_dotenv()
+
+
 def port() -> int:
     """TCP port for the dev server (env PORT, default 8000)."""
     return int(os.environ.get("PORT", 8000))
@@ -117,3 +151,23 @@ def csrf_enabled() -> bool:
     token); it defaults ON so real deployments are protected.
     """
     return os.environ.get("AIMS_CSRF_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+
+
+def signup_enabled() -> bool:
+    """Whether self-service signup is allowed (env AIMS_SIGNUP_ENABLED, default OFF).
+
+    The tool is closed: users are created by an admin, not by self-registration.
+    Defaults OFF so real deployments reject POST /api/auth/signup; tests enable it
+    to bootstrap users through the signup endpoint.
+    """
+    return os.environ.get("AIMS_SIGNUP_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def admin_email() -> str:
+    """Email of the bootstrap admin, created/promoted on startup (env AIMS_ADMIN_EMAIL)."""
+    return (os.environ.get("AIMS_ADMIN_EMAIL") or "").strip().lower()
+
+
+def admin_password() -> str:
+    """Password for the bootstrap admin when it must be created (env AIMS_ADMIN_PASSWORD)."""
+    return os.environ.get("AIMS_ADMIN_PASSWORD") or ""

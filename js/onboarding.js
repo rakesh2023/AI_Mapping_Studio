@@ -15,11 +15,14 @@
   function showErr(msg){ errBox.textContent = msg; errBox.style.display = ""; }
   function hideErr(){ errBox.style.display = "none"; }
 
-  // Guard: must be logged in to onboard.
+  // Guard: must be logged in to onboard. Admins don't create clients — send them
+  // straight to the Admin page instead of the onboarding form.
   (async function ensureAuthed(){
     try{
       const res = await fetch("/api/auth/me", {headers:{"Accept":"application/json"}});
       if(res.status === 401){ window.location.href = "/login"; return; }
+      const j = await res.json().catch(()=>({}));
+      if(j && j.user && j.user.isAdmin){ window.location.href = "/pages/admin.html"; return; }
     }catch(e){ /* backend down — let the form submit surface it */ }
   })();
 
