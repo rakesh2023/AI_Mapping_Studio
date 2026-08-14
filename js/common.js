@@ -180,32 +180,28 @@ if(typeof document !== "undefined"){
   else { document.addEventListener("DOMContentLoaded", () => applyTheme(getTheme()), {once:true}); }
 }
 
-/* ---- Full application reset: clear ALL app data back to defaults ---- */
+/* ---- Reset: clear data for the LOGGED-IN USER + SELECTED CLIENT only ---- */
 async function resetApplication(){
+  const who = activeClientName() || "the current client";
   const ok = (typeof confirmDialog === "function")
-    ? await confirmDialog("Reset the entire application? This permanently clears ALL data — source & target connections, uploaded schema, generated mappings, join conditions, validation results, history, settings and preferences. This cannot be undone.", "Reset Everything")
-    : window.confirm("Reset the entire application? This clears ALL data and cannot be undone.");
+    ? await confirmDialog("Reset all data for " + who + "? This permanently clears THIS client's "
+        + "source & target connections, uploaded schema, generated mappings, join conditions, history "
+        + "and generated outputs. Your other clients and your device preferences (theme, layout) are "
+        + "NOT affected. This cannot be undone.", "Reset " + who)
+    : window.confirm("Reset all data for " + who + "? This clears this client's data only and cannot be undone.");
   if(!ok) return;
-  // Clear this client's server-side data (scoped to the logged-in user + active client).
-  // Then re-store the mapping document as explicitly EMPTY ([]) so the workspace/
-  // dashboard/history/validation don't fall back to the bundled sample data on reload.
-  // Other clients (and other users) are untouched.
+  // Server-side clear is scoped to session user_id + active client_id (see /api/state DELETE),
+  // so no other user or client is touched. Re-store the mapping document as explicitly EMPTY ([])
+  // so the workspace/dashboard/history/validation don't fall back to the bundled sample data.
   try{
     await fetch("/api/state", {method:"DELETE"}).catch(()=>{});
     await fetch("/api/state/ai_mappings", {method:"PUT", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({value: []})}).catch(()=>{});
   }catch(e){ /* ignore */ }
-  // Sweep any local device prefs too.
-  try{
-    const keys = [];
-    for(let i = 0; i < localStorage.length; i++){
-      const k = localStorage.key(i);
-      if(k && k.indexOf("aims_") === 0) keys.push(k);
-    }
-    keys.forEach(k => localStorage.removeItem(k));
-  }catch(e){ /* ignore */ }
+  // Only reset THIS client's in-memory cache. Device/UI prefs in localStorage are left intact.
   CLIENT_STATE = {ai_mappings: []};
-  if(typeof showNotification === "function") showNotification("Client data reset. Reloading…", "primary", 1500);
+  RUNTIME_PW && Object.keys(RUNTIME_PW).forEach(k => delete RUNTIME_PW[k]);   // drop cached passwords
+  if(typeof showNotification === "function") showNotification(who + " data reset. Reloading…", "primary", 1500);
   setTimeout(() => { window.location.href = "dashboard.html"; }, 700);
 }
 

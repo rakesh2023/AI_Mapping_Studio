@@ -42,6 +42,23 @@ def test_unknown_doc_key_rejected_over_http(client):
     assert client.put("/api/state/evil", json={"value": 1}).status_code == 400
 
 
+def test_reset_deletes_only_active_client_not_other_clients(client):
+    # One user with TWO clients; store data in each.
+    client.post("/api/auth/signup", json={"email": "multi@example.com", "password": "password123", "name": "M"})
+    cid_a = client.post("/api/clients", json={"name": "ClientA", "config": {}}).get_json()["client"]["id"]
+    client.put("/api/state/ai_mappings", json={"value": [{"c": "A"}]})            # A is active
+    cid_b = client.post("/api/clients", json={"name": "ClientB", "config": {}}).get_json()["client"]["id"]
+    client.put("/api/state/ai_mappings", json={"value": [{"c": "B"}]})            # B is now active
+
+    # Reset while B is active -> only B is cleared.
+    assert client.delete("/api/state").status_code == 200
+    assert client.get("/api/state/ai_mappings").get_json()["value"] is None       # B empty
+
+    # A's data is untouched.
+    client.post("/api/auth/select-client", json={"clientId": cid_a})
+    assert client.get("/api/state/ai_mappings").get_json()["value"] == [{"c": "A"}]
+
+
 def test_cross_user_cannot_read_others_state():
     # User A stores data.
     ca = create_app().test_client()
