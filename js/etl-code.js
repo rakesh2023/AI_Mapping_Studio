@@ -3,7 +3,7 @@
 
    Lets the user pick target tables (that have generated mappings) and produces
    a SQL stored procedure per table, following the project's INSERT template:
-   USE [<db>] / ALTER PROCEDURE [dbo].[INSERT_<db>_<Table>] / TRY..CATCH with
+   drop-if-exists + CREATE PROCEDURE [dbo].[INSERT_<db>_<Table>] / TRY..CATCH with
    CLAIM_CONVERSION_EXECUTION_LOG logging. Deterministic fill from the mapping
    document (no AI) — INSERT column list, SELECT (source col AS target col with
    transformation), and the entity's saved FROM/JOIN.
@@ -209,6 +209,8 @@ function wireControls(){
   if(dl) dl.addEventListener("click", (e) => { e.preventDefault(); downloadEtl(); });
   const clrOut = document.getElementById("clearEtlBtn");
   if(clrOut) clrOut.addEventListener("click", (e) => { e.preventDefault(); clearEtl(); });
+  const outEl = document.getElementById("etlOutput");
+  if(outEl) outEl.addEventListener("input", onOutputEdited);
 
   const hide = document.getElementById("etlHidePanelBtn");
   const show = document.getElementById("etlShowPanelBtn");
@@ -286,11 +288,19 @@ let etlView = "etl";     // which buffer the panel shows: "etl" | "ddl"
 function currentSql(){ return etlView === "ddl" ? ddlLastSql : etlLastSql; }
 function outputPlaceholder(){ return '-- Select one or more target tables on the left, then click "Generate ETL Code" or "Create Table".'; }
 
-// Render the active buffer into the panel; keep the view toggle + toolbar buttons in sync.
+// Render the active buffer into the (editable) panel; keep toolbar buttons in sync.
 function renderOutput(){
   const out = document.getElementById("etlOutput");
-  if(out) out.innerHTML = '<code>' + escapeHtml(currentSql() || outputPlaceholder()) + '</code>';
+  if(out) out.value = currentSql() || "";   // empty -> placeholder shows
   updateViewToggle();
+  updateOutputButtons();
+}
+// The output is user-editable: write manual edits straight back into the active buffer
+// so Copy / Download / Deploy all use exactly what's shown.
+function onOutputEdited(){
+  const out = document.getElementById("etlOutput");
+  if(!out) return;
+  if(etlView === "ddl") ddlLastSql = out.value; else etlLastSql = out.value;
   updateOutputButtons();
 }
 function setEtlView(v){ etlView = (v === "ddl") ? "ddl" : "etl"; renderOutput(); }
@@ -440,7 +450,9 @@ function selectLine(m){
     }
   }
   const pad = expr.length < 34 ? " ".repeat(34 - expr.length) : " ";
-  return "        " + expr + pad + "AS " + tgt + (note ? "   -- " + note : "");
+  // Return the code and the note SEPARATELY so the caller can place the list comma
+  // BEFORE the inline "-- note" comment (a comma after "--" is commented out -> breaks SQL).
+  return {code: "        " + expr + pad + "AS " + tgt, note: note};
 }
 
 function buildProc(g, db){
@@ -449,14 +461,21 @@ function buildProc(g, db){
   // mapped columns only (skip Not Mapped for the INSERT list, but keep in SELECT as NULL)
   const cols = g.rows.map(m => m.targetColumn).filter(Boolean);
   const insertCols = cols.join(",\n        ");
-  const selectLines = g.rows.map(selectLine).join(",\n").replace(/,\n$/, "");
+  // Comma BEFORE the inline comment: "<expr> AS <col>,   -- note" (last line gets no comma).
+  const sel = g.rows.map(selectLine);
+  const selectLines = sel.map((r, i) =>
+    r.code + (i < sel.length - 1 ? "," : "") + (r.note ? "   -- " + r.note : "")
+  ).join("\n");
   const fromJoin = g.join ? g.join : ("FROM " + (g.rows[0] && g.rows[0].sourceTable ? g.rows[0].sourceTable : "<source table>"));
 
   return "SET ANSI_NULLS ON\n" +
 "GO\n" +
 "SET QUOTED_IDENTIFIER ON\n" +
 "GO\n\n" +
-"ALTER   PROCEDURE [dbo].[" + procName + "]\n" +
+"IF OBJECT_ID('[dbo].[" + procName + "]', 'P') IS NOT NULL\n" +
+"    DROP PROCEDURE [dbo].[" + procName + "];\n" +
+"GO\n\n" +
+"CREATE PROCEDURE [dbo].[" + procName + "]\n" +
 "@DSMName varchar(255)\n" +
 "AS\n" +
 "BEGIN\n" +
@@ -713,6 +732,35 @@ function clearEtl(){
    ========================================================================= */
 const LS_DEPLOY_HISTORY = "aims_deploy_history";
 let deployPoll = null;
+let deployLogShown = 0;        // how many job.log lines already mirrored to the AI console
+let deployFixesShown = false;  // whether the "AI fixes applied" line was added this run
+
+// Append one line to the AI Processing Console (kind: "info" | "done" | "error").
+function etlConsoleAppend(text, kind){
+  const el = document.getElementById("etlLog");
+  if(!el) return;
+  const line = document.createElement("div");
+  line.className = "log-line done" + (kind === "error" ? " error" : "");
+  const icon = kind === "error" ? "bi-x-circle-fill" : kind === "done" ? "bi-check-circle-fill" : "bi-info-circle";
+  line.innerHTML = '<i class="bi ' + icon + '"></i> ' + escapeHtml(text);
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// Mirror any NEW backend deploy-log lines into the AI console, styling failures red
+// and success/fix lines green so the deploy process reads clearly.
+function mirrorDeployLog(job){
+  const logs = job.log || [];
+  for(let i = deployLogShown; i < logs.length; i++){
+    const msg = (logs[i] && logs[i].message) || "";
+    const l = msg.toLowerCase();
+    let kind = "info";
+    if(l.indexOf("failed") !== -1 || l.indexOf("could not") !== -1 || l.indexOf("unchanged") !== -1) kind = "error";
+    else if(l.indexOf("corrected") !== -1 || l.indexOf("committed") !== -1 || l.indexOf("successfully") !== -1) kind = "done";
+    etlConsoleAppend(msg, kind);
+  }
+  deployLogShown = logs.length;
+}
 
 // Build a pyodbc-style cfg from the ACTIVE target — only for SQL Server targets.
 function activeTargetCfg(){
@@ -896,7 +944,7 @@ async function runDeploy(){
     if(!data.ok){ errBox.innerHTML = failNote(data.error || "Could not start deployment."); return; }
     errBox.innerHTML = "";
     hideDeployModal();   // force-close + guaranteed backdrop removal (see below)
-    startDeployPolling(data.jobId, {kind: (etlView === "ddl" ? "Create Table" : "ETL Code"), dryRun: dry});
+    startDeployPolling(data.jobId, {kind: (etlView === "ddl" ? "Create Table" : "ETL Code"), dryRun: dry, database: cfg.database});
   }catch(e){
     errBox.innerHTML = failNote("Backend not reachable. Start it with: cd server && python main.py");
   }
@@ -916,6 +964,12 @@ function startDeployPolling(jobId, meta){
   deployPoll = "starting";   // truthy sentinel so the button disables immediately
   updateDeployBtn();         // disable Deploy while a job runs
 
+  // Stream the deployment process into the AI Processing Console.
+  etlConsoleShow(); etlLogReset();
+  deployLogShown = 0; deployFixesShown = false;
+  etlConsoleAppend("Deploying to " + ((meta && meta.database) ? meta.database : "SQL Server")
+    + ((meta && meta.dryRun) ? " (dry run)" : "") + "…", "info");
+
   const stopPolling = () => { if(deployPoll){ clearInterval(deployPoll); } deployPoll = null; updateDeployBtn(); };
 
   const tick = async () => {
@@ -927,7 +981,8 @@ function startDeployPolling(jobId, meta){
 
     if(!data || !data.ok){ stopPolling(); return; }   // unknown/expired job — release the button
     const job = data.job || {};
-    const terminal = (job.state === "succeeded" || job.state === "failed");
+    try{ mirrorDeployLog(job); }catch(e){}   // stream new log lines into the AI console
+    const terminal = (job.state === "succeeded" || job.state === "failed" || job.state === "needs_review");
 
     // Stop the poll + RE-ENABLE the Deploy button BEFORE rendering, so a render
     // error can never strand the button in a disabled state (the bug that made
@@ -937,9 +992,21 @@ function startDeployPolling(jobId, meta){
 
     if(terminal){
       try{ addDeployHistory(job, meta); }catch(e){}
+      const fixCount = (job.fixes || []).length;
+      // Console footer: summarize any AI fixes below the process log.
+      if(fixCount && !deployFixesShown){
+        etlConsoleAppend("AI fixes applied (" + fixCount + ")", "done");
+        (job.fixes || []).forEach(fx => {
+          const num = (fx.error && fx.error.number) ? ("SQL " + fx.error.number + ": ") : "";
+          etlConsoleAppend("• batch " + fx.batchIndex + " — " + num + ((fx.error && fx.error.message) || "corrected"), "info");
+        });
+        deployFixesShown = true;
+      }
       if(job.state === "succeeded"){
-        showNotification((job.dryRun ? "Dry run OK" : "Deployed") + " to " + (job.database || "")
-          + ((job.fixes && job.fixes.length) ? (" with " + job.fixes.length + " AI fix(es)") : "") + ".", "success", 7000);
+        showNotification((job.dryRun ? "Dry run OK" : "Deployed") + " to " + (job.database || "") + ".", "success", 7000);
+      } else if(job.state === "needs_review"){
+        // AI corrected the SQL but did NOT deploy it: load it into the editor for review.
+        if(job.finalSql){ try{ loadFixedSqlIntoEditor(job.finalSql, fixCount); }catch(e){} }
       } else {
         showNotification("Deployment failed: " + ((job.error && job.error.message) || "see details below") + " (target unchanged).", "danger", 9000);
       }
@@ -952,11 +1019,20 @@ function startDeployPolling(jobId, meta){
 function renderDeployStatus(job){
   const badge = document.getElementById("deployStateBadge");
   const body = document.getElementById("deployStatusBody");
-  const cls = {queued:"badge-gray", running:"badge-medium", fixing_error:"badge-medium", retrying:"badge-medium", succeeded:"badge-high", failed:"badge-low"};
-  if(badge) badge.innerHTML = '<span class="badge-soft ' + (cls[job.state] || "badge-gray") + '">' + escapeHtml(job.state) + '</span>';
+  const cls = {queued:"badge-gray", running:"badge-medium", fixing_error:"badge-medium", needs_review:"badge-medium", succeeded:"badge-high", failed:"badge-low"};
+  if(badge) badge.innerHTML = '<span class="badge-soft ' + (cls[job.state] || "badge-gray") + '">' + escapeHtml((job.state || "").replace(/_/g, " ")) + '</span>';
 
   let html = '<div class="text-xs text-muted-2 mb-2">Target: <span class="mono">' + escapeHtml(job.server) + ' / ' + escapeHtml(job.database) +
-    '</span> &middot; ' + job.totalBatches + ' batch(es) &middot; attempt ' + job.attempts + '/' + job.maxAttempts + (job.dryRun ? ' &middot; dry run' : '') + '</div>';
+    '</span> &middot; ' + job.totalBatches + ' batch(es)' + (job.dryRun ? ' &middot; dry run' : '') + '</div>';
+
+  // Manual-gate banner: the AI corrected the SQL but did NOT deploy it.
+  if(job.state === "needs_review"){
+    const n = (job.fixes || []).length;
+    html += '<div class="hint-note mb-2" style="background:var(--primary-soft);color:var(--primary-dark);border-color:var(--primary);">' +
+      '<i class="bi bi-pencil-square"></i> AI corrected ' + n + ' issue(s) and loaded the updated query into the editor above. ' +
+      '<strong>Nothing was deployed.</strong> Review the highlighted changes below, then click ' +
+      '<strong>Deploy to SQL Server</strong> again to deploy the corrected script.</div>';
+  }
   html += '<div class="deploy-log">' +
     (job.log || []).map(l => '<div class="deploy-log-line">' + escapeHtml(l.message) + '</div>').join("") + '</div>';
 
@@ -964,12 +1040,10 @@ function renderDeployStatus(job){
     html += '<div class="deploy-fixes"><div class="deploy-fixes-title">AI fixes applied (' + job.fixes.length + ')</div>';
     job.fixes.forEach(fx => {
       const num = (fx.error && fx.error.number) ? (' &middot; SQL ' + fx.error.number) : '';
-      html += '<details class="deploy-fix"><summary>Attempt ' + fx.attempt + ' &middot; batch ' + fx.batchIndex + num +
+      html += '<details class="deploy-fix" open><summary>Attempt ' + fx.attempt + ' &middot; batch ' + fx.batchIndex + num +
         ' &mdash; ' + escapeHtml((fx.error && fx.error.message) || '') + '</summary>' +
-        '<div class="deploy-diff">' +
-          '<pre class="deploy-diff-before">' + escapeHtml(fx.before) + '</pre>' +
-          '<pre class="deploy-diff-after">' + escapeHtml(fx.after) + '</pre>' +
-        '</div></details>';
+        lineDiffHtml(fx.before, fx.after) +
+        '</details>';
     });
     html += '</div>';
   }
@@ -978,6 +1052,45 @@ function renderDeployStatus(job){
       '<i class="bi bi-x-circle"></i> ' + (job.error.number ? ('SQL ' + job.error.number + ': ') : '') + escapeHtml(job.error.message || 'Failed') + '</div>';
   }
   if(body) body.innerHTML = html;
+}
+
+// Load the AI-corrected full script into the editable output box (active buffer),
+// select it so the change is obvious, and show a clear "we changed it" banner.
+function loadFixedSqlIntoEditor(finalSql, fixCount){
+  if(etlView === "ddl") ddlLastSql = finalSql; else etlLastSql = finalSql;
+  const out = document.getElementById("etlOutput");
+  if(out){ out.value = finalSql; out.focus(); try{ out.setSelectionRange(0, 0); }catch(e){} }
+  updateOutputButtons();
+  showNotification("AI corrected " + fixCount + " issue(s) and loaded the updated query into the editor above. "
+    + "Nothing was deployed — review the highlighted changes below, then click Deploy to SQL Server again.", "primary", 10000);
+}
+
+// Colored, line-by-line diff (LCS) of a batch before/after an AI fix.
+// removed lines = red, added = green, unchanged = muted. Falls back to plain
+// before/after for very large batches (keeps the O(m*n) table bounded).
+function lineDiffHtml(before, after){
+  const a = String(before || "").split("\n"), b = String(after || "").split("\n");
+  const m = a.length, n = b.length;
+  if(m * n > 250000){
+    return '<div class="deploy-diff">' +
+      '<pre class="deploy-diff-before">' + escapeHtml(before) + '</pre>' +
+      '<pre class="deploy-diff-after">' + escapeHtml(after) + '</pre></div>';
+  }
+  const dp = Array.from({length:m+1}, () => new Array(n+1).fill(0));
+  for(let i=m-1;i>=0;i--) for(let j=n-1;j>=0;j--)
+    dp[i][j] = a[i]===b[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const rows = []; let i=0, j=0;
+  while(i<m && j<n){
+    if(a[i]===b[j]){ rows.push(["eq", a[i]]); i++; j++; }
+    else if(dp[i+1][j] >= dp[i][j+1]){ rows.push(["del", a[i]]); i++; }
+    else { rows.push(["add", b[j]]); j++; }
+  }
+  while(i<m) rows.push(["del", a[i++]]);
+  while(j<n) rows.push(["add", b[j++]]);
+  return '<div class="diff-lines">' + rows.map(r =>
+    '<div class="diff-line diff-' + r[0] + '">' +
+    (r[0]==="add" ? "+ " : r[0]==="del" ? "- " : "  ") + escapeHtml(r[1]) +
+    '</div>').join("") + '</div>';
 }
 
 /* ---- deployment history (localStorage; mirrors Mapping History) ---- */
@@ -1004,7 +1117,9 @@ function renderDeployHistory(){
       '<td class="mono text-xs">' + escapeHtml((h.server || "") + " / " + (h.database || "")) + '</td>' +
       '<td>' + escapeHtml(h.type || "") + (h.dryRun ? ' <span class="badge-soft badge-gray">dry</span>' : '') + '</td>' +
       '<td>' + (h.batches || 0) + '</td>' +
-      '<td>' + (h.result === "succeeded" ? '<span class="badge-soft badge-high">succeeded</span>' : '<span class="badge-soft badge-low">failed</span>') + '</td>' +
+      '<td>' + (h.result === "succeeded" ? '<span class="badge-soft badge-high">succeeded</span>'
+                 : h.result === "needs_review" ? '<span class="badge-soft badge-medium">needs review</span>'
+                 : '<span class="badge-soft badge-low">failed</span>') + '</td>' +
       '<td>' + (h.attempts || 0) + '</td>' +
       '<td>' + (h.fixes || 0) + '</td>' +
     '</tr>'

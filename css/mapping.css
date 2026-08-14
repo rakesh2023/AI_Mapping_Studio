@@ -1,3 +1,15 @@
+/* Hover tooltip on the left "Target Tables" cards -> connection (Source/Target) details.
+   Appended to <body> and position:fixed so the scrollable list never clips it. */
+.ws-hovertip{position:fixed;z-index:1080;max-width:340px;background:var(--bg-card);color:var(--text-main);
+  border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:.74rem;line-height:1.45;
+  box-shadow:0 10px 28px rgba(0,0,0,.28);pointer-events:none;}
+.ws-hovertip .wt-sec{margin-bottom:8px;}
+.ws-hovertip .wt-sec:last-child{margin-bottom:0;}
+.ws-hovertip .wt-h{font-size:.64rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);
+  font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:5px;}
+.ws-hovertip .wt-name{font-weight:700;color:var(--primary-dark);word-break:break-word;}
+.ws-hovertip .wt-line{color:var(--text-muted);word-break:break-word;}
+
 .mapping-grid-wrap table.grid-table{min-width:1600px;}
 .mapping-grid-wrap td.mono, .mapping-grid-wrap td .mono{font-family:Consolas,monospace;font-size:.76rem;}
 
@@ -134,6 +146,11 @@
 .etl-preview{background:#0f1b34;color:#cbd5e1;border-radius:10px;padding:16px;font-family:"Consolas",monospace;
   font-size:.76rem;line-height:1.5;overflow:auto;white-space:pre;margin:0;max-height:640px;}
 body.theme-dark .etl-preview{background:#0b1220;}
+/* Editable output: same code look, but a resizable textarea the user can edit before deploying. */
+textarea.etl-preview{display:block;width:100%;min-height:320px;max-height:640px;resize:vertical;
+  border:1px solid var(--border);tab-size:4;white-space:pre;overflow:auto;}
+textarea.etl-preview:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft);}
+textarea.etl-preview::placeholder{color:#7c8ba1;}
 /* selectable target-table cards (left panel) */
 #etlTableList{display:flex;flex-direction:column;gap:10px;max-height:640px;overflow-y:auto;}
 .tl-item.etl-pick .tl-name{gap:9px;}
@@ -230,3 +247,12 @@ body.theme-dark .deploy-log{background:#0b1220;}
   font-size:.72rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;}
 .deploy-diff-before{background:var(--danger-bg);color:var(--danger);border:1px solid #f3c9c6;}
 .deploy-diff-after{background:var(--success-bg);color:var(--success);border:1px solid #bfe8cf;}
+/* Colored line-by-line diff of an AI fix (removed=red, added=green). */
+.diff-lines{margin-top:8px;border:1px solid var(--border);border-radius:6px;overflow:auto;max-height:340px;
+  font-family:"Consolas",monospace;font-size:.72rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;}
+.diff-line{padding:1px 10px;}
+.diff-line.diff-add{background:rgba(34,197,94,.14);color:#15803d;}
+.diff-line.diff-del{background:rgba(239,68,68,.14);color:#b91c1c;}
+.diff-line.diff-eq{color:var(--text-muted);}
+body.theme-dark .diff-line.diff-add{color:#4ade80;}
+body.theme-dark .diff-line.diff-del{color:#f87171;}

@@ -95,7 +95,10 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "GO\n"
         "SET QUOTED_IDENTIFIER ON\n"
         "GO\n\n"
-        "ALTER   PROCEDURE [dbo].[" + proc + "]\n"
+        "IF OBJECT_ID('[dbo].[" + proc + "]', 'P') IS NOT NULL\n"
+        "    DROP PROCEDURE [dbo].[" + proc + "];\n"
+        "GO\n\n"
+        "CREATE PROCEDURE [dbo].[" + proc + "]\n"
         "@DSMName varchar(255)\n"
         "AS\n"
         "BEGIN\n"
@@ -154,6 +157,9 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "COLUMN RULES:\n"
         "- One SELECT line per target column, in the SAME order as the INSERT list, as "
         "'<expr> AS <TargetColumn>'.\n"
+        "- The list separator comma MUST come immediately after the column alias and BEFORE any "
+        "inline '-- comment' (e.g. 'NULL AS Foo,   -- Not Mapped'). Never place the comma after a "
+        "'--' comment — it would be commented out and break the SQL. The last SELECT line has no comma.\n"
         "- Direct -> sourceTable.sourceColumn. Data Type Conversion / Format Conversion -> "
         "CAST(sourceTable.sourceColumn AS <targetType>). Lookup -> select the looked-up "
         "column and JOIN its lookup table. Constant/Default -> the literal value (no source). "
@@ -162,8 +168,9 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "FROM/JOIN. Do NOT invent tables or columns. This is the ONE hard rule that the "
         "user's instructions cannot override.\n"
         "- Do NOT emit a 'USE [database]' statement. The target database is chosen at deploy "
-        "time; the procedure must NOT hard-code a database. Begin with the SET options, then "
-        "the ALTER PROCEDURE. (Only add USE if the user's instructions explicitly ask for it.)\n\n"
+        "time; the procedure must NOT hard-code a database. Begin with the SET options, then a "
+        "drop-if-exists guard (IF OBJECT_ID(...,'P') IS NOT NULL DROP PROCEDURE ...; GO), then "
+        "CREATE PROCEDURE. (Only add USE if the user's instructions explicitly ask for it.)\n\n"
         "ADDITIONAL INSTRUCTIONS override the template. The user's instructions take FULL "
         "priority and may change ANYTHING about the procedure — for example: "
         "change the letter-casing of the procedure name / table names / columns, "
@@ -188,17 +195,13 @@ def generate_etl(body: Dict[str, Any]) -> Result:
     model = ai_model()
     try:
         client = anthropic_client()
-        base_kwargs = dict(model=model, max_tokens=4000, system=system,
-                           messages=[{"role": "user", "content": user}])
-
-        def run(extra):
-            with client.messages.stream(**base_kwargs, **extra) as stream:
-                return stream.get_final_message()
-
-        resp = call_ai("ETL Code Generator - Stored Procedure", run, [{"output_config": {"effort": "medium"}}, {}])
+        # Big procedures can exceed one response; generate with auto-continuation so a
+        # long proc is never truncated (parts are stitched together).
+        text, resp = _generate_with_continuation(
+            client, "ETL Code Generator - Stored Procedure", model, system, user,
+            max_tokens=8000, attempts=[{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
-        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
         sql = _strip_fences(text)
         # The model tends to prepend a 'USE [db]' out of habit. The DB is chosen at
         # deploy time, so strip it — unless the user explicitly asked for a USE statement.
@@ -234,6 +237,40 @@ def _strip_leading_use(sql: str) -> str:
     """
     return re.sub(r"^\s*USE\s+[^\n;]+;?[ \t]*\n(?:[ \t]*GO[ \t]*\n)?", "",
                   sql or "", count=1, flags=re.IGNORECASE)
+
+
+# Max number of extra "continue" calls when a generation hits the output-token cap.
+_CONTINUE_LIMIT = 5
+
+def _generate_with_continuation(client, feature, model, system, user, max_tokens, attempts):
+    """Generate SQL and, if the model stops at the output-token cap, keep continuing
+    and stitch the parts together — so a large procedure/DDL is never truncated.
+
+    Continuation works by prefilling the assistant turn with the text produced so far;
+    the model resumes exactly where it left off (the API returns only the NEW text).
+    Returns (full_text, last_response). Each segment is logged via call_ai().
+    """
+    messages = [{"role": "user", "content": user}]
+    full = ""
+    resp = None
+    for _ in range(_CONTINUE_LIMIT + 1):
+        base_kwargs = dict(model=model, max_tokens=max_tokens, system=system, messages=messages)
+
+        def run(extra, _bk=base_kwargs):
+            with client.messages.stream(**_bk, **extra) as stream:
+                return stream.get_final_message()
+
+        resp = call_ai(feature, run, attempts)
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return full, resp
+        part = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        full += part
+        if getattr(resp, "stop_reason", None) != "max_tokens":
+            break
+        # Prefill the assistant with everything so far and ask the model to continue it.
+        messages = [{"role": "user", "content": user},
+                    {"role": "assistant", "content": full}]
+    return full, resp
 
 
 def generate_ddl(body: dict):
@@ -298,17 +335,12 @@ def generate_ddl(body: dict):
     model = ai_model()
     try:
         client = anthropic_client()
-        base_kwargs = dict(model=model, max_tokens=3000, system=system,
-                           messages=[{"role": "user", "content": user}])
-
-        def run(extra):
-            with client.messages.stream(**base_kwargs, **extra) as stream:
-                return stream.get_final_message()
-
-        resp = call_ai("ETL Code Generator - Create Table", run, [{"output_config": {"effort": "medium"}}, {}])
+        # Wide tables can exceed one response; auto-continue so the DDL is never truncated.
+        text, resp = _generate_with_continuation(
+            client, "ETL Code Generator - Create Table", model, system, user,
+            max_tokens=6000, attempts=[{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
-        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
         sql = _strip_fences(text)
         if not sql.strip():
             return {"ok": False, "error": "The AI returned no SQL for this table."}, 400

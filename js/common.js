@@ -34,6 +34,9 @@ const SIDEBAR_SECTIONS = [
   ]},
   {title:"Reports", items:[
     {label:"AI Usage Report", icon:"bi-graph-up", href:"ai-usage-report.html"}
+  ]},
+  {title:"Help", items:[
+    {label:"Introduction", icon:"bi-info-circle", href:"introduction.html"}
   ]}
 ];
 

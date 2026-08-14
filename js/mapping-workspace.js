@@ -38,6 +38,8 @@ const FREEZE = {
 const ALWAYS_ON = ["id","targetTable","targetColumn","actions"];
 let hiddenColumns = new Set(lsGet("aims_ws_hidden_cols", []) || []);
 
+const LS_WS_SET = "aims_workspace_set";  // remembers the last chosen mapping set (targetSystem key)
+
 let targetMeta = null;
 let allMappings = [];           // every generated mapping (with overrides applied)
 let sourceSchemaCols = [];      // FULL source schema [{table,column,dataType}] for regenerate
@@ -46,6 +48,7 @@ let tableListFilter = "";
 let joinConditions = {};        // entityName -> AI-identified join SQL (editable)
 
 let state = {
+  activeSet: null,              // currently-selected mapping set (a targetSystem name)
   all: [],                      // rows for the active table
   filtered: [],
   search: "",
@@ -94,16 +97,80 @@ document.addEventListener("DOMContentLoaded", async () => {
     lsSet("aims_ai_joins", joinConditions);
   }, 200));
 
+  // Determine the mapping sets (hops) and pick the active one: the remembered set if it
+  // still exists, otherwise the most-recently-generated set.
+  const sets = mappingSets();
+  const remembered = lsGet(LS_WS_SET, null);
+  state.activeSet = (remembered && sets.some(s => s.key === remembered)) ? remembered
+                  : (sets[0] ? sets[0].key : null);
+  renderSetSelector();
+
   renderTableList();
-  // auto-select the first table
+  // auto-select the first table in the active set
   const first = entityGroups()[0];
   if(first) selectEntity(first.name);
 });
 
+/* ---------- mapping sets (Source -> Target hops) ---------- */
+// A "set" is one migration hop, anchored on targetSystem (always present). Rows belong to a
+// set purely by their targetSystem, so unmapped rows (blank sourceSystem) stay with their hop.
+function mappingSets(){
+  const map = {};
+  allMappings.forEach(m => {
+    const key = m.targetSystem || "(unknown target)";
+    const s = (map[key] = map[key] || {key, sources:new Set(), count:0, lastUpdated:""});
+    s.count++;
+    if(m.sourceSystem) s.sources.add(m.sourceSystem);
+    if(m.lastUpdated && m.lastUpdated > s.lastUpdated) s.lastUpdated = m.lastUpdated;
+  });
+  // Label with the real saved connection names (resolve the stored strings), keeping the
+  // raw targetSystem as the set key so membership filtering (scoped()) still matches rows.
+  const resolveName = (n) => { const c = findConnByName(n); return (c && c.name) || n; };
+  return Object.values(map).map(s => {
+    const srcLabel = s.sources.size
+      ? Array.from(s.sources).map(resolveName).join(", ")
+      : "(unmapped)";
+    const tgtLabel = resolveName(s.key);
+    return {key:s.key, label: srcLabel + " → " + tgtLabel, count:s.count, lastUpdated:s.lastUpdated};
+  }).sort((a,b) => (b.lastUpdated||"").localeCompare(a.lastUpdated||""));
+}
+
+// Rows in the currently-selected set.
+function scoped(){
+  return allMappings.filter(m => (m.targetSystem || "(unknown target)") === state.activeSet);
+}
+
+function renderSetSelector(){
+  const bar = document.getElementById("setBar");
+  const sel = document.getElementById("mappingSetSelect");
+  const count = document.getElementById("setCount");
+  if(!bar || !sel) return;
+  const sets = mappingSets();
+  if(!sets.length){ bar.style.display = "none"; return; }
+  bar.style.display = "";
+  sel.innerHTML = sets.map(s =>
+    '<option value="' + escapeHtml(s.key) + '"' + (s.key===state.activeSet?" selected":"") + '>' +
+      escapeHtml(s.label) + '</option>').join("");
+  const active = sets.find(s => s.key === state.activeSet);
+  if(count) count.textContent = active ? "· " + active.count + " mapping" + (active.count===1?"":"s") : "";
+  sel.onchange = () => {
+    state.activeSet = sel.value;
+    lsSet(LS_WS_SET, state.activeSet);
+    activeEntity = null;
+    tableListFilter = "";
+    const tls = document.getElementById("tableListSearch"); if(tls) tls.value = "";
+    renderSetSelector();       // refresh the count for the new set
+    renderTableList();
+    const first = entityGroups()[0];
+    if(first) selectEntity(first.name);
+    else { state.all = []; state.filtered = []; renderTable && renderTable(); }
+  };
+}
+
 /* ---------- target-table list ---------- */
 function entityGroups(){
   const map = {};
-  allMappings.forEach(m => {
+  scoped().forEach(m => {
     const k = m.targetEntity || "(unknown)";
     (map[k] = map[k] || {name:k, table:m.targetTable||"", rows:[]}).rows.push(m);
   });
@@ -134,12 +201,91 @@ function renderTableList(){
       '</div>' +
     '</div>';
   }).join("");
-  el.querySelectorAll(".tl-item").forEach(it => it.addEventListener("click", () => selectEntity(it.dataset.entity)));
+  el.querySelectorAll(".tl-item").forEach(it => {
+    it.addEventListener("click", () => selectEntity(it.dataset.entity));
+    const g = groups.find(x => x.name === it.dataset.entity);
+    if(g){
+      const html = buildConnTip(g);
+      it.addEventListener("mouseenter", () => showConnTip(it, html));
+      it.addEventListener("mouseleave", hideConnTip);
+    }
+  });
 }
+
+/* ---------- connection-details hover tooltip (left table cards) ---------- */
+// A hop's source can itself be a prior target, so resolve names against BOTH stores.
+function findConnByName(name){
+  if(!name) return null;
+  const n = String(name).trim().toLowerCase();
+  const src = (typeof getDbConnections === "function" ? getDbConnections() : []) || [];
+  const tgt = (typeof getTargetConnections === "function" ? getTargetConnections() : []) || [];
+  const all = src.concat(tgt);
+  const eq = (v) => String(v || "").trim().toLowerCase() === n;
+  // The stored source/target *name* string doesn't always equal a connection's name
+  // (SQL sources often store the database/connection string). Match name, then database, then file.
+  return all.find(c => eq(c.name))
+      || all.find(c => eq(c.database))
+      || all.find(c => eq(c.fileName) || eq((c.fileName || "").replace(/\.[^.]+$/, "")))
+      || null;
+}
+function connLine(conn){
+  if(!conn) return "";
+  if(conn.type === "File System") return "File System" + (conn.fileName ? " · " + conn.fileName : "");
+  const bits = [];
+  if(conn.server) bits.push(conn.server);
+  if(conn.database) bits.push(conn.database);
+  if(conn.schema) bits.push("schema " + conn.schema);
+  return (conn.type || "Database") + (bits.length ? " · " + bits.join(" / ") : "");
+}
+function buildConnTip(group){
+  const rows = group.rows || [];
+  const targetSys = (rows.find(m => m.targetSystem) || {}).targetSystem || state.activeSet || "—";
+  const srcNames = Array.from(new Set(rows.map(m => m.sourceSystem).filter(Boolean)));
+  const srcConn = findConnByName(srcNames[0]);
+  const tgtConn = findConnByName(targetSys);
+  const e = escapeHtml;
+  // Show the resolved connection's name; fall back to the name stored on the mapping rows.
+  const srcName = (srcConn && srcConn.name) || (srcNames.length ? srcNames.join(", ") : "—");
+  const tgtName = (tgtConn && tgtConn.name) || targetSys || "—";
+  let h = '<div class="wt-sec"><div class="wt-h"><i class="bi bi-box-arrow-up-right"></i> Source</div>' +
+          '<div class="wt-name">' + e(srcName) + '</div>';
+  if(srcConn) h += '<div class="wt-line">' + e(connLine(srcConn)) + '</div>';
+  h += '</div>';
+  h += '<div class="wt-sec"><div class="wt-h"><i class="bi bi-box-arrow-in-down-right"></i> Target</div>' +
+       '<div class="wt-name">' + e(tgtName) + '</div>';
+  if(tgtConn) h += '<div class="wt-line">' + e(connLine(tgtConn)) + '</div>';
+  h += '</div>';
+  return h;
+}
+let wsTipEl = null;
+function ensureConnTip(){
+  if(wsTipEl) return wsTipEl;
+  wsTipEl = document.createElement("div");
+  wsTipEl.className = "ws-hovertip";
+  wsTipEl.style.display = "none";
+  document.body.appendChild(wsTipEl);
+  window.addEventListener("scroll", hideConnTip, true);   // hide on any scroll (incl. the list)
+  return wsTipEl;
+}
+function showConnTip(anchor, html){
+  const tip = ensureConnTip();
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const r = anchor.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = r.right + 12;
+  if(left + tw > window.innerWidth - 8) left = r.left - tw - 12;   // flip to the left if no room
+  if(left < 8) left = 8;
+  let top = Math.max(8, r.top);
+  if(top + th > window.innerHeight - 8) top = Math.max(8, window.innerHeight - th - 8);
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+function hideConnTip(){ if(wsTipEl) wsTipEl.style.display = "none"; }
 
 function selectEntity(name){
   activeEntity = name;
-  state.all = allMappings.filter(m => m.targetEntity === name);
+  state.all = scoped().filter(m => m.targetEntity === name);
   state.selected.clear();
   state.page = 1;
   state.search = "";
@@ -435,7 +581,9 @@ async function clearAllMappings(){
   allMappings = [];
   joinConditions = {};
   activeEntity = null;
+  state.activeSet = null;
   state.all = []; state.filtered = []; state.selected.clear();
+  const setBar = document.getElementById("setBar"); if(setBar) setBar.style.display = "none";
   document.getElementById("reviewLayout").style.display = "none";
   document.getElementById("emptyState").style.display = "";
   showNotification("All mappings cleared.", "primary");
@@ -505,9 +653,18 @@ async function deleteSelectedMappings(){
     return;
   }
 
-  // If the active table lost all its rows, fall back to the first remaining table.
+  // The active set may have lost all its rows -> re-point to the most-recent remaining set.
+  const sets = mappingSets();
+  if(!sets.some(s => s.key === state.activeSet)){
+    state.activeSet = sets[0] ? sets[0].key : null;
+    lsSet(LS_WS_SET, state.activeSet);
+    activeEntity = null;
+  }
+  renderSetSelector();
+
+  // If the active table lost all its rows, fall back to the first remaining table in the set.
   renderTableList();
-  if(!state.all.length){
+  if(!activeEntity || !state.all.length){
     const groups = entityGroups();
     if(groups.length) selectEntity(groups[0].name);
   } else {
@@ -803,7 +960,7 @@ function downloadMappingCsv(){
   // Export the CURRENT target table's full mapping (every target column),
   // ignoring the search box / filters / review-only toggle.
   if(!activeEntity){ showNotification("Select a target table first, then download its mapping.", "warning"); return; }
-  const rows = allMappings.filter(m => m.targetEntity === activeEntity);
+  const rows = scoped().filter(m => m.targetEntity === activeEntity);
   if(!rows.length){ showNotification("No mapping rows to export for " + activeEntity + ".", "warning"); return; }
 
   const join = joinConditions[activeEntity] || "";

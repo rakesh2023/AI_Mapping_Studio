@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Introduction - AI Mapping Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260815f">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260815f">
+<link rel="stylesheet" href="../css/forms.css?v=20260815f">
+<link rel="stylesheet" href="../css/tables.css?v=20260815f">
+<link rel="stylesheet" href="../css/responsive.css?v=20260815f">
+<style>
+  .intro-hero{background:linear-gradient(135deg, var(--primary-soft), var(--bg-card));border:1px solid var(--border);border-radius:14px;padding:24px 28px;}
+  .intro-hero h1{font-size:1.6rem;margin-bottom:6px;}
+  .intro-hero p{color:var(--text-muted);max-width:820px;margin:0;line-height:1.6;}
+  .intro-hero ul{color:var(--text-muted);max-width:820px;margin:8px 0;padding-left:20px;line-height:1.6;font-size:.9rem;}
+  .intro-hero ul li{margin-bottom:4px;}
+
+  /* Hoverable/focusable glossary term with an accessible tooltip */
+  .term{position:relative;border-bottom:1px dotted var(--primary);cursor:help;font-weight:600;color:var(--text-main);}
+  .term:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:2px;}
+  .term:hover::after,.term:focus-visible::after{
+    content:attr(data-tip);
+    position:absolute;left:0;top:calc(100% + 8px);z-index:60;
+    width:max-content;max-width:320px;white-space:normal;text-align:left;
+    background:var(--bg-card);color:var(--text-main);border:1px solid var(--border);
+    border-radius:8px;padding:9px 11px;font-size:.76rem;font-weight:400;line-height:1.45;
+    box-shadow:0 8px 24px rgba(0,0,0,.22);
+  }
+  .term:hover::before,.term:focus-visible::before{
+    content:"";position:absolute;left:12px;top:calc(100% + 2px);z-index:61;
+    border:6px solid transparent;border-bottom-color:var(--border);
+  }
+  .intro-step{display:flex;gap:14px;align-items:flex-start;}
+  .intro-step .num{flex:none;width:34px;height:34px;border-radius:50%;background:var(--primary);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;}
+  .intro-step .body{flex:1;min-width:0;}
+  .intro-step .body h6{margin:2px 0 3px;font-size:.95rem;display:flex;align-items:center;gap:7px;}
+  .intro-step .body p{margin:0 0 8px;color:var(--text-muted);font-size:.84rem;line-height:1.5;}
+  .intro-phase{font-size:.72rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);
+    font-weight:700;margin:18px 0 4px;}
+  .intro-feat{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
+  .intro-feat a{display:block;border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg-card);
+    text-decoration:none;color:var(--text-main);transition:.15s;}
+  .intro-feat a:hover{border-color:var(--primary);box-shadow:0 4px 14px rgba(208,74,2,.10);}
+  .intro-feat .t{font-weight:700;font-size:.86rem;display:flex;align-items:center;gap:7px;}
+  .intro-feat .d{font-size:.76rem;color:var(--text-muted);margin-top:4px;line-height:1.4;}
+
+  /* Guidewire data-conversion process diagram */
+  .gw-diagram{overflow-x:auto;padding:6px 2px 2px;}
+  .gw-lanes{display:flex;align-items:stretch;gap:0;min-width:860px;}
+  .gw-lane{flex:1;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:10px;min-width:230px;}
+  .gw-lane-head{text-align:center;font-weight:700;font-size:.8rem;color:#fff;border-radius:6px;padding:6px 8px;margin-bottom:10px;}
+  .gw-src{background:#c0271f;} .gw-stg{background:#6b7280;} .gw-gw{background:#3f3f46;}
+  .gw-src-grid,.gw-gw-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .gw-db{border:1px solid #e0a3a0;background:var(--danger-bg);color:var(--danger);border-radius:8px;text-align:center;padding:10px 6px;font-size:.72rem;font-weight:700;}
+  .gw-stack{display:flex;flex-direction:column;align-items:center;}
+  .gw-box{border:1px solid var(--border);background:var(--gray-bg);border-radius:8px;text-align:center;padding:8px 10px;font-size:.74rem;font-weight:600;width:100%;}
+  .gw-box.gw-app{border-color:var(--primary);color:var(--primary-dark);background:var(--primary-soft);}
+  .gw-box.gw-muted{color:var(--text-muted);}
+  .gw-box.gw-audit{margin-top:10px;background:var(--bg-card);}
+  .gw-arrow-down{color:var(--primary);font-size:.95rem;margin:5px 0;display:flex;align-items:center;gap:6px;}
+  .gw-flow{display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--primary);font-size:1.3rem;padding:0 6px;min-width:46px;}
+  .gw-step{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#3f3f46;color:#fff;font-size:.7rem;font-weight:700;flex:none;}
+  .gw-recon{margin-top:12px;border:1px solid var(--primary);border-radius:8px;background:var(--primary-soft);color:var(--primary-dark);text-align:center;font-weight:700;font-size:.78rem;padding:8px;}
+  .gw-stepcard{display:flex;gap:10px;align-items:flex-start;}
+  .gw-stepcard .gw-step{width:24px;height:24px;font-size:.78rem;margin-top:1px;}
+  .gw-stepcard p{margin:0;font-size:.82rem;color:var(--text-muted);line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Introduction</div>
+        <h2>Introduction</h2></div>
+      </div>
+
+      <!-- Hero / overview -->
+      <div class="intro-hero mb-4">
+        <h1><i class="bi bi-diagram-3-fill text-primary me-2"></i>AI Mapping Studio</h1>
+        <p class="mb-2">AI Mapping Studio is an AI-assisted tool designed to streamline source-to-target data conversion mapping for Guidewire implementations.</p>
+        <p class="mb-0">Users bring in a legacy source system and a target schema (<span class="term" tabindex="0" role="note" data-tip="ClaimCenter Mapping Template — Represents the target data schema and structure used for mapping legacy claims data into Guidewire ClaimCenter." aria-label="CMT: ClaimCenter Mapping Template — the target data schema and structure used for mapping legacy claims data into Guidewire ClaimCenter.">CMT</span>/<span class="term" tabindex="0" role="note" data-tip="PolicyCenter Mapping Template — Represents the target data schema and structure used for mapping legacy policy data into Guidewire PolicyCenter." aria-label="PMT: PolicyCenter Mapping Template — the target data schema and structure used for mapping legacy policy data into Guidewire PolicyCenter.">PMT</span>), and the platform leverages AI to:</p>
+        <ul>
+          <li>Propose field-level mappings and transformation rules</li>
+          <li>Enable review and refinement of the suggested mappings</li>
+          <li>Generate the corresponding ETL SQL required to migrate data into the <span class="term" tabindex="0" role="note" data-tip="An intermediate data layer where extracted and transformed source data is temporarily held for validation and quality checks prior to being loaded into the target Guidewire system." aria-label="Staging Area: an intermediate data layer where extracted and transformed source data is temporarily held for validation and quality checks prior to being loaded into the target Guidewire system.">Staging Area</span> and ultimately into the target system</li>
+        </ul>
+        <p class="mb-0">This page provides a structured walkthrough of the end-to-end workflow. Users may follow the steps sequentially or navigate directly to any tool via the sidebar.</p>
+      </div>
+
+      <!-- Guidewire data-conversion process -->
+      <div class="card-el mb-4">
+        <div class="section-title"><i class="bi bi-diagram-2"></i> Guidewire Data Conversion Process</div>
+        <p class="text-muted-2 text-xs mb-3">How legacy source data is staged and converted into Guidewire on the cloud &mdash; ClaimCenter (claims) and ContactManager (contacts). This is the target migration architecture AI Mapping Studio helps you build the mappings and ETL for.</p>
+
+        <div class="gw-diagram">
+          <div class="gw-lanes">
+            <!-- Source Systems -->
+            <div class="gw-lane">
+              <div class="gw-lane-head gw-src">Source Systems</div>
+              <div class="gw-src-grid">
+                <div class="gw-db">Policy Data</div><div class="gw-db">UserInfo.csv</div>
+                <div class="gw-db">Claims Data</div><div class="gw-db">Reference Data</div>
+                <div class="gw-db">Document Data</div><div class="gw-db">Payments.json</div>
+                <div class="gw-db">Billing.xml</div><div class="gw-db">Agent Data</div>
+              </div>
+            </div>
+
+            <!-- step 1 connector -->
+            <div class="gw-flow"><span class="gw-step">1</span><i class="bi bi-arrow-right"></i></div>
+
+            <!-- Staging Zone -->
+            <div class="gw-lane">
+              <div class="gw-lane-head gw-stg">Staging Zone</div>
+              <div class="gw-stack">
+                <div class="gw-box">Pre&nbsp;Staging</div>
+                <div class="gw-arrow-down"><span class="gw-step">2</span><i class="bi bi-arrow-down"></i></div>
+                <div class="gw-box">Common&nbsp;Stage</div>
+                <div class="gw-arrow-down"><span class="gw-step">3</span><i class="bi bi-arrow-down"></i></div>
+                <div class="gw-box">CMT_IN</div>
+                <div class="gw-box gw-muted mt-2">CMT_OUT</div>
+                <div class="gw-box gw-audit">Audit &amp; Balancing Control</div>
+              </div>
+            </div>
+
+            <!-- connector -->
+            <div class="gw-flow"><i class="bi bi-arrow-right"></i></div>
+
+            <!-- Guidewire Cloud -->
+            <div class="gw-lane">
+              <div class="gw-lane-head gw-gw">Guidewire (Cloud)</div>
+              <div class="gw-gw-grid">
+                <div class="gw-box">CMT_IN</div><div class="gw-box gw-muted">CMT_OUT</div>
+                <div class="gw-box" style="grid-column:1/-1;">Claims Migration Batch Process</div>
+                <div class="gw-box gw-app">ClaimCenter</div><div class="gw-box gw-app">ContactManager</div>
+                <div class="gw-box">CDA</div><div class="gw-box">Update Claim Number</div>
+              </div>
+            </div>
+          </div>
+          <div class="gw-recon"><i class="bi bi-arrow-left-right me-1"></i> Payload Reconciliation &amp; Audit / Balancing across every hop</div>
+        </div>
+
+        <!-- the three move steps -->
+        <div class="row g-3 mt-1">
+          <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">1</span>
+            <p><strong>Legacy &rarr; Pre-Staging</strong> &mdash; extract data from the client's legacy source systems into the <strong>Pre-Staging Area</strong>. AI Mapping Studio helps identify the tables and fields relevant to the migration, while a standard <strong>ETL tool</strong> &mdash; such as Azure Data Factory (ADF), SSIS, Informatica or Talend &mdash; handles the physical movement of data from the legacy systems into the Pre-Staging database.</p></div></div>
+          <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">2</span>
+            <p><strong>Pre-Staging &rarr; Common Stage</strong> &mdash; using the pre-staged tables as the source, populate the <strong>Common Stage</strong>. The Common Stage is a curated data model designed by experienced business analysts and developers to abstract away the complexity of the Guidewire structures (<strong>CMT/PMT</strong>), providing a stable, simplified foundation for conversion.</p></div></div>
+          <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">3</span>
+            <p><strong>Common Stage &rarr; CMT/PMT</strong> &mdash; load the data from the Common Stage into Guidewire's <strong>CMT/PMT</strong> structures. A dedicated set of mappings is generated for this stage to align the Common Stage model with the target Guidewire schema.</p></div></div>
+        </div>
+
+        <div class="form-text-hint mt-3">
+          <i class="bi bi-info-circle"></i> In this architecture, the client's <strong>Source Systems</strong> &mdash;
+          client-specific data such as policy, claims and customer information supplied as databases or files
+          (CSV, XML, JSON) &mdash; are extracted into the
+          <strong>Staging Zone</strong> (Pre&nbsp;Staging &rarr; Common&nbsp;Stage &rarr; CMT_IN) and subsequently loaded into
+          <strong>Guidewire on the cloud</strong>. Guidewire's <strong>Cloud Migration Tool (CMT)</strong> reads
+          <strong>CMT_IN</strong> and the <strong>Claims Migration Batch Process</strong> loads records into
+          <strong>ClaimCenter</strong> and <strong>ContactManager</strong>; <strong>CDA</strong> (Claims Data Access) and
+          <strong>Update Claim Number</strong> finalise the migrated claims, while <strong>CMT_OUT</strong>,
+          <strong>Audit&nbsp;&amp;&nbsp;Balancing Control</strong> and <strong>Payload Reconciliation</strong> verify that
+          counts and values match end-to-end. <strong>AI Mapping Studio</strong> is where you define the
+          source&rarr;staging&rarr;target field mappings and generate the ETL that powers steps&nbsp;2 and&nbsp;3.
+        </div>
+      </div>
+
+      <!-- Workflow walkthrough -->
+      <div class="card-el mb-4">
+        <div class="section-title"><i class="bi bi-signpost-split"></i> The end-to-end workflow</div>
+
+        <div class="intro-phase">1 &middot; Set up</div>
+        <div class="intro-step mb-3">
+          <div class="num">1</div>
+          <div class="body">
+            <h6><i class="bi bi-kanban text-primary"></i> Project Setup</h6>
+            <p>Create your migration project and capture its goals, scope and target application.</p>
+            <a class="btn btn-sm btn-outline-soft" href="project-setup.html">Open Project Setup <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">2</div>
+          <div class="body">
+            <h6><i class="bi bi-database text-primary"></i> Source Systems</h6>
+            <p>Connect a live <strong>SQL Server</strong> source or upload a source file (Excel, CSV, PDF, Word, SQL, JSON, XML). Files are read by the AI to extract tables &amp; columns.</p>
+            <a class="btn btn-sm btn-outline-soft" href="source-systems.html">Open Source Systems <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">3</div>
+          <div class="body">
+            <h6><i class="bi bi-hdd-network text-primary"></i> Target System</h6>
+            <p>Define the destination schema &mdash; a live SQL Server database or an uploaded data dictionary. Add entities or columns manually or with AI.</p>
+            <a class="btn btn-sm btn-outline-soft" href="target-system.html">Open Target System <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+
+        <div class="intro-phase">2 &middot; Discover</div>
+        <div class="intro-step mb-3">
+          <div class="num">4</div>
+          <div class="body">
+            <h6><i class="bi bi-diagram-3 text-primary"></i> Metadata Explorer &amp; Data Profiling</h6>
+            <p>Browse source tables and columns, and profile the actual data (null %, distinct values, samples) to understand what you're mapping.</p>
+            <a class="btn btn-sm btn-outline-soft me-2" href="metadata-explorer.html">Metadata Explorer <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="data-profiling.html">Data Profiling <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+
+        <div class="intro-phase">3 &middot; Map</div>
+        <div class="intro-step mb-3">
+          <div class="num">5</div>
+          <div class="body">
+            <h6><i class="bi bi-stars text-primary"></i> AI Mapping Generator</h6>
+            <p>Pick the target tables and let Claude generate the field-level mappings, transformation rules and join conditions &mdash; guided by your business context.</p>
+            <a class="btn btn-sm btn-outline-soft" href="ai-mapping-generator.html">Open AI Mapping Generator <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">6</div>
+          <div class="body">
+            <h6><i class="bi bi-grid-3x3-gap text-primary"></i> Mapping Workspace</h6>
+            <p>Review, edit and approve/reject the generated mappings table by table. Every change is tracked.</p>
+            <a class="btn btn-sm btn-outline-soft" href="mapping-workspace.html">Open Mapping Workspace <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">7</div>
+          <div class="body">
+            <h6><i class="bi bi-shield-check text-primary"></i> Validation</h6>
+            <p>Check the mappings for issues (unmapped mandatory fields, low-confidence guesses, type mismatches) before you build.</p>
+            <a class="btn btn-sm btn-outline-soft" href="validation.html">Open Validation <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+
+        <div class="intro-phase">4 &middot; Build &amp; deliver</div>
+        <div class="intro-step mb-3">
+          <div class="num">8</div>
+          <div class="body">
+            <h6><i class="bi bi-file-earmark-code text-primary"></i> ETL Code (SQL)</h6>
+            <p>Generate a CREATE TABLE script and INSERT stored procedures from the approved mappings, then deploy them to SQL Server.</p>
+            <a class="btn btn-sm btn-outline-soft" href="etl-code.html">Open ETL Code <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step">
+          <div class="num">9</div>
+          <div class="body">
+            <h6><i class="bi bi-download text-primary"></i> History &amp; Export</h6>
+            <p>Review the full audit trail of mapping changes and export the mapping document to share or hand off.</p>
+            <a class="btn btn-sm btn-outline-soft me-2" href="mapping-history.html">Mapping History <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="export.html">Export <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick links -->
+      <div class="card-el">
+        <div class="section-title"><i class="bi bi-grid"></i> Jump to a tool</div>
+        <div class="intro-feat">
+          <a href="dashboard.html"><div class="t"><i class="bi bi-speedometer2 text-primary"></i> Dashboard</div><div class="d">Project status, KPIs and progress.</div></a>
+          <a href="source-systems.html"><div class="t"><i class="bi bi-database text-primary"></i> Source Systems</div><div class="d">Connect or upload your source.</div></a>
+          <a href="target-system.html"><div class="t"><i class="bi bi-hdd-network text-primary"></i> Target System</div><div class="d">Define the target schema.</div></a>
+          <a href="ai-mapping-generator.html"><div class="t"><i class="bi bi-stars text-primary"></i> AI Mapping Generator</div><div class="d">Generate mappings with AI.</div></a>
+          <a href="mapping-workspace.html"><div class="t"><i class="bi bi-grid-3x3-gap text-primary"></i> Mapping Workspace</div><div class="d">Review &amp; refine mappings.</div></a>
+          <a href="etl-code.html"><div class="t"><i class="bi bi-file-earmark-code text-primary"></i> ETL Code (SQL)</div><div class="d">Generate &amp; deploy ETL SQL.</div></a>
+          <a href="ai-usage-report.html"><div class="t"><i class="bi bi-graph-up text-primary"></i> AI Usage Report</div><div class="d">Track AI token usage.</div></a>
+          <a href="settings.html"><div class="t"><i class="bi bi-gear text-primary"></i> Settings</div><div class="d">Preferences &amp; thresholds.</div></a>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260815f"></script>
+<script src="../js/navigation.js?v=20260815f"></script>
+<script src="../js/introduction.js?v=20260815f"></script>
+</body>
+</html>

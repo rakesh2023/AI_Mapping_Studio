@@ -43,6 +43,28 @@ def _looks_like_sql(text: str) -> bool:
     return bool(_SQL_START.match(t))
 
 
+def _extract_sql(text: str) -> str:
+    """Pull the corrected SQL out of the model's reply, tolerating a stray leading
+    sentence (e.g. 'Here is the corrected batch:') or a ```sql code fence. Returns
+    "" only when the reply contains no SQL at all (i.e. a genuine refusal)."""
+    t = _strip_fences(text)
+    if not t:
+        return ""
+    # Prefer the contents of a fenced ```...``` block if one appears anywhere.
+    m = re.search(r"```[a-zA-Z]*\n(.*?)```", text or "", re.DOTALL)
+    if m and m.group(1).strip():
+        t = m.group(1).strip()
+    if _SQL_START.match(t):
+        return t
+    # Otherwise salvage from the first line that begins a T-SQL statement, so a
+    # leading explanatory sentence never causes us to discard a valid fix.
+    lines = t.split("\n")
+    for i, ln in enumerate(lines):
+        if _SQL_START.match(ln):
+            return "\n".join(lines[i:]).strip()
+    return ""
+
+
 def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
     """Return {ok, batch} with a corrected version of `batch`, or {ok:False,error}.
 
@@ -63,9 +85,13 @@ def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
         "failed to execute. Return a CORRECTED version of ONLY that batch that fixes the "
         "specific error.\n\n"
         "RULES:\n"
-        "- Fix ONLY what the error requires. Do NOT rewrite unrelated parts, rename "
-        "objects, or change table/column names, data types, or constraints beyond what "
-        "the fix needs.\n"
+        "- The goal is a batch that PARSES and RUNS. Correct ANY T-SQL syntax error you can "
+        "find in this batch so it executes cleanly — missing or misplaced commas, unbalanced "
+        "parentheses or quotes, a comma left INSIDE a '-- comment' (which comments it out), "
+        "missing/extra keywords, stray characters — even if the reported error points at only "
+        "one spot and even if there is more than one problem.\n"
+        "- Do NOT rewrite unrelated logic, rename objects, or change table/column names, data "
+        "types, or constraints beyond what makes the batch valid.\n"
         "- Preserve the existing naming conventions, bracketing ([dbo].[Table]), and "
         "structure.\n"
         "- Return runnable T-SQL for this one batch only. No prose, no markdown fences, "
@@ -80,7 +106,7 @@ def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
     model = ai_model()
     try:
         client = anthropic_client()
-        base_kwargs = dict(model=model, max_tokens=2000, system=system,
+        base_kwargs = dict(model=model, max_tokens=4000, system=system,
                            messages=[{"role": "user", "content": user}])
 
         def run(extra):
@@ -91,13 +117,12 @@ def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The fix request was declined by safety classifiers."}
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
-        fixed = _strip_fences(text)
+        # Salvage the SQL even if the model wrapped it in prose or a code fence, so a
+        # chatty reply no longer causes us to throw away a valid correction.
+        fixed = _extract_sql(text)
         if not fixed:
-            return {"ok": False, "error": "The AI returned no corrected SQL."}
-        # Guard: don't feed prose/refusals back as SQL, and don't retry an
-        # unchanged batch (it would just fail the same way).
-        if not _looks_like_sql(fixed):
             return {"ok": False, "error": "The AI could not produce a valid SQL correction for this error."}
+        # Don't retry an unchanged batch (it would just fail the same way).
         if fixed.strip() == (batch or "").strip():
             return {"ok": False, "error": "The AI returned the batch unchanged — no fix available."}
         return {"ok": True, "batch": fixed, "model": model}

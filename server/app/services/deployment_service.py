@@ -4,13 +4,15 @@ Starts a deploy in a daemon thread and tracks status in an in-memory dict
 (guarded by a Lock) — no server-side persistence; durable history is kept by
 the frontend in localStorage. State machine:
 
-    queued -> running -> [fixing_error -> retrying]* -> succeeded | failed
+    queued -> running -> [fixing_error -> needs_review] | succeeded | failed
 
-On a batch failure the whole script is rolled back, the failing batch is sent to
-ai_fix_service, the returned fix is substituted, and the ENTIRE script is
-re-run in a fresh transaction — up to DEPLOY_MAX_ATTEMPTS. If it still fails,
-the target DB is left unchanged (each attempt rolls back) and the full error +
-fix history is surfaced.
+On a batch failure the whole script is rolled back and the failing batch is sent
+to ai_fix_service. The corrected batch is substituted into a copy of the script
+and surfaced as `finalSql` — but it is NEVER deployed automatically. The job ends
+in `needs_review` so the user can review the highlighted change in the editor and
+deploy again. The target DB is left unchanged (the failed transaction rolled back).
+`failed` is used only when no fix could be produced or the failing batch can't be
+located.
 
 Credentials (cfg) are held only for the duration of the thread and are NEVER
 written into the job record, logs, or AI prompts.
@@ -20,7 +22,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from app.core.config import DEPLOY_MAX_ATTEMPTS
 from app.parsers.sql_batches import split_sql_batches
 from app.services.sql_execution_service import execute_batches
 from app.services.ai_fix_service import fix_batch
@@ -60,8 +61,9 @@ def start_deploy(cfg: Dict[str, Any], sql: str, dry_run: bool = False) -> Dict[s
         "database": cfg.get("database") or cfg.get("db") or "",
         "totalBatches": len(batches),
         "attempts": 0,
-        "maxAttempts": DEPLOY_MAX_ATTEMPTS,
+        "maxAttempts": 1,     # one execution attempt; AI fixes are surfaced for review, not auto-deployed
         "fixes": [],          # [{attempt, batchIndex, error, before, after, model}]
+        "finalSql": None,     # corrected full script (GO-joined) once AI fixes are applied
         "error": None,        # final error {batchIndex, number, message, line}
         "log": [],
         "startedAt": _now(),
@@ -101,63 +103,53 @@ def _run_job(job_id: str, cfg: Dict[str, Any], batches: List[str], dry_run: bool
                 _finish(job_id, "failed")
             return
 
-        work = list(batches)   # local, mutable copy we may patch with AI fixes
-        max_attempts = DEPLOY_MAX_ATTEMPTS
-        for attempt in range(1, max_attempts + 1):
-            _update(job_id, attempts=attempt)
-            if attempt > 1:
-                _update(job_id, state="retrying")
-                _append_log(job_id, "Attempt " + str(attempt) + " of " + str(max_attempts) + "…")
-            _append_log(job_id, "Executing " + str(len(work)) + " batch(es) in a transaction…")
+        work = list(batches)   # local copy; we patch the failing batch with the AI fix
+        _update(job_id, attempts=1)
+        _append_log(job_id, "Executing " + str(len(work)) + " batch(es) in a transaction…")
 
-            res = execute_batches(cfg, work, dry_run=False)
-            if res.get("ok"):
-                _append_log(job_id, "All batches committed successfully.")
-                _finish(job_id, "succeeded")
-                return
+        res = execute_batches(cfg, work, dry_run=False)
+        if res.get("ok"):
+            _append_log(job_id, "All batches committed successfully.")
+            _finish(job_id, "succeeded")
+            return
 
-            err = res.get("error") or {}
-            _append_log(job_id, "Batch " + str(err.get("batchIndex")) + " failed: "
-                        + (("SQL " + str(err.get("number")) + " ") if err.get("number") else "")
-                        + (err.get("message") or "unknown error") + " (transaction rolled back).")
+        err = res.get("error") or {}
+        _append_log(job_id, "Batch " + str(err.get("batchIndex")) + " failed: "
+                    + (("SQL " + str(err.get("number")) + " ") if err.get("number") else "")
+                    + (err.get("message") or "unknown error") + " (transaction rolled back — nothing deployed).")
 
-            if attempt >= max_attempts:
-                _update(job_id, error=err)
-                _append_log(job_id, "Reached max attempts (" + str(max_attempts) + "). Target database left unchanged.")
-                _finish(job_id, "failed")
-                return
+        # Locate the failing batch so the AI can correct it.
+        idx = err.get("batchIndex")
+        if idx is None or idx < 0 or idx >= len(work):
+            _update(job_id, error=err)
+            _append_log(job_id, "Could not locate the failing batch to fix. Nothing deployed.")
+            _finish(job_id, "failed")
+            return
 
-            # Try to self-correct the failing batch, then retry the whole script.
-            idx = err.get("batchIndex")
-            if idx is None or idx < 0 or idx >= len(work):
-                _update(job_id, error=err)
-                _append_log(job_id, "Could not locate the failing batch to fix. Stopping.")
-                _finish(job_id, "failed")
-                return
+        # Ask the AI to correct the batch — but DO NOT deploy the fix. Surface it for review.
+        _update(job_id, state="fixing_error")
+        _append_log(job_id, "Asking AI to correct batch " + str(idx) + " (the fix is NOT deployed — you review it, then deploy again)…")
+        fix = fix_batch(work[idx], err)
+        if not fix.get("ok"):
+            _update(job_id, error=err)
+            _append_log(job_id, "AI could not produce a fix: " + (fix.get("error") or "unknown") + ". Nothing deployed.")
+            _finish(job_id, "failed")
+            return
 
-            _update(job_id, state="fixing_error")
-            _append_log(job_id, "Asking AI to correct batch " + str(idx) + "…")
-            fix = fix_batch(work[idx], err)
-            if not fix.get("ok"):
-                _update(job_id, error=err)
-                _append_log(job_id, "AI could not produce a fix: " + (fix.get("error") or "unknown") + ". Stopping.")
-                _finish(job_id, "failed")
-                return
-
-            before, after = work[idx], fix["batch"]
-            with _LOCK:
-                job = _JOBS.get(job_id)
-                if job:
-                    job["fixes"].append({
-                        "attempt": attempt, "batchIndex": idx,
-                        "error": {"number": err.get("number"), "message": err.get("message"), "line": err.get("line")},
-                        "before": before, "after": after, "model": fix.get("model"),
-                    })
-            work[idx] = after
-            _append_log(job_id, "Applied AI fix to batch " + str(idx) + "; retrying.")
-
-        # Loop exhausted (shouldn't reach here — handled inside).
-        _finish(job_id, "failed")
+        before, after = work[idx], fix["batch"]
+        with _LOCK:
+            job = _JOBS.get(job_id)
+            if job:
+                job["fixes"].append({
+                    "attempt": 1, "batchIndex": idx,
+                    "error": {"number": err.get("number"), "message": err.get("message"), "line": err.get("line")},
+                    "before": before, "after": after, "model": fix.get("model"),
+                })
+        work[idx] = after
+        # Corrected full script for the editor; the user reviews and re-deploys manually.
+        _update(job_id, finalSql="\nGO\n".join(work))
+        _append_log(job_id, "AI corrected batch " + str(idx) + ". Review the highlighted change in the editor, then deploy again. Nothing was deployed.")
+        _finish(job_id, "needs_review")
     except Exception as exc:  # noqa: BLE001 - never leave a job stuck in 'running'
         _update(job_id, error={"batchIndex": -1, "number": None,
                                "message": "Deployment crashed: " + (str(exc) or exc.__class__.__name__), "line": None})

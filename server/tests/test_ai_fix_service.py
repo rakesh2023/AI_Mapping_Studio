@@ -71,3 +71,23 @@ def test_fix_rejects_unchanged_batch(monkeypatch):
     monkeypatch.setattr(fx, "anthropic_client", lambda: _client(batch))   # returns it verbatim
     out = fx.fix_batch(batch, {"number": 208, "message": "Invalid object name"})
     assert out["ok"] is False and "unchanged" in out["error"].lower()
+
+
+def test_fix_salvages_sql_after_prose(monkeypatch):
+    # Model prefixes a sentence before the SQL -> we must still salvage the fix.
+    reply = ("The problem is a missing comma. Here is the corrected batch:\n\n"
+             "CREATE TABLE [dbo].[t] (\n  [a] int NULL,\n  [b] int NULL\n);")
+    monkeypatch.setattr(fx, "anthropic_client", lambda: _client(reply))
+    out = fx.fix_batch("CREATE TABLE [dbo].[t] ( [a] int NULL [b] int NULL );",
+                       {"number": 102, "message": "Incorrect syntax near '['"})
+    assert out["ok"] is True
+    assert out["batch"].startswith("CREATE TABLE")
+    assert "The problem is" not in out["batch"]
+
+
+def test_fix_salvages_sql_from_fenced_block_after_prose(monkeypatch):
+    reply = "Sure — here's the fix:\n\n```sql\nALTER TABLE t ADD c int NOT NULL\n```\nLet me know!"
+    monkeypatch.setattr(fx, "anthropic_client", lambda: _client(reply))
+    out = fx.fix_batch("ALTER TABLE t ADD c", {"number": 102, "message": "syntax"})
+    assert out["ok"] is True and out["batch"].startswith("ALTER TABLE")
+    assert "```" not in out["batch"] and "Sure" not in out["batch"]
