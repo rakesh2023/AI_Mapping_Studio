@@ -17,6 +17,18 @@ def index():
     return send_from_directory(ROOT, "index.html")
 
 
+@bp.route("/login")
+def login_page():
+    """Clean URL for the login/signup gate (pages/login.html)."""
+    return send_from_directory(os.path.join(ROOT, "pages"), "login.html")
+
+
+@bp.route("/onboarding")
+def onboarding_page():
+    """Clean URL for first-run client onboarding (pages/onboarding.html)."""
+    return send_from_directory(os.path.join(ROOT, "pages"), "onboarding.html")
+
+
 @bp.route("/<path:path>")
 def static_proxy(path):
     full = os.path.join(ROOT, path)

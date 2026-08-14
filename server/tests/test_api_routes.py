@@ -12,7 +12,9 @@ from app.api import db_routes, ai_routes
 
 @pytest.fixture
 def client():
-    return create_app().test_client()
+    app = create_app()
+    app.config["AUTH_DISABLED"] = True   # this file tests routing/delegation, not the auth gate
+    return app.test_client()
 
 
 def test_url_map_has_expected_rules(client):

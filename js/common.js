@@ -244,15 +244,26 @@ function upsertDbConnection(conn){
 function deleteDbConnection(id){ saveDbConnections(getDbConnections().filter(c => c.id !== id)); }
 
 const CURRENT_USER = { name: "Rakesh Sinha", role: "Migration Lead" };
+// Populated by initShell() from GET /api/auth/me: {user, clients[], activeClientId}.
+let AUTH = null;
 function initials(name){
   return (name || "").trim().split(/\s+/).map(w => w[0]).slice(0,2).join("").toUpperCase() || "U";
 }
 function getCurrentUser(){
-  // Prefer the profile saved on the Settings page; fall back to the default.
+  // Prefer the authenticated account; fall back to the Settings profile, then the default.
+  if(AUTH && AUTH.user){
+    const name = (AUTH.user.name && AUTH.user.name.trim()) || AUTH.user.email || CURRENT_USER.name;
+    const role = (AUTH.user.role && AUTH.user.role.trim()) || CURRENT_USER.role;
+    return { name: name, role: role, email: AUTH.user.email || "", initials: initials(name) };
+  }
   const s = getSettings();
   const name = (s && s.userName && s.userName.trim()) ? s.userName.trim() : CURRENT_USER.name;
   const role = (s && s.userRole && s.userRole.trim()) ? s.userRole.trim() : CURRENT_USER.role;
-  return { name: name, role: role, initials: initials(name) };
+  return { name: name, role: role, email: "", initials: initials(name) };
+}
+function activeClientName(){
+  if(AUTH && AUTH.clients){ const c = AUTH.clients.find(x => x.id === AUTH.activeClientId); if(c) return c.name; }
+  return "";
 }
 function currentUserName(){ return getCurrentUser().name; }
 
@@ -428,21 +439,58 @@ function buildHeaderHTML(){
     '</div>' +
     '<div class="topbar-meta">' +
       '<span class="meta-chip ai-ready"><span class="dot"></span> AI Ready</span>' +
+      buildClientSwitcherHTML() +
       '<button class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme"><i class="bi ' + (getTheme()==="dark" ? "bi-sun" : "bi-moon-stars") + '"></i></button>' +
       '<button class="icon-btn" id="resetAppBtn" title="Reset application (clear all data)"><i class="bi bi-arrow-counterclockwise"></i></button>' +
       '<div class="icon-btn" id="notifBtn"><i class="bi bi-bell"></i><span class="badge-dot"></span></div>' +
-      '<div class="user-chip">' +
-        '<div class="user-avatar">' + user.initials + '</div>' +
-        '<div class="user-meta d-none d-md-block">' +
-          '<div class="user-name">' + escapeHtml(user.name) + '</div>' +
-          '<div class="user-role">' + escapeHtml(user.role) + '</div>' +
+      '<div class="user-wrap">' +
+        '<div class="user-chip" id="userChip" role="button" tabindex="0">' +
+          '<div class="user-avatar">' + user.initials + '</div>' +
+          '<div class="user-meta d-none d-md-block">' +
+            '<div class="user-name">' + escapeHtml(user.name) + '</div>' +
+            '<div class="user-role">' + escapeHtml(user.role) + '</div>' +
+          '</div>' +
+          '<i class="bi bi-chevron-down user-caret"></i>' +
+        '</div>' +
+        '<div class="user-menu" id="userMenu" style="display:none;">' +
+          '<div class="user-menu-head"><div class="user-name">' + escapeHtml(user.name) + '</div>' +
+            '<div class="user-email">' + escapeHtml(user.email || "") + '</div></div>' +
+          '<button type="button" class="user-menu-item" id="logoutBtn"><i class="bi bi-box-arrow-right me-1"></i> Log out</button>' +
         '</div>' +
       '</div>' +
     '</div>';
 }
 
+// Header client switcher (only when authenticated with at least one client).
+function buildClientSwitcherHTML(){
+  if(!AUTH || !AUTH.clients || !AUTH.clients.length) return "";
+  const opts = AUTH.clients.map(c =>
+    '<option value="' + c.id + '"' + (c.id === AUTH.activeClientId ? " selected" : "") + '>' +
+    escapeHtml(c.name) + '</option>').join("");
+  return '<div class="client-switch" title="Active client">' +
+    '<i class="bi bi-building"></i>' +
+    '<select id="clientSwitcher" aria-label="Active client">' + opts + '</select>' +
+  '</div>';
+}
+
+async function fetchAuth(){
+  try{
+    const res = await fetch("/api/auth/me", {headers:{"Accept":"application/json"}});
+    if(res.status === 401) return null;
+    const j = await res.json();
+    return (j && j.ok) ? j : null;
+  }catch(e){ return null; }
+}
+
 async function initShell(activeHref){
   applyTheme(getTheme());   // ensure saved theme is active on every page
+
+  // Auth gate: every app page needs a logged-in session + an active client.
+  // (The backend also enforces this via a before_request guard; this keeps the
+  // header in sync and handles a session that expired after the page loaded.)
+  AUTH = await fetchAuth();
+  if(!AUTH){ window.location.href = "/login"; return; }
+  if(!AUTH.activeClientId){ window.location.href = "/onboarding"; return; }
 
   const sidebarEl = document.getElementById("sidebar-container");
   if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(activeHref); }
@@ -490,6 +538,36 @@ function wireShellEvents(){
   const resetBtn = document.getElementById("resetAppBtn");
   if(resetBtn){
     resetBtn.addEventListener("click", resetApplication);
+  }
+
+  // Client switcher: change the active client server-side, then reload that client's context.
+  const clientSwitcher = document.getElementById("clientSwitcher");
+  if(clientSwitcher){
+    clientSwitcher.addEventListener("change", async () => {
+      const cid = Number(clientSwitcher.value);
+      try{
+        const res = await fetch("/api/auth/select-client", {method:"POST",
+          headers:{"Content-Type":"application/json"}, body: JSON.stringify({clientId: cid})});
+        const j = await res.json().catch(()=>({}));
+        if(res.ok && j.ok){ window.location.reload(); }
+        else { showNotification((j && j.error) || "Could not switch client.", "danger"); }
+      }catch(e){ showNotification("Could not switch client.", "danger"); }
+    });
+  }
+
+  // User menu (name/email + Log out).
+  const userChip = document.getElementById("userChip");
+  const userMenu = document.getElementById("userMenu");
+  if(userChip && userMenu){
+    userChip.addEventListener("click", (e) => { e.stopPropagation(); userMenu.style.display = (userMenu.style.display === "none" ? "" : "none"); });
+    document.addEventListener("click", () => { userMenu.style.display = "none"; });
+  }
+  const logoutBtn = document.getElementById("logoutBtn");
+  if(logoutBtn){
+    logoutBtn.addEventListener("click", async () => {
+      try{ await fetch("/api/auth/logout", {method:"POST"}); }catch(e){}
+      window.location.href = "/login";
+    });
   }
   const themeBtn = document.getElementById("themeToggleBtn");
   if(themeBtn){

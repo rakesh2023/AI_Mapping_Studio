@@ -78,3 +78,32 @@ def usage_db_path() -> str:
     with AIMS_USAGE_DB. The file is created on first use and is gitignored.
     """
     return os.environ.get("AIMS_USAGE_DB") or os.path.join(SERVER_DIR, "aims_usage.db")
+
+
+# --- Multi-tenant app store (users / clients / per-client data) --- #
+
+def app_db_path() -> str:
+    """Path to the SQLite file holding users, clients and tenant documents.
+
+    App-owned identity + per-client working data. Defaults to server/aims_app.db;
+    override with AIMS_APP_DB. Created on first use and gitignored.
+    """
+    return os.environ.get("AIMS_APP_DB") or os.path.join(SERVER_DIR, "aims_app.db")
+
+
+def secret_key() -> str:
+    """Secret used to sign Flask session cookies (env AIMS_SECRET_KEY).
+
+    REQUIRED in any real/multi-user deployment. If unset we fall back to a random
+    per-process key so the app still runs in dev — but every restart invalidates
+    all sessions, so set AIMS_SECRET_KEY to a long random value for deployment.
+    """
+    return os.environ.get("AIMS_SECRET_KEY") or ""
+
+
+def session_hours() -> int:
+    """Signed-cookie session lifetime in hours (env AIMS_SESSION_HOURS, default 12)."""
+    try:
+        return max(1, int(os.environ.get("AIMS_SESSION_HOURS", 12)))
+    except (TypeError, ValueError):
+        return 12
