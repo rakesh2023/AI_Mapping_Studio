@@ -5,7 +5,7 @@ is the multi-tenancy boundary: every read/write is filtered by the SESSION's
 user_id and the active client_id (passed in by the route from the session) — never
 by a client-supplied user id — so one account can never read or write another's data.
 
-`doc_key` is validated against a fixed allowlist (the 13 known stores) so callers
+`doc_key` is validated against a fixed allowlist (the 12 known stores) so callers
 can't create arbitrary rows.
 """
 import json
@@ -15,9 +15,9 @@ from typing import Any, Dict, Optional, Tuple
 
 from app.db.app_db import connect, write_lock
 
-# The 13 per-client stores (localStorage key minus the 'aims_' prefix).
+# The 12 per-client stores (localStorage key minus the 'aims_' prefix).
 ALLOWED_DOC_KEYS = frozenset({
-    "current_project", "db_connections", "target_connections", "active_target",
+    "db_connections", "target_connections", "active_target",
     "target_schema", "ai_mappings", "ai_joins", "mapping_overrides",
     "mapping_history", "deploy_history", "exports", "business_context",
     "etl_instructions",

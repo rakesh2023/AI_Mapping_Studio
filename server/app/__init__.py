@@ -23,7 +23,7 @@ def create_app() -> Flask:
     application = Flask(__name__, static_folder=None)
 
     # --- Session signing key (required for auth) --- #
-    from app.core.config import secret_key, session_hours
+    from app.core.config import secret_key, session_hours, csrf_enabled
     sk = secret_key()
     if not sk:
         sk = secrets.token_hex(32)
@@ -32,6 +32,7 @@ def create_app() -> Flask:
     application.secret_key = sk
     application.permanent_session_lifetime = timedelta(hours=session_hours())
     application.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+    application.config["CSRF_ENABLED"] = csrf_enabled()
 
     from app.api.static_routes import bp as static_bp
     from app.api.auth_routes import bp as auth_bp
@@ -52,6 +53,7 @@ def create_app() -> Flask:
     application.register_blueprint(ai_usage_bp)
 
     _register_auth_guard(application)
+    _register_csrf(application)
 
     # Create local SQLite tables if missing (idempotent, non-fatal).
     from app.services.ai_usage_logger import ensure_usage_table
@@ -87,6 +89,49 @@ def _register_auth_guard(application: Flask) -> None:
         if not session.get("cid") and p.startswith("/pages/"):
             return redirect("/onboarding")
         return None
+
+
+def _register_csrf(application: Flask) -> None:
+    """SEC-005: double-submit CSRF token for state-changing /api/* requests.
+
+    A readable (non-HttpOnly) `csrf_token` cookie is issued on any response that
+    lacks one; the browser echoes it back in the X-CSRF-Token header on mutating
+    requests (POST/PUT/PATCH/DELETE), and we require header == cookie. This is
+    defense-in-depth on top of SameSite=Lax for this same-origin app.
+
+    Exempt: the auth bootstrap endpoints under /api/auth/ (login/signup/logout/
+    select-client/me) — they run before the app shell's fetch wrapper is in play,
+    and their CSRF impact is negligible (session establishment / switching among
+    one's own clients). Disabled under AUTH_DISABLED or when CSRF_ENABLED is false
+    (pure routing/unit tests that drive the API without a browser-issued token).
+    """
+    MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+
+    @application.before_request
+    def _csrf_guard():
+        if application.config.get("AUTH_DISABLED") or not application.config.get("CSRF_ENABLED"):
+            return None
+        if request.method not in MUTATING:
+            return None
+        p = request.path or "/"
+        if not p.startswith("/api/") or p.startswith("/api/auth/"):
+            return None
+        cookie = request.cookies.get("csrf_token")
+        header = request.headers.get("X-CSRF-Token")
+        if not cookie or not header or not secrets.compare_digest(str(cookie), str(header)):
+            return jsonify({"ok": False, "error": "CSRF token missing or invalid."}), 403
+        return None
+
+    @application.after_request
+    def _issue_csrf_cookie(response):
+        if not application.config.get("CSRF_ENABLED"):
+            return response
+        if not request.cookies.get("csrf_token"):
+            # Non-HttpOnly so the app shell can echo it back in the header.
+            # (Secure is left off to work over http in dev, matching the session cookie.)
+            response.set_cookie("csrf_token", secrets.token_urlsafe(32),
+                                samesite="Lax", httponly=False, secure=False, path="/")
+        return response
 
 
 app = create_app()

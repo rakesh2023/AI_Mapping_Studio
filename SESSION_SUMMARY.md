@@ -10,6 +10,104 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Removed the Project Setup page (full cleanup)** (uncommitted).
+  Deleted `pages/project-setup.html`, `js/project-setup.js`, and the unused seed `data/projects.json`.
+  Stripped the dead project plumbing: sidebar nav link, `loadProject()`/`setCurrentProject()`/
+  `LS_KEYS.project` and the `initShell` seed call, and `current_project` from both the frontend
+  `TENANT_DOC_KEYS` and the backend `ALLOWED_DOC_KEYS` (now 12 stores). Dashboard workflow stepper
+  dropped its "Project Creation" step (`WORKFLOW_STEPS` + `computeWorkflowIndex` signal renumbered).
+  Introduction walkthrough lost its Project Setup card (remaining steps renumbered 1–8), and the
+  splash label was removed. No core feature depended on `current_project`; existing tenant docs for
+  it are simply orphaned and unread. Backend suite still green.
+
+- **SEC-005 fix: double-submit CSRF token on state-changing endpoints** (uncommitted).
+  Mutating `/api/*` requests were protected only by `SameSite=Lax`; added an anti-CSRF token as
+  defense-in-depth (chosen over risk-acceptance). Centralized guard in the app factory
+  (`_register_csrf`): a readable (non-HttpOnly) `csrf_token` cookie is issued on any response
+  lacking one, and `POST/PUT/PATCH/DELETE` on `/api/*` must send `X-CSRF-Token` equal to that
+  cookie (`secrets.compare_digest`) else **403**. Exempt: the `/api/auth/*` bootstrap
+  (login/signup/logout/select-client/me — run before the shell's wrapper; negligible impact).
+  Gated by `CSRF_ENABLED` (env `AIMS_CSRF_ENABLED`, default ON; tests set it off via conftest, same
+  pattern as `AUTH_DISABLED`) and skipped under `AUTH_DISABLED`. Frontend: a `window.fetch` wrapper
+  at the top of `common.js` attaches the header on same-origin mutating calls (covers all app
+  pages); `onboarding.js` (standalone, no common.js) attaches it directly on its one `POST
+  /api/clients`. Asset cache version bumped `20260815j`→`20260815k`. Regression: `tests/test_csrf.py`
+  (T11 — missing/mismatched token → 403; valid token passes; auth endpoints exempt; unauth still 401;
+  GET issues the cookie). Full backend suite **167 passed**. **Frontend wrapper needs a manual
+  browser pass** (no JS tests in repo) — verify every mutating flow (save mappings, create/switch
+  client, extract, generate, deploy, clear usage log) still works and onboarding create-client
+  succeeds. Files: `server/app/__init__.py`, `server/app/core/config.py`, `server/tests/conftest.py`,
+  `server/tests/test_csrf.py`, `js/common.js`, `js/onboarding.js`, all `pages/*.html` + `index.html`.
+
+- **SEC-004 fix: blunt authenticated SSRF on DB/deploy connect endpoints (normalize + rate-limit)** (uncommitted).
+  `/api/db/test|metadata|profile` and `POST /api/deploy` connect to caller-supplied targets, so a
+  failed attempt's error text/timing could be used to infer internal host:port reachability
+  (blind SSRF / port scan). Policy chosen (of the request's 3 options): **normalize + rate-limit**
+  (not an egress allowlist — the product must reach clients' internal DBs by design). New
+  `services/connection_guard.py`: `GENERIC_CONNECTION_ERROR` (one opaque message for every failed
+  attempt — no host/port/driver/SQL-number) + a per-user `check_rate()` throttle (30 attempts / 60s,
+  process-global, mirrors the auth login throttle). `db_service.open_connection` now collapses any
+  connect failure into `ConnectionAttemptError(GENERIC_CONNECTION_ERROR)` (real error printed
+  server-side); `sql_execution_service` normalizes its connect-failure branch the same way; both DB
+  routes and deploy POST enforce the throttle (429 + Retry-After) using the session uid. Post-connect
+  query errors are unchanged (not a reachability signal). **Residual limitation (documented):** coarse
+  response-timing signal can still leak within the rate budget — full timing normalization was out of
+  scope for a Low-severity issue; network egress control remains the backstop. Regression:
+  `tests/test_connection_guard.py` (T10 — refused vs auth-fail yield identical generic error; per-user
+  throttle; auth required; legit success unaffected). Full suite **161 passed**.
+  Files: `server/app/services/connection_guard.py` (new), `server/app/services/db_service.py`,
+  `server/app/services/sql_execution_service.py`, `server/app/api/db_routes.py`,
+  `server/app/api/deploy_routes.py`, `server/tests/test_connection_guard.py`.
+
+- **SEC-003 fix: bind deploy jobs to their tenant (status IDOR)** (uncommitted).
+  `GET /api/deploy/status/<job_id>` returned the job record (server, database, `finalSql`,
+  `fixes[].before/after`, `error`, `log`) for **any** id with no owner binding — a cross-tenant
+  read (mitigated only by a 48-bit random in-memory id). Fix: `start_deploy(..., owner=(uid,cid))`
+  records the creating tenant on the in-memory job; `get_status(job_id, owner=...)` returns `{}`
+  (→ route **404**, doesn't confirm id existence) unless the session's `(uid, cid)` matches the
+  job's owner; owner ids are stripped from the status payload (never exposed) and credentials stay
+  out as before. Both deploy routes now scope via a session `_scope()` → 401 unauth / 409 no active
+  client. Credentials-in-cfg handling unchanged. Regression: `tests/test_deploy_isolation.py`
+  replicates matrix row **T9** (B gets 404 + no job fields for A's jobId; A still reads its own)
+  plus route auth/active-client guards. Optional hardening from the request (widen id to full
+  uuid4 hex, TTL-evict finished jobs) intentionally **not** done — non-binding and outside the
+  minimal fix; flag for follow-up if wanted. Full suite **153 passed**.
+  Files: `server/app/services/deployment_service.py`, `server/app/api/deploy_routes.py`,
+  `server/tests/test_deploy_isolation.py`.
+
+- **SEC-002 fix: tenant-scope the AI usage report reads (cross-tenant metadata leak)** (uncommitted).
+  `GET /api/ai-usage/logs` and `/summary` filtered only by date/feature, so any authenticated
+  user saw **every** tenant's usage rows and per-feature breakdown (incl. `error_message`, which
+  can embed SQL table/column names). Fix (reuses the SEC-001 owner columns): `_date_filters` now
+  emits a **mandatory** `user_id=? AND client_id=?` predicate first; `query_logs`/`summary` take
+  `(user_id, client_id)` as required leading args; both routes derive the tenant via the shared
+  `_scope()` (session-only, never a query param) → 401 unauth / 409 no active client. Legacy
+  NULL-owner rows are excluded from all tenant-scoped reads (no backfill). Regression:
+  `test_usage_reads_are_tenant_scoped` (matrix **T7** — B's /logs & /summary contain only B's
+  distinctive rows, both directions) + read-path auth/active-client guards; SEC-001 **T8** delete
+  scoping re-confirmed under the shared schema. `tests/test_ai_usage_logger.py` updated for the
+  scoped read signature (stubs `_session_owner`). Full suite **150 passed**.
+  Files: `server/app/services/ai_usage_logger.py`, `server/app/api/ai_usage.py`,
+  `server/tests/test_ai_usage_isolation.py`, `server/tests/test_ai_usage_logger.py`.
+
+- **SEC-001 fix: tenant-scope the AI usage log (cross-tenant destructive delete)** (uncommitted).
+  Any authenticated session could wipe **every** tenant's usage/audit log:
+  `DELETE /api/ai-usage/logs` → `ai_usage_logger.clear_logs()` ran an unconditional
+  `DELETE FROM ai_usage_log`, and the table had no owner column. Fix: added
+  `user_id`/`client_id` to `ai_usage_log` (with an in-place ALTER migration for legacy
+  DBs + `ix_usage_scope` index); the write path now stamps the owner captured from the
+  **session** on the request thread (`_session_owner()`, guarded → NULL outside a request
+  context, so logging still never breaks the AI feature); `clear_logs(user_id, client_id)`
+  is scoped to the caller's tenant; the route derives `(uid, cid)` from the session
+  (`_scope()`, mirroring `state_routes`) → 401 unauth / 409 no active client. Reads
+  (`query_logs`/`summary`) intentionally untouched — read scoping is tracked separately as
+  SEC-002. Regression: `tests/test_ai_usage_isolation.py` replicates matrix row **T8**
+  (cross-tenant delete affects 0 of the other tenant's rows, both directions) plus
+  auth/active-client guards, session-owner stamping, and a T7 read-scoping non-regression
+  check; `tests/test_ai_usage_logger.py` updated for the scoped signature. Full suite **148 passed**.
+  Files: `server/app/services/ai_usage_logger.py`, `server/app/api/ai_usage.py`,
+  `server/tests/test_ai_usage_isolation.py`, `server/tests/test_ai_usage_logger.py`.
+
 - **AI Usage Logging & Reporting** (uncommitted). Every Claude API call in the app is
   now logged — feature, model, input/output/total tokens, duration, timestamp, and
   success/failed — to a local **SQLite** file (`server/aims_usage.db`, gitignored; path

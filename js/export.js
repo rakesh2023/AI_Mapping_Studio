@@ -43,8 +43,11 @@ async function generateExport(){
   const includeHistory = document.getElementById("includeHistory").checked;
   const includeComments = document.getElementById("includeComments").checked;
 
-  const mappings = scopeFilter(applyOverrides(await fetchJSON("mappings.json")), scope);
-  const historyStore = includeHistory ? lsGet("aims_history", {}) : {};
+  // Export the active client's REAL generated mappings (server-side, scoped) — not the
+  // bundled sample. Nothing generated -> nothing to export.
+  const aiRows = lsGet("aims_ai_mappings", null);
+  const mappings = scopeFilter(applyOverrides(aiRows !== null ? aiRows : []), scope);
+  const historyStore = includeHistory ? lsGet("aims_mapping_history", {}) : {};
 
   const steps = [
     "Validating export scope (" + scope + ")...",

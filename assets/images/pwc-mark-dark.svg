@@ -1,11 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 96" role="img" aria-label="pwc">
-  <!-- Colour device centered above the wordmark; dark "pwc" text for light backgrounds -->
-  <g transform="translate(18,4)">
-    <polygon points="0,34 13,4 24,4 11,34"   fill="#FFB600"/>
-    <polygon points="13,34 26,4 37,4 24,34"  fill="#EB8C00"/>
-    <polygon points="26,34 39,4 50,4 37,34"  fill="#E0301E"/>
-    <polygon points="39,34 52,4 63,4 50,34"  fill="#D04A02"/>
-    <polygon points="52,34 65,4 76,4 63,34"  fill="#A32020"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 96" role="img" aria-label="PwC">
+  <!-- PwC device (two flat bars side by side, right stepped up) above the wordmark; dark ink -->
+  <g>
+    <polygon points="24,42 37,28 67,28 54,42"  fill="#EB5C1C"/>
+    <polygon points="60,26 73,12 103,12 90,26" fill="#EB5C1C"/>
   </g>
-  <text x="8" y="88" font-family="Georgia,'Times New Roman',serif" font-size="58" font-weight="700" fill="#252525" letter-spacing="-2">pwc</text>
+  <!-- baseline raised so the 'p' descender is not clipped -->
+  <text x="8" y="82" font-family="Georgia,'Times New Roman',serif" font-size="58" font-weight="700" fill="#1a1a1a" letter-spacing="-3">pwc</text>
 </svg>

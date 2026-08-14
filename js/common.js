@@ -4,6 +4,33 @@
    pages of AI Mapping Studio.
    ========================================================================= */
 
+/* SEC-005: double-submit CSRF. The server issues a readable `csrf_token` cookie;
+   we echo it back in the X-CSRF-Token header on same-origin state-changing
+   requests. Installed as a fetch wrapper here (before any page controller runs)
+   so every fetch() call site is covered without per-call changes. */
+(function installCsrfFetch(){
+  if (window.__aimsCsrfInstalled) return;
+  window.__aimsCsrfInstalled = true;
+  const MUTATING = {POST:1, PUT:1, PATCH:1, DELETE:1};
+  const readToken = () => (document.cookie.split("; ").find(c => c.startsWith("csrf_token=")) || "").split("=").slice(1).join("=");
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    init = init || {};
+    const method = (init.method || (input && typeof input !== "string" && input.method) || "GET").toUpperCase();
+    let url = (typeof input === "string") ? input : ((input && input.url) || "");
+    const sameOrigin = url.startsWith("/") || url.indexOf("://") === -1 || url.startsWith(window.location.origin);
+    if (MUTATING[method] && sameOrigin){
+      const token = readToken();
+      if (token){
+        const headers = new Headers(init.headers || (input && typeof input !== "string" && input.headers) || {});
+        if (!headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", decodeURIComponent(token));
+        init = Object.assign({}, init, {headers});
+      }
+    }
+    return nativeFetch(input, init);
+  };
+})();
+
 const DATA_BASE = "../data/";
 
 const SIDEBAR_SECTIONS = [
@@ -11,7 +38,6 @@ const SIDEBAR_SECTIONS = [
     {label:"Dashboard", icon:"bi-speedometer2", href:"dashboard.html"}
   ]},
   {title:"Setup", items:[
-    {label:"Project Setup", icon:"bi-kanban", href:"project-setup.html"},
     {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
     {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"}
   ]},
@@ -41,7 +67,7 @@ const SIDEBAR_SECTIONS = [
 ];
 
 const WORKFLOW_STEPS = [
-  "Project Creation","Source Configuration","Source Connection","File Upload",
+  "Source Configuration","Source Connection","File Upload",
   "Metadata Discovery","Source Profiling","Target Configuration","Target Metadata",
   "AI Mapping Generation","Mapping Review","Prompt Refinement","Validation",
   "ETL Code Generation","Approval","Export"
@@ -61,7 +87,6 @@ async function fetchJSON(fileName){
 
 const LS_KEYS = {
   sidebar: "aims_sidebar_collapsed",
-  project: "aims_current_project",
   overrides: "aims_mapping_overrides",
   settings: "aims_settings",
   filters: "aims_filter_prefs",
@@ -74,7 +99,7 @@ const LS_KEYS = {
    CLIENT_STATE cache (hydrated once per page from GET /api/state) so existing
    synchronous lsGet/lsSet callers keep working unchanged; writes are debounced to
    PUT /api/state/<key>. Everything else (device/UI prefs) stays in localStorage. */
-const TENANT_DOC_KEYS = ["current_project","db_connections","target_connections",
+const TENANT_DOC_KEYS = ["db_connections","target_connections",
   "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
   "mapping_history","deploy_history","exports","business_context","etl_instructions"];
 const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
@@ -447,16 +472,6 @@ function severityBadge(sev){
   return '<span class="badge-soft ' + (map[sev] || 'badge-gray') + '"><i class="bi bi-exclamation-circle"></i> ' + sev + '</span>';
 }
 
-async function loadProject(){
-  const cached = lsGet(LS_KEYS.project, null);
-  if(cached) return cached;
-  const data = await fetchJSON("projects.json");
-  if(!data) return null;
-  const proj = data.projects.find(p => p.id === data.currentProjectId) || data.projects[0];
-  lsSet(LS_KEYS.project, proj);
-  return proj;
-}
-function setCurrentProject(project){ lsSet(LS_KEYS.project, project); }
 
 function buildSidebarHTML(activeHref){
   return '<div class="sidebar-brand">' +
@@ -733,7 +748,6 @@ async function initShell(activeHref){
   const sidebarEl = document.getElementById("sidebar-container");
   if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(activeHref); }
 
-  await loadProject();   // seed the cached project (used by other pages)
   const headerEl = document.getElementById("header-container");
   if(headerEl){ headerEl.className = "topbar"; headerEl.innerHTML = buildHeaderHTML(); }
 

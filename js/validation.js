@@ -88,9 +88,9 @@ function evaluateMapping(m){
 
 async function runEvaluation(showLog){
   // Validate the REAL generated mapping document (same source as the Workspace).
-  // An empty array means "cleared" (validate nothing); only null falls back to sample.
+  // Per-client + server-side; nothing generated -> validate nothing (no sample fallback).
   const aiRows = lsGet("aims_ai_mappings", null);
-  const mappings = applyOverrides(aiRows !== null ? aiRows : (await fetchJSON("mappings.json") || []));
+  const mappings = applyOverrides(aiRows !== null ? aiRows : []);
 
   const runBtn = document.getElementById("runValidationBtn");
   if(showLog && runBtn){

@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 
 from app.core.capabilities import pyodbc
 from app.services.db_service import build_connection_string
+from app.services.connection_guard import GENERIC_CONNECTION_ERROR
 
 Result = Dict[str, Any]
 
@@ -57,9 +58,11 @@ def execute_batches(cfg: Dict[str, Any], batches: List[str], dry_run: bool = Fal
     try:
         conn = pyodbc.connect(build_connection_string(cfg), timeout=int(cfg.get("timeout", 30)), autocommit=False)
     except Exception as exc:  # noqa: BLE001 - connection/auth failure
-        info = _parse_sql_error(exc)
+        # SEC-004: do not leak whether the host:port was reachable/refused/auth-failed.
+        print("[sql_execution] connection attempt failed (details withheld from client): " + repr(exc))
         return {"ok": False, "executed": 0, "total": total,
-                "error": {"batchIndex": -1, "batchText": "", **info}}
+                "error": {"batchIndex": -1, "batchText": "", "number": None,
+                          "message": GENERIC_CONNECTION_ERROR, "line": None}}
 
     try:
         cur = conn.cursor()

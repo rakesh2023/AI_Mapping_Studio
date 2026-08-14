@@ -19,9 +19,10 @@ let etlSearch = "";
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("etl-code.html");
 
-  // Same mapping document the workspace uses (null = never generated -> sample).
+  // Same per-client mapping document the workspace uses. No sample fallback (multi-tenant):
+  // a client with nothing generated yet shows empty.
   const aiRows = lsGet("aims_ai_mappings", null);
-  const rawMappings = (aiRows !== null) ? aiRows : (await fetchJSON("mappings.json") || []);
+  const rawMappings = (aiRows !== null) ? aiRows : [];
   const mappings = (typeof applyOverrides === "function") ? applyOverrides(rawMappings || []) : (rawMappings || []);
   const joins = lsGet("aims_ai_joins", {}) || {};
 

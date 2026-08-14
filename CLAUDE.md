@@ -66,7 +66,7 @@ Key localStorage keys (see `LS_KEYS` in `js/common.js`, plus scattered literals)
   the whole app (`getTargetSchema()` in `js/target-schema.js` derives the schema from it rather than
   double-storing).
 - `aims_settings` (user profile, theme, confidence thresholds), `aims_mapping_scope`,
-  `aims_mapping_overrides`, `aims_mapping_history`, `aims_current_project`, `aims_sidebar_collapsed`.
+  `aims_mapping_overrides`, `aims_mapping_history`, `aims_sidebar_collapsed`.
 
 The **~5MB localStorage quota is the main scaling limit** — very large schemas can overflow it
 (`lsSet` surfaces a quota warning).

@@ -107,3 +107,13 @@ def session_hours() -> int:
         return max(1, int(os.environ.get("AIMS_SESSION_HOURS", 12)))
     except (TypeError, ValueError):
         return 12
+
+
+def csrf_enabled() -> bool:
+    """Whether the double-submit CSRF guard is active (env AIMS_CSRF_ENABLED, default ON).
+
+    SEC-005: defense-in-depth over SameSite=Lax for state-changing /api/* requests.
+    Pure routing/unit tests disable it (they drive the API without a browser-issued
+    token); it defaults ON so real deployments are protected.
+    """
+    return os.environ.get("AIMS_CSRF_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")

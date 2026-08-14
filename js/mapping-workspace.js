@@ -2,8 +2,9 @@
    mapping-workspace.js - Review the AI-generated mapping document.
    Left panel lists each target table that has mappings; selecting a table
    shows its field-level mapping grid (inline edit, approve/reject, drawer).
-   Mappings come from the AI Mapping Generator (localStorage aims_ai_mappings),
-   falling back to the bundled sample mappings.json when none exist.
+   Mappings come from the AI Mapping Generator, stored server-side per client
+   (aims_ai_mappings, scoped by user + client). No sample fallback in the
+   multi-tenant app — a client with nothing generated shows the empty state.
    ========================================================================= */
 
 const COLUMNS = [
@@ -65,12 +66,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   await initShell("mapping-workspace.html");
   targetMeta = getTargetSchema();
 
-  // Use the AI-generated document if it exists (even when explicitly emptied via
-  // Clear All — an empty array means "cleared", NOT "load the sample"). Only when the
-  // key was never set (null) do we fall back to the bundled sample document.
+  // Per-client, server-side mapping document. No sample fallback in the multi-tenant
+  // app: a client with nothing generated shows the empty state (never another project's
+  // demo data). Empty array = cleared; null = never generated — both render empty here.
   const aiRows = lsGet("aims_ai_mappings", null);
-  allMappings = (aiRows !== null) ? applyOverrides(aiRows)
-                                  : applyOverrides(await fetchJSON("mappings.json") || []);
+  allMappings = applyOverrides(aiRows !== null ? aiRows : []);
   joinConditions = lsGet("aims_ai_joins", {}) || {};
 
   if(!allMappings.length){

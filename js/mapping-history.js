@@ -35,8 +35,7 @@ async function loadHistory(){
   // Use the active mapping set (AI-generated preferred, else the sample doc) so
   // history rows resolve their source/target fields.
   const aiRows = lsGet("aims_ai_mappings", null);
-  const mappings = (aiRows !== null) ? applyOverrides(aiRows)
-                                     : applyOverrides(await fetchJSON("mappings.json") || []);
+  const mappings = applyOverrides(aiRows !== null ? aiRows : []);   // no sample fallback (multi-tenant)
   const byId = {};
   mappings.forEach(m => { byId[m.id] = m; });
 

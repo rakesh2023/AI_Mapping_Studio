@@ -48,12 +48,20 @@ def _append_log(job_id: str, message: str) -> None:
             job.setdefault("log", []).append({"at": _now(), "message": message})
 
 
-def start_deploy(cfg: Dict[str, Any], sql: str, dry_run: bool = False) -> Dict[str, Any]:
-    """Create a job, spawn the worker thread, return {jobId, totalBatches}."""
+def start_deploy(cfg: Dict[str, Any], sql: str, dry_run: bool = False,
+                 owner=None) -> Dict[str, Any]:
+    """Create a job, spawn the worker thread, return {jobId, totalBatches}.
+
+    SEC-003: `owner` is the creating tenant's (user_id, client_id), taken from the
+    session by the route. It is recorded on the job so get_status can bind reads to
+    the owning tenant. The owner ids are not secrets and are never exposed in the
+    status payload (get_status strips them); credentials (cfg) stay out as before.
+    """
     job_id = uuid.uuid4().hex[:12]
     batches = split_sql_batches(sql)
     job = {
         "id": job_id,
+        "owner": list(owner) if owner else None,   # (user_id, client_id) — never returned to clients
         "state": "queued",
         "dryRun": bool(dry_run),
         # safe, non-secret context only — no username/password/driver
@@ -77,11 +85,22 @@ def start_deploy(cfg: Dict[str, Any], sql: str, dry_run: bool = False) -> Dict[s
     return {"jobId": job_id, "totalBatches": len(batches)}
 
 
-def get_status(job_id: str) -> Dict[str, Any]:
-    """Return a COPY of the job record (never the live dict, never cfg)."""
+def get_status(job_id: str, owner=None) -> Dict[str, Any]:
+    """Return a COPY of the job record (never the live dict, never cfg, never owner).
+
+    SEC-003: when `owner` (the requester's (user_id, client_id) from the session) is
+    supplied, it MUST match the job's recorded owner — otherwise return {} so the
+    route answers 404 without confirming the id exists. Returns {} for an unknown id.
+    """
     with _LOCK:
         job = _JOBS.get(job_id)
-        return dict(job) if job else {}
+        if not job:
+            return {}
+        if owner is not None and job.get("owner") is not None and list(job["owner"]) != list(owner):
+            return {}                       # cross-tenant read -> looks like an unknown id
+        out = dict(job)
+        out.pop("owner", None)              # owner ids are never exposed in the payload
+        return out
 
 
 def _finish(job_id: str, state: str) -> None:

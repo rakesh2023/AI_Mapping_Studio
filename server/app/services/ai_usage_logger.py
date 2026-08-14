@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS ai_usage_log (
     total_tokens   INTEGER NOT NULL DEFAULT 0,
     duration_ms    INTEGER,
     status         TEXT    NOT NULL,
-    error_message  TEXT
+    error_message  TEXT,
+    user_id        INTEGER,
+    client_id      INTEGER
 )
 """
 
@@ -49,10 +51,47 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_owner_columns(conn: sqlite3.Connection) -> None:
+    """Add the tenant-scoping columns to a pre-existing (legacy) table.
+
+    SEC-001: older ai_usage_log tables were created without an owner, so
+    CREATE TABLE IF NOT EXISTS alone won't add the columns. Migrate in place by
+    checking PRAGMA table_info and ALTERing when missing. Idempotent. Caller
+    holds _WRITE_LOCK. Rows written before this migration keep NULL owner and are
+    therefore never returned/cleared by a tenant-scoped query.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ai_usage_log)").fetchall()}
+    if "user_id" not in cols:
+        conn.execute("ALTER TABLE ai_usage_log ADD COLUMN user_id INTEGER")
+    if "client_id" not in cols:
+        conn.execute("ALTER TABLE ai_usage_log ADD COLUMN client_id INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_usage_scope ON ai_usage_log(user_id, client_id)")
+
+
+def _session_owner():
+    """(user_id, client_id) from the Flask session, or (None, None).
+
+    SEC-001: the log row's owner is derived SERVER-SIDE from the signed session,
+    never from client-supplied input. This is read on the REQUEST thread —
+    log_ai_call runs synchronously in the request handler and only the _insert is
+    backgrounded — so the session is bound here. Fully guarded: outside a request
+    context (or if Flask can't be imported) it returns (None, None) so logging
+    still proceeds and can never break the AI feature.
+    """
+    try:
+        from flask import session, has_request_context
+        if not has_request_context():
+            return None, None
+        return session.get("uid"), session.get("cid")
+    except Exception:  # noqa: BLE001 - owner capture must never break logging
+        return None, None
+
+
 def ensure_usage_table() -> None:
     """Create the ai_usage_log table if it doesn't exist (idempotent).
 
-    Called once at startup. Guarded so a failure here (e.g. read-only dir) is
+    Called once at startup. Also migrates a legacy table to add the tenant-scoping
+    owner columns (SEC-001). Guarded so a failure here (e.g. read-only dir) is
     logged but never prevents the app from starting.
     """
     try:
@@ -60,6 +99,7 @@ def ensure_usage_table() -> None:
             conn = _connect()
             try:
                 conn.execute(_CREATE_SQL)
+                _ensure_owner_columns(conn)
                 conn.commit()
             finally:
                 conn.close()
@@ -67,18 +107,25 @@ def ensure_usage_table() -> None:
         print("[ai_usage_logger] ensure_usage_table failed:\n" + traceback.format_exc())
 
 
-def clear_logs() -> Dict[str, Any]:
-    """Delete ALL rows from the usage log (irreversible). Returns {ok, deleted}.
+def clear_logs(user_id: int, client_id: int) -> Dict[str, Any]:
+    """Delete this tenant's usage rows (irreversible). Returns {ok, deleted}.
 
-    Ensures the table exists first (using the same held lock — no nested acquire,
-    since threading.Lock is not reentrant).
+    SEC-001: scoped to the caller's (user_id, client_id) — derived by the route
+    from the session — so one account can only ever clear its OWN rows and can
+    never wipe another tenant's log. Ensures the table exists + is migrated first
+    (using the same held lock — no nested acquire, since threading.Lock is not
+    reentrant).
     """
     try:
         with _WRITE_LOCK:
             conn = _connect()
             try:
                 conn.execute(_CREATE_SQL)                 # table may not exist yet
-                cur = conn.execute("DELETE FROM ai_usage_log")
+                _ensure_owner_columns(conn)               # legacy table may lack owner cols
+                cur = conn.execute(
+                    "DELETE FROM ai_usage_log WHERE user_id=? AND client_id=?",
+                    (user_id, client_id),
+                )
                 conn.commit()
                 return {"ok": True, "deleted": int(cur.rowcount or 0)}
             finally:
@@ -95,11 +142,13 @@ def _insert(row: Dict[str, Any]) -> None:
             try:
                 conn.execute(
                     "INSERT INTO ai_usage_log (call_timestamp, feature_name, model, "
-                    "input_tokens, output_tokens, total_tokens, duration_ms, status, error_message) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "input_tokens, output_tokens, total_tokens, duration_ms, status, error_message, "
+                    "user_id, client_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (row["call_timestamp"], row["feature_name"], row["model"],
                      row["input_tokens"], row["output_tokens"], row["total_tokens"],
-                     row["duration_ms"], row["status"], row["error_message"]),
+                     row["duration_ms"], row["status"], row["error_message"],
+                     row.get("user_id"), row.get("client_id")),
                 )
                 conn.commit()
             finally:
@@ -118,6 +167,7 @@ def log_ai_call(feature_name: str, model: Optional[str], input_tokens: int,
     """
     it = int(input_tokens or 0)
     ot = int(output_tokens or 0)
+    uid, cid = _session_owner()   # captured on the request thread, before the insert thread spawns
     row = {
         "call_timestamp": datetime.now(timezone.utc).isoformat(),
         "feature_name": (feature_name or "Unknown")[:100],
@@ -128,6 +178,8 @@ def log_ai_call(feature_name: str, model: Optional[str], input_tokens: int,
         "duration_ms": None if duration_ms is None else int(duration_ms),
         "status": ("failed" if status == "failed" else "success"),
         "error_message": (str(error_message)[:1000] if error_message else None),
+        "user_id": uid,
+        "client_id": cid,
     }
     try:
         threading.Thread(target=_insert, args=(row,), daemon=True).start()
@@ -137,11 +189,18 @@ def log_ai_call(feature_name: str, model: Optional[str], input_tokens: int,
 
 # --------------------------- read side (report API) --------------------------- #
 
-def _date_filters(start_date: Optional[str], end_date: Optional[str],
-                  feature: Optional[str]):
-    """Build a WHERE clause + params from optional filters (dates are YYYY-MM-DD)."""
-    clauses: List[str] = []
-    params: List[Any] = []
+def _date_filters(user_id: int, client_id: int, start_date: Optional[str],
+                  end_date: Optional[str], feature: Optional[str]):
+    """Build a tenant-scoped WHERE clause + params (dates are YYYY-MM-DD).
+
+    SEC-002: the (user_id, client_id) predicate is MANDATORY and always first —
+    the tenant is derived from the session by the route, never from a query param —
+    so a read can only ever return the caller's own rows. Legacy rows written
+    before the owner columns existed have a NULL owner and are therefore excluded
+    from every tenant-scoped read.
+    """
+    clauses: List[str] = ["user_id = ?", "client_id = ?"]
+    params: List[Any] = [user_id, client_id]
     if start_date:
         clauses.append("date(call_timestamp) >= date(?)")
         params.append(start_date)
@@ -151,17 +210,17 @@ def _date_filters(start_date: Optional[str], end_date: Optional[str],
     if feature:
         clauses.append("feature_name = ?")
         params.append(feature)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    where = " WHERE " + " AND ".join(clauses)
     return where, params
 
 
-def query_logs(start_date: Optional[str] = None, end_date: Optional[str] = None,
-               feature: Optional[str] = None, limit: int = 100,
-               offset: int = 0) -> Dict[str, Any]:
-    """Return paginated log rows (newest first) + the total matching count."""
+def query_logs(user_id: int, client_id: int, start_date: Optional[str] = None,
+               end_date: Optional[str] = None, feature: Optional[str] = None,
+               limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    """Return this tenant's paginated log rows (newest first) + matching count."""
     limit = max(1, min(int(limit or 100), 1000))
     offset = max(0, int(offset or 0))
-    where, params = _date_filters(start_date, end_date, feature)
+    where, params = _date_filters(user_id, client_id, start_date, end_date, feature)
     try:
         conn = _connect()
         try:
@@ -180,9 +239,10 @@ def query_logs(start_date: Optional[str] = None, end_date: Optional[str] = None,
         return {"ok": False, "error": str(exc), "total": 0, "rows": []}
 
 
-def summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
-    """Overall totals + per-feature breakdown for the report cards/table."""
-    where, params = _date_filters(start_date, end_date, None)
+def summary(user_id: int, client_id: int, start_date: Optional[str] = None,
+            end_date: Optional[str] = None) -> Dict[str, Any]:
+    """This tenant's overall totals + per-feature breakdown for the report cards/table."""
+    where, params = _date_filters(user_id, client_id, start_date, end_date, None)
     try:
         conn = _connect()
         try:

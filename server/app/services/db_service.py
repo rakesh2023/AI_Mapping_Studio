@@ -10,9 +10,15 @@ Connections are short-lived (opened per request, never persisted).
 from typing import Any, Dict, List, Tuple
 
 from app.core.capabilities import pyodbc
+from app.services.connection_guard import GENERIC_CONNECTION_ERROR
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
+
+
+class ConnectionAttemptError(Exception):
+    """A DB connection attempt failed. Carries only the generic SEC-004 message so
+    callers surface no reachability/auth detail to the client."""
 
 
 def build_connection_string(cfg: Dict[str, Any]) -> str:
@@ -39,11 +45,21 @@ def build_connection_string(cfg: Dict[str, Any]) -> str:
 
 
 def open_connection(cfg: Dict[str, Any]):
-    """Open a short-lived pyodbc connection from the posted config."""
+    """Open a short-lived pyodbc connection from the posted config.
+
+    SEC-004: any connection failure (refused, filtered/timeout, auth failure) is
+    collapsed into a single generic ConnectionAttemptError so the HTTP response
+    can't be used to distinguish an open host:port from a closed one. The real
+    error is printed server-side for operators.
+    """
     if pyodbc is None:
         raise RuntimeError("pyodbc is not installed on the server. Run: pip install -r requirements.txt")
     conn_str = build_connection_string(cfg)
-    return pyodbc.connect(conn_str, timeout=int(cfg.get("timeout", 8)))
+    try:
+        return pyodbc.connect(conn_str, timeout=int(cfg.get("timeout", 8)))
+    except Exception as exc:  # noqa: BLE001 - withhold reachability/auth detail from the client
+        print("[db_service] connection attempt failed (details withheld from client): " + repr(exc))
+        raise ConnectionAttemptError(GENERIC_CONNECTION_ERROR)
 
 
 def _quote(ident: Any) -> str:

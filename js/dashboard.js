@@ -6,12 +6,12 @@
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("dashboard.html");
 
-  const project = await loadProject();
   // Prefer the REAL AI-generated mappings (same source as the Mapping Workspace);
-  // fall back to the bundled sample only when nothing has been generated yet.
-  // Use the generated document if it exists (empty array = cleared, not "use sample").
+  // Per-client data is server-side and scoped to the logged-in user + active client.
+  // A client with no generated mappings shows EMPTY — never the bundled sample (which
+  // would look like another project's data in a multi-tenant app).
   const aiRows = lsGet("aims_ai_mappings", null);
-  const rawMappings = (aiRows !== null) ? aiRows : (await fetchJSON("mappings.json") || []);
+  const rawMappings = (aiRows !== null) ? aiRows : [];
 
   const mappings = applyOverrides(rawMappings || []);
   // Reflect REAL progress (was hardcoded to 9) from stored project state.
@@ -43,17 +43,17 @@ function computeWorkflowIndex(mappings){
   const allApproved = hasMappings && rows.every(m => (m.reviewStatus || "").indexOf("Approved") === 0);
 
   // WORKFLOW_STEPS indices (see common.js) -> best available signal.
+  // (The former "Project Creation" step was removed with the Project Setup page.)
   const signal = {
-    0: filled(lsGet("aims_current_project", null)),      // Project Creation
-    1: filled(lsGet("aims_db_connections", [])),          // Source Configuration
-    2: filled(lsGet("aims_db_connections", [])),          // Source Connection
-    4: filled(lsGet("aims_db_connections", [])),          // Metadata Discovery
-    6: filled(lsGet("aims_target_connections", [])),      // Target Configuration
-    7: filled(lsGet("aims_active_target", null)),         // Target Metadata
-    8: hasMappings,                                        // AI Mapping Generation
-    9: reviewed,                                           // Mapping Review
-    12: filled(lsGet("aims_deploy_history", [])),          // ETL Code Generation (deployed)
-    13: allApproved,                                       // Approval
+    0: filled(lsGet("aims_db_connections", [])),          // Source Configuration
+    1: filled(lsGet("aims_db_connections", [])),          // Source Connection
+    3: filled(lsGet("aims_db_connections", [])),          // Metadata Discovery
+    5: filled(lsGet("aims_target_connections", [])),      // Target Configuration
+    6: filled(lsGet("aims_active_target", null)),         // Target Metadata
+    7: hasMappings,                                        // AI Mapping Generation
+    8: reviewed,                                           // Mapping Review
+    11: filled(lsGet("aims_deploy_history", [])),          // ETL Code Generation (deployed)
+    12: allApproved,                                       // Approval
   };
   let maxDone = -1;
   Object.keys(signal).forEach(k => { if(signal[k]) maxDone = Math.max(maxDone, Number(k)); });

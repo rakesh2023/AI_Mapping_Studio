@@ -7,6 +7,11 @@
   const el = (id) => document.getElementById(id);
   const form = el("obForm"), errBox = el("obErr"), submit = el("obSubmit");
 
+  // SEC-005: this standalone page doesn't load common.js's fetch wrapper, so read
+  // the double-submit token here and attach it to the (non-auth) client-create POST.
+  const csrfToken = () => decodeURIComponent(
+    (document.cookie.split("; ").find(c => c.startsWith("csrf_token=")) || "").split("=").slice(1).join("="));
+
   function showErr(msg){ errBox.textContent = msg; errBox.style.display = ""; }
   function hideErr(){ errBox.style.display = "none"; }
 
@@ -38,7 +43,7 @@
 
     submit.disabled = true; const orig = submit.innerHTML; submit.innerHTML = "Creating…";
     try{
-      const res = await fetch("/api/clients", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+      const res = await fetch("/api/clients", {method:"POST", headers:{"Content-Type":"application/json", "X-CSRF-Token": csrfToken()}, body: JSON.stringify(body)});
       const j = await res.json().catch(()=>({}));
       if(res.status === 401){ window.location.href = "/login"; return; }
       if(!res.ok || !j.ok){ showErr(j.error || "Could not create the client. Please try again."); return; }

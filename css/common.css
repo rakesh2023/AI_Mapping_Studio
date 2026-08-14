@@ -102,6 +102,11 @@ body.theme-dark .user-meta .user-name{color:var(--text-main);}
 .client-switch .bi{color:var(--primary);font-size:.9rem;}
 .client-switch select{border:none;background:transparent;color:var(--text-main);font-size:.8rem;font-weight:600;
   max-width:170px;outline:none;cursor:pointer;}
+/* Native <select> popup options: in dark mode the inherited light text sat on the
+   OS's default light popup and was nearly invisible. Give the options an explicit
+   dark surface + light text so client names (Markel, New client, …) are readable. */
+body.theme-dark .client-switch select option{background:#2b2b2b;color:#f1f1f1;}
+body.theme-dark .client-switch select option:disabled{color:#8a8a8a;}
 
 /* User dropdown menu */
 .user-wrap{position:relative;flex-shrink:0;}
@@ -296,6 +301,13 @@ body.theme-dark .modal-footer{border-color:var(--border);}
 body.theme-dark .modal-title{color:var(--text-main);}
 body.theme-dark .modal-body{color:var(--text-main);}
 body.theme-dark .modal .btn-close{filter:invert(1) grayscale(1) brightness(1.6);}
+/* Hide the placeholder "suggestion" as soon as a field is focused/clicked;
+   it reappears on blur if the field is left empty. Applies app-wide. */
+input:focus::placeholder,
+textarea:focus::placeholder{color:transparent;}
+input:focus::-webkit-input-placeholder,
+textarea:focus::-webkit-input-placeholder{color:transparent;}
+
 body.theme-dark .form-select, body.theme-dark .form-control{background:var(--bg-card);color:var(--text-main);border-color:var(--border);}
 /* hardcoded near-black text that must flip in dark mode */
 body.theme-dark .topbar .app-title,
