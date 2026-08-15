@@ -50,7 +50,7 @@
       const j = await res.json().catch(()=>({}));
       if(res.status === 401){ window.location.href = "/login"; return; }
       if(!res.ok || !j.ok){ showErr(j.error || "Could not create the client. Please try again."); return; }
-      window.location.href = "/pages/dashboard.html";
+      window.location.href = "/pages/app.html#dashboard.html";
     }catch(err){
       showErr("Cannot reach the server. Is the backend running?");
     }finally{

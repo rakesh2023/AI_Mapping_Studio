@@ -85,6 +85,40 @@ def test_parse_column_unparseable_returns_soft_error(monkeypatch):
     assert status == 200 and payload["ok"] is False   # soft error, not a crash
 
 
+def test_parse_column_multiple_columns(monkeypatch):
+    reply = json.dumps({"confidence": 90, "note": "", "columns": [
+        {"column": "external_ref", "dataType": "varchar", "length": 100, "mandatory": True, "pk": False, "fk": False},
+        {"column": "closed_date", "dataType": "date", "length": None, "mandatory": False, "pk": False, "fk": False},
+        {"column": "status_code", "dataType": "int", "length": None, "mandatory": False, "pk": False, "fk": False},
+    ]})
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, status = ss.parse_column({
+        "instruction": "add varchar external_ref; add date closed_date; add int status_code",
+        "tableName": "cs_activity", "existingColumns": [],
+    })
+    assert status == 200 and payload["ok"] is True
+    assert len(payload["columns"]) == 3
+    assert [c["column"] for c in payload["columns"]] == ["external_ref", "closed_date", "status_code"]
+    assert payload["column"]["column"] == "external_ref"   # back-compat: first column
+
+
+def test_parse_column_multi_flags_duplicates(monkeypatch):
+    reply = json.dumps({"confidence": 85, "columns": [
+        {"column": "city", "dataType": "varchar", "length": 50, "mandatory": False, "pk": False, "fk": False},   # dup vs existing
+        {"column": "region", "dataType": "varchar", "length": 50, "mandatory": False, "pk": False, "fk": False},
+        {"column": "Region", "dataType": "varchar", "length": 50, "mandatory": False, "pk": False, "fk": False},  # dup within batch
+    ]})
+    monkeypatch.setattr(ss, "anthropic_client", lambda: _fake_client(reply))
+    payload, _ = ss.parse_column({
+        "instruction": "add city, region, Region",
+        "existingColumns": [{"name": "city", "dataType": "varchar"}],
+    })
+    cols = {c["column"]: c for c in payload["columns"]}
+    assert cols["city"]["duplicate"] is True       # clashes with existing 'city'
+    assert cols["region"]["duplicate"] is False
+    assert cols["Region"]["duplicate"] is True     # clashes with earlier 'region' in the batch
+
+
 # --------------------------- parse_entity (Add Entity) --------------------------- #
 
 def test_parse_entity_requires_instruction():

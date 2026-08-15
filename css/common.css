@@ -61,6 +61,14 @@ body.sidebar-collapsed .main-wrapper{margin-left:76px;}
 
 .content-area{padding:22px 28px 60px;flex:1;}
 
+/* ===== SPA shell (app.html): persistent sidebar/header + iframe content host ===== */
+.app-frame{display:block;width:100%;height:calc(100vh - 66px);border:0;background:var(--bg-app);}
+/* Pages loaded INSIDE the shell iframe render content-only: hide their own (empty)
+   sidebar/header containers and drop the sidebar margin so content fills the frame. */
+body.in-frame #sidebar-container{display:none !important;}
+body.in-frame #header-container{display:none !important;}
+body.in-frame .main-wrapper{margin-left:0 !important;}
+
 /* ===== Topbar ===== */
 .topbar{
   height:66px;background:#fff;border-bottom:1px solid var(--border);

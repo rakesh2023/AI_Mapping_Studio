@@ -227,7 +227,16 @@ async function resetApplication(){
   CLIENT_STATE = {ai_mappings: []};
   clearConnPasswords();   // drop session-cached DB passwords
   if(typeof showNotification === "function") showNotification(who + " data reset. Reloading…", "primary", 1500);
-  setTimeout(() => { window.location.href = "dashboard.html"; }, 700);
+  setTimeout(() => {
+    // In the SPA shell, reload the shell so the iframe re-hydrates the cleared data;
+    // on a standalone page, go to the shell home.
+    if(window.location.pathname.endsWith("/app.html")){
+      window.location.hash = "#dashboard.html";
+      window.location.reload();
+    } else {
+      window.location.href = "/pages/app.html#dashboard.html";
+    }
+  }, 700);
 }
 
 /* ---- Streamed AI file extraction with progress ----
@@ -762,22 +771,40 @@ async function fetchAuth(){
   }catch(e){ return null; }
 }
 
+// True when this document is loaded inside the SPA shell's <iframe> (app.html).
+// Framed pages render CONTENT ONLY — the persistent shell owns the sidebar/header.
+function inAppFrame(){ try{ return window.self !== window.top; }catch(e){ return true; } }
+
 async function initShell(activeHref){
   applyTheme(getTheme());   // ensure saved theme is active on every page
+  const framed = inAppFrame();
+  // Auth/onboarding redirects must move the WHOLE browser (the top window), never
+  // just the iframe — otherwise the login/onboarding page would render inside the
+  // content area.
+  const go = (url) => { try{ if(framed){ window.top.location.href = url; return; } }catch(e){} window.location.href = url; };
 
   // Auth gate: every app page needs a logged-in session + an active client.
   // (The backend also enforces this via a before_request guard; this keeps the
   // header in sync and handles a session that expired after the page loaded.)
   AUTH = await fetchAuth();
-  if(!AUTH){ window.location.href = "/login"; return; }
+  if(!AUTH){ go("/login"); return; }
   // Admins manage users only — they have no active client and must NOT be sent to
   // onboarding (they live on the Admin page). Everyone else needs a client.
   const _isAdmin = !!(AUTH.user && AUTH.user.isAdmin);
-  if(!AUTH.activeClientId && !_isAdmin){ window.location.href = "/onboarding"; return; }
+  if(!AUTH.activeClientId && !_isAdmin){ go("/onboarding"); return; }
 
   // Load this client's server-side data into the in-memory cache BEFORE any page
   // controller reads it (controllers await initShell, so the cache is ready in time).
   await hydrateClientState();
+
+  // Inside the shell iframe: skip the sidebar/header/client-modal (the shell owns
+  // them) and just render this page's content. CSS (body.in-frame) hides the empty
+  // sidebar/header containers and removes the sidebar margin so content fills the frame.
+  if(framed){
+    document.body.classList.add("in-frame");
+    wireShellEvents();          // harmless — all element lookups are guarded
+    return;
+  }
 
   const sidebarEl = document.getElementById("sidebar-container");
   if(sidebarEl){ sidebarEl.className = "sidebar"; sidebarEl.innerHTML = buildSidebarHTML(activeHref); }

@@ -16,7 +16,7 @@ from app.core.capabilities import anthropic
 from app.core.config import ai_model
 from app.services.ai_client import anthropic_client, parse_mapping_json
 from app.services.ai_client_service import call_ai
-from app.schemas.ai_schemas import COLUMN_SCHEMA, ENTITY_SCHEMA
+from app.schemas.ai_schemas import COLUMN_SCHEMA, COLUMNS_SCHEMA, ENTITY_SCHEMA
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
@@ -57,17 +57,19 @@ def parse_column(body: Dict[str, Any]) -> Result:
     ) or "(the table currently has no columns)"
 
     system = (
-        "You convert a short natural-language request into ONE new database column "
-        "definition for a target table. Return a single JSON object with keys: column, "
-        "dataType, length, mandatory, pk, fk, fkReference, afterColumn, description, "
-        "confidence, note.\n\n"
-        "RULES:\n"
+        "You convert a natural-language request into ONE OR MORE new database column "
+        "definitions for a target table. The user may describe several columns in one "
+        "request — return EVERY column they describe. Return a JSON object with keys: "
+        "columns (an array), confidence, note. Each item in columns has keys: column, "
+        "dataType, length, mandatory, pk, fk, fkReference, afterColumn, description.\n\n"
+        "RULES (apply to each column):\n"
         "- dataType MUST be one of: " + ", ".join(SUPPORTED_TYPES) + ".\n"
         "- length: an integer for length/precision types (" + ", ".join(sorted(LENGTH_TYPES)) +
         "); otherwise null.\n"
         "- column: a valid identifier (letters, digits, underscore; no spaces). Match the "
         "casing/naming convention of the EXISTING columns (e.g. snake_case if they use it). "
-        "It MUST NOT duplicate an existing column name (case-insensitive).\n"
+        "It MUST NOT duplicate an existing column name, nor another column in your list "
+        "(case-insensitive).\n"
         "- mandatory: true if the request says required/mandatory/not null; else false.\n"
         "- pk: true only if explicitly asked to be a primary key.\n"
         "- fk: true only if the request says it's a foreign key / references another table. "
@@ -75,9 +77,9 @@ def parse_column(body: Dict[str, Any]) -> Result:
         "reference that isn't stated in the request.\n"
         "- afterColumn: if the request says 'after <col>', put that existing column name; "
         "else null.\n"
-        "- confidence: 0-100. Use a LOW value (<=40) and explain in 'note' if the request is "
-        "ambiguous, missing a name, or asks for something unsupported. NEVER guess a column "
-        "name the user did not give.\n"
+        "- confidence: 0-100 for the request overall. Use a LOW value (<=40) and explain in "
+        "'note' if it is ambiguous, missing names, or asks for something unsupported. NEVER "
+        "guess a column name the user did not give.\n"
         "Respond with ONLY the JSON object. No prose, no markdown fences."
     )
     user = (
@@ -89,7 +91,7 @@ def parse_column(body: Dict[str, Any]) -> Result:
     model = ai_model()
     try:
         client = anthropic_client()
-        base_kwargs = dict(model=model, max_tokens=800, system=system,
+        base_kwargs = dict(model=model, max_tokens=2500, system=system,
                            messages=[{"role": "user", "content": user}])
 
         def run(extra):
@@ -97,18 +99,39 @@ def parse_column(body: Dict[str, Any]) -> Result:
                 return stream.get_final_message()
 
         resp = call_ai("Target System - Add Column (AI)", run, [
-            {"output_config": {"format": {"type": "json_schema", "schema": COLUMN_SCHEMA}}},
+            {"output_config": {"format": {"type": "json_schema", "schema": COLUMNS_SCHEMA}}},
             {},
         ])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
         parsed = parse_mapping_json(text)
-        if not isinstance(parsed, dict) or not parsed.get("column"):
-            return {"ok": False, "error": "Could not understand that instruction. Try naming the column and its type, or use the Manual tab."}, 200
+        raw_cols = parsed.get("columns") if isinstance(parsed, dict) else None
+        # Back-compat: tolerate a single-object response ({column: ...}).
+        if not raw_cols and isinstance(parsed, dict) and parsed.get("column"):
+            raw_cols = [parsed]
+        if not isinstance(raw_cols, list) or not raw_cols:
+            return {"ok": False, "error": "Could not understand that instruction. Try naming the column(s) and their types, or use the Manual tab."}, 200
 
-        col = _normalise(parsed, existing_names)
-        return {"ok": True, "model": model, "column": col}, 200
+        seen = {n.lower() for n in existing_names}
+        columns = []
+        for rc in raw_cols:
+            if not isinstance(rc, dict) or not rc.get("column"):
+                continue
+            col = _normalise(rc, existing_names)
+            nm = (col.get("column") or "").lower()
+            if nm in seen:
+                col["duplicate"] = True   # dup vs existing or an earlier column in this batch
+            seen.add(nm)
+            columns.append(col)
+        if not columns:
+            return {"ok": False, "error": "Could not understand that instruction. Try naming the column(s) and their types, or use the Manual tab."}, 200
+
+        confidence = int(parsed.get("confidence") or 0) if isinstance(parsed, dict) else 0
+        note = str(parsed.get("note") or "") if isinstance(parsed, dict) else ""
+        # Return the list plus `column` (first) for any older single-column caller.
+        return {"ok": True, "model": model, "columns": columns, "column": columns[0],
+                "confidence": confidence, "note": note}, 200
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()

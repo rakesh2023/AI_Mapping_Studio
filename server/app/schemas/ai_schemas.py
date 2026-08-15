@@ -171,3 +171,35 @@ COLUMN_SCHEMA = {
     "required": ["column", "dataType", "mandatory", "pk", "fk", "confidence"],
     "additionalProperties": False,
 }
+
+
+# ONE OR MORE new target columns parsed from a natural-language instruction
+# (POST /api/ai/parse-column). The user may describe several columns at once.
+COLUMNS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "column": {"type": "string"},
+                    "dataType": {"type": "string"},
+                    "length": {"type": ["integer", "null"]},
+                    "mandatory": {"type": "boolean"},
+                    "pk": {"type": "boolean"},
+                    "fk": {"type": "boolean"},
+                    "fkReference": {"type": ["string", "null"]},
+                    "afterColumn": {"type": ["string", "null"]},
+                    "description": {"type": "string"},
+                },
+                "required": ["column", "dataType", "mandatory", "pk", "fk"],
+                "additionalProperties": False,
+            },
+        },
+        "confidence": {"type": "integer"},
+        "note": {"type": "string"},
+    },
+    "required": ["columns", "confidence"],
+    "additionalProperties": False,
+}

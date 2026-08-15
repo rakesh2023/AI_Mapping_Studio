@@ -30,7 +30,10 @@ table.grid-table td.wrap{white-space:normal;min-width:180px;}
 
 .metadata-tree{list-style:none;padding-left:0;margin:0;font-size:.83rem;}
 .metadata-tree li{padding:2px 0;}
-.metadata-tree .tree-node{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;cursor:pointer;color:#334155;}
+.metadata-tree .tree-node{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;cursor:pointer;color:#334155;min-width:0;}
+.metadata-tree .tree-node > i{flex:none;}
+/* Long table names are truncated to fit; the full name shows on hover (title). */
+.metadata-tree .tree-node .tree-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
 .metadata-tree .tree-node:hover{background:#f1f5f9;}
 .metadata-tree .tree-node.active{background:var(--primary);color:#fff;}
 .metadata-tree .tree-children{padding-left:18px;}

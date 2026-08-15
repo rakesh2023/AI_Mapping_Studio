@@ -200,12 +200,12 @@ function renderTree(){
   const tree = document.getElementById("sourceTree");
   let tableItems = "";
   sourceMeta.tables.forEach(t => {
-    tableItems += '<li><div class="tree-node" data-table="' + t.name + '"><i class="bi bi-table"></i> ' + t.name + '</div></li>';
+    tableItems += '<li><div class="tree-node" data-table="' + escapeHtml(t.name) + '" title="' + escapeHtml(t.name) + '"><i class="bi bi-table"></i> <span class="tree-name">' + escapeHtml(t.name) + '</span></div></li>';
   });
   tree.innerHTML =
-    '<li><div class="tree-node"><i class="bi bi-hdd-network"></i> ' + sourceMeta.connection + '</div>' +
+    '<li><div class="tree-node" title="' + escapeHtml(sourceMeta.connection || "") + '"><i class="bi bi-hdd-network"></i> <span class="tree-name">' + escapeHtml(sourceMeta.connection || "") + '</span></div>' +
       '<ul class="tree-children">' +
-        '<li><div class="tree-node"><i class="bi bi-folder2"></i> ' + sourceMeta.schema + '</div>' +
+        '<li><div class="tree-node" title="' + escapeHtml(sourceMeta.schema || "") + '"><i class="bi bi-folder2"></i> <span class="tree-name">' + escapeHtml(sourceMeta.schema || "") + '</span></div>' +
           '<ul class="tree-children" id="tableList">' + tableItems + '</ul>' +
         '</li>' +
       '</ul>' +

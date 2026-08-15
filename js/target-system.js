@@ -327,7 +327,7 @@ function renderTargetTree(meta){
   let items = "";
   meta.entities.forEach(e => {
     const icon = e.isListTable ? "bi-list-ul" : "bi-diagram-2";
-    items += '<li><div class="tree-node" data-entity="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> ' + escapeHtml(e.name) + '</div></li>';
+    items += '<li><div class="tree-node" data-entity="' + escapeHtml(e.name) + '" title="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> <span class="tree-name">' + escapeHtml(e.name) + '</span></div></li>';
   });
   tree.innerHTML =
     '<li><div class="tree-node"><i class="bi bi-box"></i> ' + escapeHtml(meta.application || "Target Schema") + '</div>' +
@@ -354,12 +354,11 @@ function renderTargetFields(){
   const fields = activeEntity.fields.filter(f => !search || f.name.toLowerCase().indexOf(search) !== -1);
   const body = document.getElementById("targetFieldsBody");
   if(!fields.length){
-    body.innerHTML = '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
+    body.innerHTML = '<tr><td colspan="12"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
     return;
   }
   body.innerHTML = fields.map(f =>
     '<tr data-col="' + escapeHtml(f.name) + '">' +
-      '<td>' + escapeHtml(activeEntity.name) + '</td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
       '<td class="mono">' + escapeHtml(f.name) + '</td>' +
       '<td>' + escapeHtml(f.dataType || "") + '</td>' +
@@ -387,6 +386,7 @@ const AC_TYPES = ["varchar","nvarchar","char","text","int","bigint","smallint","
 const AC_LENGTH_TYPES = ["varchar","nvarchar","char","decimal","numeric"];
 let acModal = null;            // bootstrap.Modal instance
 let acLastAdded = null;        // {entity, column} for Undo
+let acProposedCols = [];       // AI-proposed columns (field shape) awaiting confirm
 
 function wireAddColumn(){
   const openBtn = document.getElementById("addColumnBtn");
@@ -426,6 +426,8 @@ function openAddColumnModal(){
   document.getElementById("acAIError").innerHTML = "";
   document.getElementById("acAIStatus").textContent = "";
   document.getElementById("acInstruction").value = "";
+  acProposedCols = [];
+  acRenderProposed();
   document.getElementById("acTableName").textContent = activeEntity.name;
 
   // FK reference options: every table.column in the active schema
@@ -449,6 +451,10 @@ function openAddColumnModal(){
 function acSwitchTab(tab){
   const ai = tab === "ai";
   document.getElementById("acAIPanel").style.display = ai ? "" : "none";
+  // The single-column manual form is only for the Manual tab; hide it under AI
+  // (AI mode uses the "Proposed columns" list instead).
+  const form = document.getElementById("acForm");
+  if(form) form.style.display = ai ? "none" : "";
   document.getElementById("acTabManual").classList.toggle("active", !ai);
   document.getElementById("acTabAI").classList.toggle("active", ai);
 }
@@ -486,29 +492,64 @@ async function acParse(){
     const data = await res.json();
     status.textContent = "";
     if(!data.ok){ errBox.innerHTML = failNote(data.error || "Could not parse the instruction."); return; }
-    const c = data.column;
-    if((c.confidence || 0) < 45){
-      errBox.innerHTML = failNote("Not confident about that request" + (c.note ? ": " + c.note : ".") + " Edit the form below or rephrase.");
+    // The AI may propose ONE OR MORE columns; review them below before adding.
+    const cols = (data.columns && data.columns.length) ? data.columns : (data.column ? [data.column] : []);
+    if(!cols.length){ errBox.innerHTML = failNote("No columns were identified. Name the column(s) and their types, or use the Manual tab."); return; }
+    if((data.confidence || 0) < 45){
+      errBox.innerHTML = failNote("Not confident about that request" + (data.note ? ": " + data.note : ".") + " Review the columns below or rephrase.");
     }
-    // prefill the shared form (preview — user confirms with Add Column)
-    document.getElementById("acName").value = c.column || "";
-    document.getElementById("acType").value = AC_TYPES.indexOf((c.dataType||"").toLowerCase()) !== -1 ? c.dataType.toLowerCase() : "varchar";
-    acToggleLen();
-    if(c.length != null) document.getElementById("acLen").value = c.length;
-    document.getElementById("acMandatory").value = c.mandatory ? "true" : "false";
-    document.getElementById("acPk").checked = !!c.pk;
-    document.getElementById("acFk").checked = !!c.fk;
-    acToggleFk();
-    document.getElementById("acFkRef").value = c.fkReference || "";
-    document.getElementById("acDesc").value = c.description || "";
-    document.getElementById("acAfter").value = (c.afterColumn && (activeEntity.fields||[]).some(f => f.name === c.afterColumn)) ? c.afterColumn : "";
-    acSwitchTab("manual");   // show the pre-filled form to confirm
-    if(c.duplicate) acSetErr("acName", "A column named '" + c.column + "' already exists.");
-    showNotification("AI filled the form — review and click Add Column.", "primary", 2500);
+    acProposedCols = cols.map(acColToField);
+    acRenderProposed();
+    acSwitchTab("ai");   // keep the AI tab visible with the proposed columns
+    showNotification("AI proposed " + acProposedCols.length + " column(s) — review and click Add Column.", "primary", 2500);
   }catch(err){
     status.textContent = "";
     errBox.innerHTML = failNote("Backend not reachable. Start it with: cd server && python main.py");
   }
+}
+
+/* Convert a backend parse-column item (name is in `column`) to the UI field shape. */
+function acColToField(c){
+  const type = (AC_TYPES.indexOf((c.dataType||"").toLowerCase()) !== -1) ? c.dataType.toLowerCase() : "varchar";
+  const needsLen = AC_LENGTH_TYPES.indexOf(type) !== -1;
+  let length = null;
+  if(needsLen) length = (c.length != null && c.length !== "") ? c.length : ((type==="decimal"||type==="numeric") ? 18 : 100);
+  return {
+    name: (c.column || "").trim(),
+    dataType: type,
+    length: length,
+    mandatory: !!c.mandatory,
+    pk: !!c.pk,
+    fk: !!c.fk,
+    fkReference: c.fk ? (c.fkReference || "") : "",
+    description: c.description || "",
+    businessTerm: "", accepted: null, default: null,
+    _after: c.afterColumn || "",
+    _dup: !!c.duplicate
+  };
+}
+
+/* Render the proposed-columns preview (each removable). */
+function acRenderProposed(){
+  const box = document.getElementById("acColsPreview");
+  const cnt = document.getElementById("acColsCount");
+  if(cnt) cnt.textContent = acProposedCols.length
+    ? ("(" + acProposedCols.length + " column" + (acProposedCols.length>1?"s":"") + ")") : "(none yet)";
+  if(!box) return;
+  if(!acProposedCols.length){ box.innerHTML = '<div class="text-xs text-muted-2">No columns proposed yet.</div>'; return; }
+  box.innerHTML = acProposedCols.map((f, i) =>
+    '<div class="d-flex align-items-center justify-content-between gap-2 py-1" style="border-bottom:1px solid var(--border);">' +
+      '<span class="text-xs"><span class="mono">' + escapeHtml(f.name || "(unnamed)") + '</span> <span class="text-muted-2">' +
+        escapeHtml(f.dataType + (f.length ? "(" + f.length + ")" : "")) +
+        (f.pk ? " &middot; PK" : "") + (f.fk ? " &middot; FK" : "") + (f.mandatory ? " &middot; NOT NULL" : "") +
+      '</span>' + (f._dup ? ' <span class="badge-soft badge-low">duplicate</span>' : '') + '</span>' +
+      '<button type="button" class="btn btn-sm btn-outline-soft ac-col-rm" data-i="' + i + '" title="Remove column"><i class="bi bi-x"></i></button>' +
+    '</div>'
+  ).join("");
+  box.querySelectorAll(".ac-col-rm").forEach(b => b.addEventListener("click", () => {
+    acProposedCols.splice(parseInt(b.dataset.i, 10), 1);
+    acRenderProposed();
+  }));
 }
 
 /* ---- validate the manual/preview form ---- */
@@ -562,6 +603,10 @@ function acFieldFromForm(){
 
 /* ---- save: persist to the active connection, refresh, highlight, undo ---- */
 function acSave(){
+  // AI tab with proposed columns -> add them all (multi-column). Manual tab -> single form.
+  const aiMode = document.getElementById("acAIPanel").style.display !== "none";
+  if(aiMode && acProposedCols.length){ acAddProposed(); return; }
+
   if(!acValidate()) return;
   const field = acFieldFromForm();
   const afterCol = document.getElementById("acAfter").value || "";
@@ -645,6 +690,54 @@ function showColumnAddedToast(colName, entityName){
     showNotification("Removed '" + colName + "'.", "primary", 1500);
   });
   setTimeout(remove, 7000);
+}
+
+/* Add ALL AI-proposed columns to the active entity (multi-column). Validates each,
+   skips invalid/duplicate ones, and reports what was added vs skipped. */
+function acAddProposed(){
+  const entity = activeEntity.name;
+  const errBox = document.getElementById("acAIError");
+  const added = [], skipped = [];
+  acProposedCols.forEach(f => {
+    const nm = (f.name || "").trim();
+    if(!nm || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(nm)){ skipped.push((nm || "(unnamed)") + " — invalid name"); return; }
+    const field = {
+      name: nm, dataType: f.dataType, length: f.length, mandatory: !!f.mandatory,
+      pk: !!f.pk, fk: !!f.fk, fkReference: f.fk ? (f.fkReference || "") : "",
+      description: f.description || "", businessTerm: "", accepted: null, default: null
+    };
+    const after = (f._after && (activeEntity.fields || []).some(x => x.name === f._after)) ? f._after : "";
+    const res = persistColumn(entity, field, after);
+    if(res.ok) added.push(nm); else skipped.push(nm + " — " + (res.error || "not added"));
+  });
+  if(!added.length){ errBox.innerHTML = failNote("No columns added. " + (skipped.join("; ") || "")); return; }
+  if(acModal) acModal.hide();
+  renderActiveBrowser();
+  selectEntity(entity);
+  flashRow(added[0]);
+  acLastAdded = {entity: entity, columns: added.slice()};
+  if(added.length === 1) showColumnAddedToast(added[0], entity);
+  else showColumnsAddedToast(added, entity);
+  if(skipped.length) showNotification("Skipped " + skipped.length + " column(s): " + skipped.join("; "), "warning", 6000);
+}
+
+/* Success toast for a multi-column add, with an Undo-all action. */
+function showColumnsAddedToast(cols, entityName){
+  const stack = document.getElementById("toast-stack");
+  if(!stack){ showNotification(cols.length + " columns added to " + entityName + ".", "success"); return; }
+  const el = document.createElement("div");
+  el.className = "toast-item success";
+  el.innerHTML = '<div class="d-flex align-items-center justify-content-between gap-3">' +
+    '<span><i class="bi bi-check-circle me-1"></i> <strong>' + cols.length + '</strong> columns added to ' + escapeHtml(entityName) + '.</span>' +
+    '<button type="button" class="btn btn-sm btn-outline-soft acundo">Undo all</button></div>';
+  stack.appendChild(el);
+  const remove = () => { if(el.parentNode) el.parentNode.removeChild(el); };
+  el.querySelector(".acundo").addEventListener("click", () => {
+    cols.forEach(c => removeColumn(entityName, c));
+    remove();
+    showNotification("Removed " + cols.length + " columns.", "primary", 1500);
+  });
+  setTimeout(remove, 8000);
 }
 
 /* =========================================================================

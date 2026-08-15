@@ -28,9 +28,9 @@
       if(!res.ok || !j.ok){ showErr(j.error || "Something went wrong. Please try again."); return; }
       // Admins manage users only (no client / no mapping) -> straight to the Admin page.
       if(j.user && j.user.isAdmin){ window.location.href = "/pages/admin.html"; return; }
-      // login -> onboarding if no client yet, else dashboard.
+      // login -> onboarding if no client yet, else the SPA shell (persistent sidebar).
       if(j.needsOnboarding) window.location.href = "/onboarding";
-      else window.location.href = "/pages/dashboard.html";
+      else window.location.href = "/pages/app.html#dashboard.html";
     }catch(err){
       showErr("Cannot reach the server. Is the backend running?");
     }finally{
