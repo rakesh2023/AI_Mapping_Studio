@@ -31,8 +31,8 @@
 /* ===== Row tint by review status ===== */
 /* tr background covers the scrolling cells; frozen cells are opaque so they
    need the same tint explicitly (and a matching left accent bar). */
-.mapping-grid-wrap tbody tr.row-ai{background:#e9f7ef;}
-.mapping-grid-wrap tbody tr.row-ai td.freeze{background:#e9f7ef;}
+.mapping-grid-wrap tbody tr.row-ai{background:#fdf1e7;}
+.mapping-grid-wrap tbody tr.row-ai td.freeze{background:#fdf1e7;}
 .mapping-grid-wrap tbody tr.row-approved{background:#e9f7ef;}
 .mapping-grid-wrap tbody tr.row-approved td.freeze{background:#e9f7ef;}
 .mapping-grid-wrap tbody tr.row-rejected{background:#fdeceb;}
@@ -40,7 +40,7 @@
 .mapping-grid-wrap tbody tr.row-review{background:#fef6e3;}
 .mapping-grid-wrap tbody tr.row-review td.freeze{background:#fef6e3;}
 /* left status bar on the checkbox column */
-.mapping-grid-wrap tbody tr.row-ai td.fz0{box-shadow:inset 3px 0 0 0 #178a4c;}
+.mapping-grid-wrap tbody tr.row-ai td.fz0{box-shadow:inset 3px 0 0 0 #e8681c;}
 .mapping-grid-wrap tbody tr.row-approved td.fz0{box-shadow:inset 3px 0 0 0 #178a4c;}
 .mapping-grid-wrap tbody tr.row-rejected td.fz0{box-shadow:inset 3px 0 0 0 #c0271f;}
 .mapping-grid-wrap tbody tr.row-review td.fz0{box-shadow:inset 3px 0 0 0 #d99400;}
@@ -212,7 +212,7 @@ body.theme-dark .mapping-grid-wrap tbody tr.row-selected,
 body.theme-dark .mapping-grid-wrap tbody tr.row-selected td.freeze{background:#22304a;}
 /* darker row tints so text stays legible */
 body.theme-dark .mapping-grid-wrap tbody tr.row-ai,
-body.theme-dark .mapping-grid-wrap tbody tr.row-ai td.freeze,
+body.theme-dark .mapping-grid-wrap tbody tr.row-ai td.freeze{background:#3a2a17;}
 body.theme-dark .mapping-grid-wrap tbody tr.row-approved,
 body.theme-dark .mapping-grid-wrap tbody tr.row-approved td.freeze{background:#14301f;}
 body.theme-dark .mapping-grid-wrap tbody tr.row-rejected,

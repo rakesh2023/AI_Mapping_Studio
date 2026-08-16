@@ -54,14 +54,28 @@ def signup():
 def login():
     body = request.get_json(silent=True) or {}
     email = body.get("email", "")
+    password = body.get("password", "")
+    # Tell the user exactly what to fix when a field is blank.
+    if not (email or "").strip() and not (password or "").strip():
+        return jsonify({"ok": False, "error": "Enter your email and password.", "reason": "empty"}), 400
+    if not (email or "").strip():
+        return jsonify({"ok": False, "error": "Enter your email address.", "reason": "empty_email"}), 400
+    if not (password or "").strip():
+        return jsonify({"ok": False, "error": "Enter your password.", "reason": "empty_password"}), 400
     locked = auth_service.login_locked_seconds(email)
     if locked:
         mins = max(1, locked // 60)
-        return jsonify({"ok": False, "error": "Too many failed attempts. Try again in about %d minute(s)." % mins}), 429
-    user = auth_service.authenticate(email, body.get("password", ""))
+        return jsonify({"ok": False, "error": "Too many failed attempts. Try again in about %d minute(s)." % mins,
+                        "reason": "locked"}), 429
+    user, reason = auth_service.authenticate_result(email, password)
     auth_service.record_login_result(email, bool(user))
     if not user:
-        return jsonify({"ok": False, "error": "Invalid email or password."}), 401
+        # Distinct reason so the user knows whether it's the email or the password.
+        if reason == "no_account":
+            msg = "No account found with this email address. Check the address or ask an admin to create your account."
+        else:
+            msg = "Incorrect password. Please try again."
+        return jsonify({"ok": False, "error": msg, "reason": reason}), 401
     _set_login(user)
     clients = client_service.list_clients(user["id"])
     active = clients[0]["id"] if clients else None   # most-recent (list is DESC)

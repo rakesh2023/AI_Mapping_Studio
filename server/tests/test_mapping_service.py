@@ -76,6 +76,49 @@ def test_generate_mappings_fills_not_mapped_for_missing(monkeypatch):
     assert payload["returnedCount"] == 0
 
 
+def test_default_system_prompt_interpolates_strategy():
+    p = ms.default_mapping_system_prompt("Aggressive")
+    assert "Apply the 'Aggressive' strategy" in p
+    assert "JOIN CONDITIONS" in p and "ONLY a JSON object" in p
+
+
+def _capturing_client(reply, sink):
+    class C:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sink["system"] = kw.get("system")
+                return _FakeStream(_FakeMsg(reply))
+    return C()
+
+
+def test_generate_mappings_uses_custom_system_prompt(monkeypatch):
+    sink = {}
+    monkeypatch.setattr(ms, "anthropic_client",
+                        lambda: _capturing_client(json.dumps({"mappings": [], "joins": []}), sink))
+    body = {
+        "source": {"tables": [{"name": "T", "columns": [{"name": "C", "dataType": "int"}]}]},
+        "targetEntities": [{"name": "E", "fields": [{"name": "F", "dataType": "int"}]}],
+        "systemPrompt": "CUSTOM PROMPT — map things.",
+    }
+    payload, status = ms.generate_mappings(body)
+    assert status == 200
+    assert sink["system"] == "CUSTOM PROMPT — map things."
+
+
+def test_generate_mappings_defaults_system_when_no_override(monkeypatch):
+    sink = {}
+    monkeypatch.setattr(ms, "anthropic_client",
+                        lambda: _capturing_client(json.dumps({"mappings": [], "joins": []}), sink))
+    body = {
+        "source": {"tables": [{"name": "T", "columns": [{"name": "C", "dataType": "int"}]}]},
+        "targetEntities": [{"name": "E", "fields": [{"name": "F", "dataType": "int"}]}],
+        "strategy": "Conservative",
+    }
+    ms.generate_mappings(body)
+    assert "Apply the 'Conservative' strategy" in sink["system"]
+
+
 def test_regenerate_requires_target_column():
     payload, status = ms.regenerate_mapping({"mapping": {}})
     assert status == 400 and payload["ok"] is False

@@ -19,6 +19,9 @@ let vState = { issues: [], filters:{severity:"", rule:""}, page:1, pageSize:25 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("validation.html");
+  // Apply the Settings "Default Grid Page Size" (validation has no per-page selector).
+  const vps = getSettings().pageSize;
+  if(vps) vState.pageSize = vps;
   await runEvaluation(false);
   buildFilterBar();
   document.getElementById("runValidationBtn").addEventListener("click", () => runEvaluation(true));

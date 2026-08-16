@@ -12,13 +12,7 @@ const SETTINGS_DEFAULTS = {
   mediumConfidence: 70,
   mappingStrategy: "Balanced",
   pageSize: 25,
-  autoFlagLowConfidence: true,
-  emailNotifications: false,
-  reviewDigest: true,
-  theme: "light",
-  userName: "Rakesh Sinha",
-  userEmail: "rakesh.sinha@pwc.com",
-  userRole: "Migration Lead"
+  theme: "light"
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -41,12 +35,6 @@ function loadIntoForm(s){
   document.getElementById("mediumConfidence").value = s.mediumConfidence;
   document.getElementById("mappingStrategy").value = s.mappingStrategy;
   document.getElementById("pageSize").value = s.pageSize;
-  document.getElementById("autoFlagLowConfidence").checked = !!s.autoFlagLowConfidence;
-  document.getElementById("emailNotifications").checked = !!s.emailNotifications;
-  document.getElementById("reviewDigest").checked = !!s.reviewDigest;
-  document.getElementById("userName").value = s.userName;
-  document.getElementById("userEmail").value = s.userEmail;
-  document.getElementById("userRole").value = s.userRole;
   document.getElementById("theme").value = s.theme || "light";
 }
 
@@ -68,13 +56,7 @@ function saveForm(){
     mediumConfidence: medium,
     mappingStrategy: document.getElementById("mappingStrategy").value,
     pageSize: +document.getElementById("pageSize").value,
-    autoFlagLowConfidence: document.getElementById("autoFlagLowConfidence").checked,
-    emailNotifications: document.getElementById("emailNotifications").checked,
-    reviewDigest: document.getElementById("reviewDigest").checked,
-    theme: document.getElementById("theme").value,
-    userName: document.getElementById("userName").value,
-    userEmail: document.getElementById("userEmail").value,
-    userRole: document.getElementById("userRole").value
+    theme: document.getElementById("theme").value
   };
 
   saveSettings(newSettings);

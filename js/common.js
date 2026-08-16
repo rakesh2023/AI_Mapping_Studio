@@ -43,7 +43,8 @@ const SIDEBAR_SECTIONS = [
   ]},
   {title:"Discover", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
-    {label:"Data Profiling", icon:"bi-bar-chart-line", href:"data-profiling.html"}
+    {label:"Data Profiling", icon:"bi-bar-chart-line", href:"data-profiling.html"},
+    {label:"Know Your Data", icon:"bi-file-earmark-text", href:"know-your-data.html"}
   ]},
   {title:"Mapping", items:[
     {label:"AI Mapping Generator", icon:"bi-stars", href:"ai-mapping-generator.html"},
@@ -243,12 +244,14 @@ async function resetApplication(){
    Streams NDJSON events from /api/ai/extract-source-stream and calls onEvent for each
    ({type:'start'|'progress'|'done'|'error', ...}). Resolves with the 'done' payload
    (or throws on error). Falls back to the non-streaming endpoint if streaming fails. */
-async function streamExtractFile(file, onEvent){
+async function streamExtractFile(file, onEvent, options){
+  // options.rich => force AI extraction and detect PK/FK/descriptions from the data dictionary.
+  const rich = !!(options && options.rich);
+  const buildForm = () => { const f = new FormData(); f.append("file", file); if(rich) f.append("mode", "rich"); return f; };
   // Non-streaming extraction (reliable; no progress). Used as a fallback if streaming
   // isn't available or the stream connection drops mid-way on a very large file.
   async function nonStreaming(){
-    const f = new FormData(); f.append("file", file);
-    const r = await fetch("/api/ai/extract-source", {method:"POST", body:f});
+    const r = await fetch("/api/ai/extract-source", {method:"POST", body:buildForm()});
     let out; try{ out = await r.json(); }catch(e){ out = {ok:false, error:"Server returned an invalid response (HTTP " + r.status + ")."}; }
     if(!out.ok) throw new Error(out.error || "Extraction failed.");
     if(onEvent) onEvent({type:"done", ...out});
@@ -257,7 +260,7 @@ async function streamExtractFile(file, onEvent){
 
   let res;
   try{
-    res = await fetch("/api/ai/extract-source-stream", {method:"POST", body:(function(){const f=new FormData();f.append("file",file);return f;})()});
+    res = await fetch("/api/ai/extract-source-stream", {method:"POST", body:buildForm()});
   }catch(e){
     // couldn't even open the stream — try the plain endpoint before giving up
     try{ return await nonStreaming(); }
@@ -452,6 +455,25 @@ function confidenceLevel(score){
   if(score >= s.mediumConfidence) return "medium";
   return "low";
 }
+/* Confidence-based validation status, derived LIVE from the current Settings
+   thresholds (so changing them reclassifies existing mappings). "Passed" (shown
+   as "Approved") requires confidence >= the HIGH threshold — matching the
+   "High = safe to auto-approve" rule on the Settings page. */
+function autoValidationStatus(m){
+  if(!m || m.mappingType === "Not Mapped") return "Critical";
+  return (m.confidence || 0) >= getSettings().highConfidence ? "Passed" : "Warning";
+}
+/* Status to DISPLAY for a mapping: an explicit result written by the Validation
+   engine (or a user) is kept; otherwise it's derived live from confidence. */
+function displayValidationStatus(m){
+  try{
+    if(typeof getMappingOverrides === "function"){
+      const ov = getMappingOverrides();
+      if(ov && m && ov[m.id] && ov[m.id].validationStatus !== undefined) return ov[m.id].validationStatus;
+    }
+  }catch(e){ /* fall through to the live derivation */ }
+  return autoValidationStatus(m);
+}
 function confidenceBadge(score){
   const level = confidenceLevel(score);
   const labels = {high:"High Confidence", medium:"Medium Confidence", low:"Low Confidence"};
@@ -485,8 +507,7 @@ function severityBadge(sev){
 function buildSidebarHTML(activeHref){
   return '<div class="sidebar-brand">' +
       '<div class="brand-icon">' +
-        '<img class="brand-mark mark-light" src="../assets/images/pwc-mark-dark.svg" alt="PwC">' +
-        '<img class="brand-mark mark-dark" src="../assets/images/pwc-mark.svg" alt="PwC">' +
+        '<img class="brand-mark" src="../assets/images/pwc-device.svg" alt="PwC">' +
       '</div>' +
       '<div class="brand-text"><b>PwC</b><span>AI Mapping Studio</span></div>' +
     '</div>' +
@@ -519,16 +540,12 @@ function buildHeaderHTML(){
       '<img class="topbar-logo logo-dark" src="../assets/images/pwc-logo.svg" alt="PwC">' +
       '<div class="app-title">AI Mapping Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
     '</div>' +
-    '<div class="global-search">' +
-      '<i class="bi bi-search"></i>' +
-      '<input type="text" id="globalSearchInput" class="form-control" placeholder="Search mappings, tables, rules…">' +
-    '</div>' +
     '<div class="topbar-meta">' +
       '<span class="meta-chip ai-ready"><span class="dot"></span> AI Ready</span>' +
       buildClientSwitcherHTML() +
       '<button class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme"><i class="bi ' + (getTheme()==="dark" ? "bi-sun" : "bi-moon-stars") + '"></i></button>' +
       '<button class="icon-btn" id="resetAppBtn" title="Reset application (clear all data)"><i class="bi bi-arrow-counterclockwise"></i></button>' +
-      '<div class="icon-btn" id="notifBtn"><i class="bi bi-bell"></i><span class="badge-dot"></span></div>' +
+      '<div class="icon-btn" id="notifBtn" title="Notifications (coming soon)"><i class="bi bi-bell"></i></div>' +
       '<div class="user-wrap">' +
         '<div class="user-chip" id="userChip" role="button" tabindex="0">' +
           '<div class="user-avatar">' + user.initials + '</div>' +
@@ -838,17 +855,9 @@ function wireShellEvents(){
   if(mobileToggle){
     mobileToggle.addEventListener("click", () => document.body.classList.toggle("sidebar-collapsed"));
   }
-  const searchInput = document.getElementById("globalSearchInput");
-  if(searchInput){
-    searchInput.addEventListener("keydown", e => {
-      if(e.key === "Enter" && searchInput.value.trim()){
-        window.location.href = "mapping-workspace.html?search=" + encodeURIComponent(searchInput.value.trim());
-      }
-    });
-  }
   const notifBtn = document.getElementById("notifBtn");
   if(notifBtn){
-    notifBtn.addEventListener("click", () => showNotification("3 mappings were flagged Needs Review after the latest AI generation run.", "warning"));
+    notifBtn.addEventListener("click", () => showNotification("Notifications are coming soon — you'll see mapping alerts and review reminders here.", "primary"));
   }
   const resetBtn = document.getElementById("resetAppBtn");
   if(resetBtn){

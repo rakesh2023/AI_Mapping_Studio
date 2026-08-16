@@ -31,6 +31,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("targetSearch").addEventListener("input", debounce(renderTargetFields, 150));
   wireAddColumn();
   wireAddEntity();
+  // Edit Column modal controls
+  const ecSaveBtn = document.getElementById("ecSaveBtn");
+  if(ecSaveBtn) ecSaveBtn.addEventListener("click", ecSave);
+  const ecTypeEl = document.getElementById("ecType");
+  if(ecTypeEl) ecTypeEl.addEventListener("change", ecToggleLen);
+  const ecFkEl = document.getElementById("ecFk");
+  if(ecFkEl) ecFkEl.addEventListener("change", ecToggleFk);
 });
 
 function isSqlServer(type){ return (type || "").toLowerCase().indexOf("sql server") !== -1; }
@@ -196,21 +203,23 @@ async function loadFileTarget(){
   const ext = file.name.split(".").pop().toLowerCase();
   el.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-2"></span> Reading ' + escapeHtml(file.name) + '...</div>';
 
+  const forceAI = !!(document.getElementById("cForceAI") && document.getElementById("cForceAI").checked);
   try{
-    if(ext === "xlsx" || ext === "xls"){
+    if(!forceAI && (ext === "xlsx" || ext === "xls")){
       // In-browser parse (SheetJS) using the existing target-schema parser.
       const schema = await ingestTargetSchemaFile(file);   // also sets legacy blob; fine
       stagedEntities = schema.entities;
       el.innerHTML = okNote("Parsed " + schema.tableCount + " tables, " + schema.columnCount + " columns from " + escapeHtml(file.name) + ". Save the target to keep it.");
     } else {
-      // Other formats: let the backend + AI extract the structure, with progress.
+      // Other formats (or "Use AI extraction" checked): backend + AI extract the structure,
+      // with progress. In rich mode the AI also detects PK/FK/descriptions from the dictionary.
       const out = await streamExtractFile(file, (evt) => {
         if(evt.type === "start"){
           el.innerHTML = renderExtractProgress(0, evt.chunks || 0, 0, 0, "Starting…", evt.unit || "parts");
         } else if(evt.type === "progress"){
           el.innerHTML = renderExtractProgress(evt.done, evt.total, evt.tables, evt.columns, evt.label || "", "");
         }
-      });
+      }, {rich: forceAI});
       stagedEntities = extractedToEntities(out.tables);
       const cols = stagedEntities.reduce((a,e)=>a+(e.fields||[]).length,0);
       el.innerHTML = okNote("Extracted " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(out.fileName || file.name) +
@@ -354,11 +363,14 @@ function renderTargetFields(){
   const fields = activeEntity.fields.filter(f => !search || f.name.toLowerCase().indexOf(search) !== -1);
   const body = document.getElementById("targetFieldsBody");
   if(!fields.length){
-    body.innerHTML = '<tr><td colspan="12"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
+    body.innerHTML = '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
     return;
   }
+  // Read-only display; a pencil (first column) opens the Edit Column modal to change
+  // any property (the TABLE name stays fixed).
   body.innerHTML = fields.map(f =>
     '<tr data-col="' + escapeHtml(f.name) + '">' +
+      '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
       '<td class="mono">' + escapeHtml(f.name) + '</td>' +
       '<td>' + escapeHtml(f.dataType || "") + '</td>' +
@@ -373,6 +385,116 @@ function renderTargetFields(){
       '<td>' + escapeHtml(f.default ?? "-") + '</td>' +
     '</tr>'
   ).join("");
+  // Wire the pencil buttons once (event delegation).
+  if(!body._editWired){
+    body.addEventListener("click", (e) => {
+      const btn = e.target.closest(".ec-edit");
+      if(btn) openEditColModal(btn.dataset.edit);
+    });
+    body._editWired = true;
+  }
+}
+
+/* ---- Edit Column modal (all properties; table name stays read-only) ---- */
+let ecModal = null;
+let ecEditing = null;    // the column name currently being edited
+
+function ecErr(msg){ const e = document.getElementById("ecError"); if(!e) return; if(msg){ e.innerHTML = failNote(msg); } else { e.innerHTML = ""; } }
+function ecToggleLen(){
+  const t = document.getElementById("ecType").value;
+  document.getElementById("ecLenGroup").style.display = AC_LENGTH_TYPES.indexOf(t) !== -1 ? "" : "none";
+}
+function ecToggleFk(){ document.getElementById("ecFkGroup").style.display = document.getElementById("ecFk").checked ? "" : "none"; }
+
+function openEditColModal(name){
+  const field = (activeEntity.fields || []).find(f => f.name === name);
+  if(!field){ showNotification("Column not found.", "danger"); return; }
+  ecEditing = name;
+  // Build the modal once.
+  if(!document.getElementById("editColModal")) return;   // markup missing (page not updated)
+  document.getElementById("ecType").innerHTML = AC_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join("");
+  document.getElementById("ecTableName").textContent = activeEntity.table || activeEntity.name;
+  document.getElementById("ecName").value = field.name || "";
+  document.getElementById("ecType").value = (AC_TYPES.indexOf((field.dataType||"").toLowerCase()) !== -1) ? field.dataType.toLowerCase() : "varchar";
+  document.getElementById("ecLen").value = (field.length != null ? field.length : "");
+  document.getElementById("ecMandatory").value = field.mandatory ? "true" : "false";
+  document.getElementById("ecPk").checked = !!field.pk;
+  document.getElementById("ecFk").checked = !!field.fk;
+  document.getElementById("ecList").checked = !!field.isListTable;
+  document.getElementById("ecFkRef").value = field.fkReference || "";
+  document.getElementById("ecDesc").value = field.description || "";
+  document.getElementById("ecBT").value = field.businessTerm || "";
+  document.getElementById("ecAcc").value = field.accepted || "";
+  document.getElementById("ecDef").value = (field.default != null ? field.default : "");
+  // FK-reference options from the whole schema
+  const meta = getTargetSchema();
+  const fkOpts = [];
+  (meta.entities || []).forEach(e => (e.fields || []).forEach(f => fkOpts.push((e.table || e.name) + "." + f.name)));
+  const dl = document.getElementById("ecFkRefList"); if(dl) dl.innerHTML = fkOpts.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
+  ecErr(null); ecToggleLen(); ecToggleFk();
+  if(!ecModal) ecModal = new bootstrap.Modal(document.getElementById("editColModal"));
+  ecModal.show();
+  setTimeout(() => document.getElementById("ecName").focus(), 200);
+}
+
+function ecSave(){
+  ecErr(null);
+  const name = (document.getElementById("ecName").value || "").trim();
+  const type = document.getElementById("ecType").value;
+  const needsLen = AC_LENGTH_TYPES.indexOf(type) !== -1;
+  const lenRaw = (document.getElementById("ecLen").value || "").trim();
+  const fk = document.getElementById("ecFk").checked;
+  const fkRef = (document.getElementById("ecFkRef").value || "").trim();
+
+  if(!name){ ecErr("Column name is required."); return; }
+  if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)){ ecErr("Use letters, numbers and underscores only (no spaces)."); return; }
+  if((activeEntity.fields || []).some(f => f.name !== ecEditing && f.name.toLowerCase() === name.toLowerCase())){
+    ecErr("A column named '" + name + "' already exists in this table."); return;
+  }
+  if(needsLen && lenRaw && !/^[1-9][0-9]*$/.test(lenRaw)){ ecErr("Length must be a positive integer."); return; }
+  if(fk && !fkRef){ ecErr("Enter the referenced table.column, or untick Foreign Key."); return; }
+
+  const patch = {
+    name: name,
+    dataType: type,
+    length: needsLen && lenRaw ? parseInt(lenRaw, 10) : null,
+    mandatory: document.getElementById("ecMandatory").value === "true",
+    pk: document.getElementById("ecPk").checked,
+    fk: fk,
+    fkReference: fk ? fkRef : "",
+    isListTable: document.getElementById("ecList").checked,
+    description: (document.getElementById("ecDesc").value || "").trim(),
+    businessTerm: (document.getElementById("ecBT").value || "").trim(),
+    accepted: (document.getElementById("ecAcc").value || "").trim() || null,
+    default: (document.getElementById("ecDef").value || "").trim() || null
+  };
+  const res = persistFieldEdit(ecEditing, patch);
+  if(!res.ok){ ecErr(res.error || "Could not save the column."); return; }
+  if(ecModal) ecModal.hide();
+  renderActiveBrowser();
+  selectEntity(activeEntity.name);
+  flashRow(name);
+  showNotification("Column '" + name + "' updated.", "success", 2500);
+}
+
+/* Apply a full patch to a field on the active target connection and persist. */
+function persistFieldEdit(oldName, patch){
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn || !conn.entities) return {ok:false, error:"No active target connection to modify."};
+  const ent = conn.entities.find(e => e.name === activeEntity.name || e.table === activeEntity.name);
+  if(!ent) return {ok:false, error:"Target table not found."};
+  const field = (ent.fields || []).find(f => f.name === oldName);
+  if(!field) return {ok:false, error:"Column '" + oldName + "' not found."};
+  Object.assign(field, patch);
+  conn.columnCount = (conn.entities || []).reduce((a,e) => a + (e.fields || []).length, 0);
+  try{
+    upsertTargetConnection(conn);
+    if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);   // re-materialize getTargetSchema()
+  }catch(err){ return {ok:false, error:"Could not persist (storage full?): " + err.message}; }
+  const meta = getTargetSchema();
+  activeEntity = (meta.entities || []).find(e => e.name === activeEntity.name) || activeEntity;
+  return {ok:true};
 }
 
 /* =========================================================================

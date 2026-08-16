@@ -71,3 +71,43 @@ def test_extract_source_stream_sql_events():
 def test_extract_source_stream_empty():
     events = [json.loads(l) for l in ex.extract_source_stream("x.txt", b"")]
     assert events[0]["type"] == "error"
+
+
+def _mock_ai(monkeypatch, reply):
+    class _Msg:
+        def __init__(self): self.content = [types.SimpleNamespace(type="text", text=reply)]; self.stop_reason = "end_turn"
+    class _S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get_final_message(self): return _Msg()
+    class _C:
+        class messages:
+            @staticmethod
+            def stream(**kw): return _S()
+    monkeypatch.setattr(ex, "anthropic_client", lambda: _C())
+
+
+def test_extract_source_rich_detects_pk_fk(monkeypatch):
+    reply = json.dumps({"tables": [{"name": "CLAIM", "columns": [
+        {"name": "CLAIM_ID", "dataType": "varchar", "length": 20, "mandatory": True, "pk": True,
+         "fk": False, "fkReference": None, "businessTerm": "", "description": "claim id", "sample": ""},
+        {"name": "POLICY_ID", "dataType": "varchar", "length": 20, "mandatory": True, "pk": False,
+         "fk": True, "fkReference": "POLICY.POLICY_ID", "businessTerm": "", "description": "", "sample": ""},
+    ]}]})
+    _mock_ai(monkeypatch, reply)
+    payload, status = ex.extract_source("dict.txt", b"CLAIM data dictionary with keys", rich=True)
+    assert status == 200 and payload["tableCount"] == 1
+    cols = {c["name"]: c for c in payload["tables"][0]["columns"]}
+    assert cols["CLAIM_ID"]["pk"] is True and cols["CLAIM_ID"]["mandatory"] is True
+    assert cols["POLICY_ID"]["fk"] is True and cols["POLICY_ID"]["fkReference"] == "POLICY.POLICY_ID"
+
+
+@pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed")
+def test_rich_skips_xlsx_fast_path(monkeypatch):
+    # rich=True must bypass the direct xlsx-dictionary parser and use the AI instead.
+    reply = json.dumps({"tables": [{"name": "POLICY", "columns": [
+        {"name": "PNUM", "dataType": "varchar", "mandatory": True, "pk": True, "fk": False}]}]})
+    _mock_ai(monkeypatch, reply)
+    payload, status = ex.extract_source("d.xlsx", _xlsx_dict_bytes(), rich=True)
+    assert status == 200 and payload["model"] != "xlsx-dictionary-parser"
+    assert payload["tables"][0]["columns"][0]["pk"] is True

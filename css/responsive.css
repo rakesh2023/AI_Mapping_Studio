@@ -7,10 +7,8 @@
   .sidebar-nav .nav-link span, .brand-text{display:none;}
   .kpi-grid{grid-template-columns:repeat(3,1fr);}
   .form-grid{grid-template-columns:1fr;}
-  .global-search{width:180px;}
 }
 @media (max-width:768px){
   .kpi-grid{grid-template-columns:repeat(2,1fr);}
   .drawer-panel{width:100%;right:-100%;}
-  .global-search{display:none;}
 }

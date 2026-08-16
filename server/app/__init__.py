@@ -44,6 +44,7 @@ def create_app() -> Flask:
     from app.api.deploy_routes import bp as deploy_bp
     from app.api.ai_usage import bp as ai_usage_bp
     from app.api.admin_routes import bp as admin_bp
+    from app.api.kyd_routes import bp as kyd_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(auth_bp)
@@ -54,6 +55,7 @@ def create_app() -> Flask:
     application.register_blueprint(deploy_bp)
     application.register_blueprint(ai_usage_bp)
     application.register_blueprint(admin_bp)
+    application.register_blueprint(kyd_bp)
 
     _register_auth_guard(application)
     _register_csrf(application)
@@ -66,6 +68,12 @@ def create_app() -> Flask:
     ensure_usage_table()
     ensure_app_tables()
     ensure_admin()
+    # KYD: fail any document left mid-ingest by a previous process (never hangs).
+    try:
+        from app.services.kyd_ingestion_service import reconcile_orphans
+        reconcile_orphans()
+    except Exception:  # noqa: BLE001 - reconciliation must never block startup
+        pass
     return application
 
 

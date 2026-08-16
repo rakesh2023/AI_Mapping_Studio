@@ -85,18 +85,5 @@
       setActive(page);
       try{ history.replaceState(null, "", "#" + page); }catch(e){}
     });
-
-    // The global search lives in the shell header; route it to the iframe (initShell
-    // wired it to window.location, which would reload the shell — override that here).
-    const search = document.getElementById("globalSearchInput");
-    if(search){
-      const fresh = search.cloneNode(true);            // drop initShell's keydown handler
-      search.parentNode.replaceChild(fresh, search);
-      fresh.addEventListener("keydown", (e) => {
-        if(e.key === "Enter" && fresh.value.trim()){
-          navigateTo("mapping-workspace.html?search=" + encodeURIComponent(fresh.value.trim()), true);
-        }
-      });
-    }
   });
 })();

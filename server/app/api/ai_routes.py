@@ -16,6 +16,15 @@ def ai_status():
     return jsonify(ai_client.ai_status())
 
 
+@bp.route("/mapping-prompt")
+def mapping_prompt():
+    """Return the default system prompt used by generate-mappings, so the UI can
+    show it, let the user edit it, and reset to this canonical default."""
+    strategy = request.args.get("strategy", "Balanced")
+    return jsonify({"ok": True, "strategy": strategy,
+                    "prompt": mapping_service.default_mapping_system_prompt(strategy)})
+
+
 @bp.route("/generate-mappings", methods=["POST"])
 def generate_mappings():
     body = request.get_json(force=True) or {}
@@ -65,7 +74,8 @@ def extract_source():
         return jsonify(ok=False, error="No file uploaded. Attach a file in the 'file' field."), 400
     filename = up.filename or "upload"
     raw = up.read()
-    payload, status = extraction_service.extract_source(filename, raw)
+    rich = (request.form.get("mode") or "").lower() == "rich"
+    payload, status = extraction_service.extract_source(filename, raw, rich=rich)
     return jsonify(payload), status
 
 
@@ -76,5 +86,6 @@ def extract_source_stream():
         return jsonify(ok=False, error="No file uploaded."), 400
     filename = up.filename or "upload"
     raw = up.read()
-    return Response(extraction_service.extract_source_stream(filename, raw),
+    rich = (request.form.get("mode") or "").lower() == "rich"
+    return Response(extraction_service.extract_source_stream(filename, raw, rich=rich),
                     mimetype="application/x-ndjson")

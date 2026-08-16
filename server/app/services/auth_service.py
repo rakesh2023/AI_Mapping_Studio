@@ -116,11 +116,15 @@ def signup(email: str, password: str, name: str = "", role: str = "Migration Lea
     return {"ok": True, "user": _row_to_user(row)}, 201
 
 
-def authenticate(email: str, password: str) -> Optional[Dict[str, Any]]:
-    """Return the public user dict if credentials are valid, else None.
+def authenticate_result(email: str, password: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Verify credentials AND report why they failed.
 
-    Updates last_login_at on success. Uses a constant-ish path (always runs a
-    hash check) so a missing email isn't trivially distinguishable by timing.
+    Returns (user_or_None, reason) where reason is:
+      ""             -> success (user is the public dict)
+      "no_account"   -> no user exists with that email
+      "bad_password" -> the email exists but the password is wrong
+    Still always runs a hash check so the two failure paths take similar time.
+    Updates last_login_at on success.
     """
     email = (email or "").strip().lower()
     conn = connect()
@@ -131,8 +135,10 @@ def authenticate(email: str, password: str) -> Optional[Dict[str, Any]]:
     # Always run a check to reduce user-enumeration timing signal.
     stored = row["password_hash"] if row else "scrypt:32768:8:1$placeholder$0"
     ok = check_password_hash(stored, password or "")
-    if not row or not ok:
-        return None
+    if not row:
+        return None, "no_account"
+    if not ok:
+        return None, "bad_password"
     with write_lock():
         conn = connect()
         try:
@@ -141,7 +147,16 @@ def authenticate(email: str, password: str) -> Optional[Dict[str, Any]]:
             row = conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
         finally:
             conn.close()
-    return _row_to_user(row)
+    return _row_to_user(row), ""
+
+
+def authenticate(email: str, password: str) -> Optional[Dict[str, Any]]:
+    """Return the public user dict if credentials are valid, else None.
+
+    Thin wrapper over authenticate_result() for callers that don't need the reason.
+    """
+    user, _reason = authenticate_result(email, password)
+    return user
 
 
 def get_user(uid: int) -> Optional[Dict[str, Any]]:

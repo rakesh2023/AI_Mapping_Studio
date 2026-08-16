@@ -71,7 +71,7 @@ def test_extract_source_no_file_400(client):
 
 def test_extract_source_delegates(client, monkeypatch):
     monkeypatch.setattr(ai_routes.extraction_service, "extract_source",
-                        lambda filename, raw: ({"ok": True, "fileName": filename, "tableCount": 1}, 200))
+                        lambda filename, raw, rich=False: ({"ok": True, "fileName": filename, "tableCount": 1}, 200))
     r = client.post("/api/ai/extract-source",
                     data={"file": (io.BytesIO(b"data"), "x.txt")},
                     content_type="multipart/form-data")
@@ -79,7 +79,7 @@ def test_extract_source_delegates(client, monkeypatch):
 
 
 def test_extract_stream_mimetype_and_events(client, monkeypatch):
-    def fake_stream(filename, raw):
+    def fake_stream(filename, raw, rich=False):
         yield json.dumps({"type": "start", "chunks": 1}) + "\n"
         yield json.dumps({"type": "done", "ok": True, "tableCount": 0}) + "\n"
     monkeypatch.setattr(ai_routes.extraction_service, "extract_source_stream", fake_stream)

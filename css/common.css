@@ -82,7 +82,7 @@ body.in-frame .main-wrapper{margin-left:0 !important;}
 body.theme-dark .topbar-logo.logo-light{display:none;}
 body.theme-dark .topbar-logo.logo-dark{display:block;}
 .topbar .app-title{font-weight:700;font-size:.98rem;color:#252525;line-height:1.15;white-space:nowrap;}
-.topbar .app-title small{display:block;font-size:.66rem;font-weight:400;color:var(--text-muted);white-space:nowrap;}
+.topbar .app-title small{display:block;font-size:.66rem;font-weight:400;color:var(--text-muted);white-space:nowrap;margin-top:3px;}
 .topbar-meta{display:flex;align-items:center;gap:12px;margin-left:auto;flex-shrink:0;}
 .meta-chip{
   font-size:.72rem;background:var(--gray-bg);border:1px solid var(--border);
@@ -126,9 +126,6 @@ body.theme-dark .client-switch select option:disabled{color:#8a8a8a;}
 .user-menu-item{display:flex;align-items:center;width:100%;border:none;background:transparent;border-radius:6px;
   padding:8px 8px;font-size:.82rem;color:var(--text-main);cursor:pointer;text-align:left;}
 .user-menu-item:hover{background:var(--primary-soft);color:var(--primary-dark);}
-.global-search{position:relative;flex:0 1 auto;min-width:140px;max-width:280px;}
-.global-search input{border-radius:20px;padding-left:34px;font-size:.82rem;width:100%;}
-.global-search i{position:absolute;left:12px;top:9px;color:var(--text-muted);}
 
 /* ===== Breadcrumb ===== */
 .breadcrumb-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;}
@@ -299,8 +296,6 @@ body.theme-dark .icon-btn{background:var(--bg-card);color:var(--text-main);}
 body.theme-dark .prof-bar{background:#333;}
 body.theme-dark .card-el{background:var(--bg-card);}
 body.theme-dark .hint-note{color:var(--text-main);}
-body.theme-dark .global-search{background:var(--gray-bg);}
-body.theme-dark .global-search input{background:transparent;color:var(--text-main);}
 body.theme-dark .meta-chip{background:var(--gray-bg);color:var(--text-main);}
 /* Bootstrap modals (confirm dialog) in dark mode */
 body.theme-dark .modal-content{background:var(--bg-card);color:var(--text-main);border:1px solid var(--border);}

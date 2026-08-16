@@ -10,7 +10,7 @@
   const form = el("authForm"), errBox = el("authErr");
   const submit = el("authSubmit");
 
-  function showErr(msg){ errBox.textContent = msg; errBox.style.display = ""; }
+  function showErr(msg){ errBox.textContent = msg; errBox.style.display = "block"; }
   function hideErr(){ errBox.style.display = "none"; }
 
   form.addEventListener("submit", async (e) => {

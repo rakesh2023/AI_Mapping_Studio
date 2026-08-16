@@ -66,6 +66,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   await initShell("mapping-workspace.html");
   targetMeta = getTargetSchema();
 
+  // Apply the Settings "Default Grid Page Size" (falls back to the select's value
+  // when the setting isn't one of the offered options). User can still override per page.
+  const pssel = document.getElementById("pageSizeSelect");
+  if(pssel){
+    pssel.value = String(getSettings().pageSize);
+    state.pageSize = +pssel.value || state.pageSize;
+  }
+
   // Per-client, server-side mapping document. No sample fallback in the multi-tenant
   // app: a client with nothing generated shows the empty state (never another project's
   // demo data). Empty array = cleared; null = never generated — both render empty here.
@@ -440,17 +448,19 @@ function renderTable(){
   renderPaginationBar();
 }
 
-// Row tint by review status: approved -> green, AI-generated -> orange,
-// rejected -> red, needs-review/modified -> amber.
+// Row tint. A manual/engine decision (reviewStatus) always wins: approved -> green,
+// rejected -> red, needs-review/modified -> amber. For auto/AI-generated rows with no
+// explicit decision, tint by the confidence-vs-threshold status (LIVE from Settings):
+// meets the High threshold (Passed) -> green "approved" look; below it -> orange.
 // Not-Mapped rows are left uncolored (no source was found — nothing to review yet).
 function rowStatusClass(m){
   if(m.mappingType === "Not Mapped") return "";
   const s = m.reviewStatus || "";
   if(s.indexOf("Approved") === 0) return "row-approved";
   if(s === "Rejected") return "row-rejected";
-  if(s === "AI Generated") return "row-ai";
   if(s === "Needs Review" || s === "In Review" || s === "Modified by User") return "row-review";
-  return "";
+  // AI Generated / unset -> derive from the confidence threshold.
+  return displayValidationStatus(m) === "Passed" ? "row-approved" : "row-ai";
 }
 
 function rowHTML(m){
@@ -471,7 +481,7 @@ function rowHTML(m){
     '<td class="wrap editable-cell" data-col="nullHandling" data-field="nullHandling" data-id="' + m.id + '">' + escapeHtml(m.nullHandling||"-") + '</td>' +
     '<td data-col="confidence">' + confidenceBar(m.confidence) + '</td>' +
     '<td data-col="aiExplanation"><button class="why-btn" data-why="' + m.id + '"><i class="bi bi-question-circle"></i> Why?</button></td>' +
-    '<td data-col="validationStatus">' + statusBadge(m.validationStatus === "Passed" ? "Approved" : m.validationStatus) + '</td>' +
+    '<td data-col="validationStatus">' + (function(){ const vs = displayValidationStatus(m); return statusBadge(vs === "Passed" ? "Approved" : vs); })() + '</td>' +
     '<td data-col="reviewStatus">' + statusBadge(m.reviewStatus) + '</td>' +
     '<td class="text-nowrap" data-col="actions">' +
       '<button class="btn btn-sm btn-outline-soft" data-approve="' + m.id + '" title="Approve"><i class="bi bi-check-lg"></i></button>' +

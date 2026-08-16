@@ -10,6 +10,7 @@ app. A name is None when its package is not installed.
     openpyxl   -> Excel (.xlsx/.xlsm/.xls) parsing
     PdfReader  -> PDF parsing (from pypdf)
     docx       -> Word (.docx) parsing (python-docx)
+    pandas     -> tabular parsing / profiling for Know Your Data
 """
 from typing import Any, Dict, Optional
 
@@ -38,6 +39,11 @@ try:
 except ImportError:
     docx = None  # type: ignore
 
+try:
+    import pandas  # type: ignore
+except ImportError:  # tabular parsing/profiling degrades gracefully if absent
+    pandas = None  # type: ignore
+
 
 def capability_report() -> Dict[str, bool]:
     """Report which optional packages are available on this machine.
@@ -51,4 +57,5 @@ def capability_report() -> Dict[str, bool]:
         "openpyxl": openpyxl is not None,
         "pypdf": PdfReader is not None,
         "docx": docx is not None,
+        "pandas": pandas is not None,
     }

@@ -116,6 +116,49 @@ SOURCE_EXTRACT_SCHEMA = {
 }
 
 
+# Rich file extraction (opt-in "Use AI extraction" on the Target upload): like
+# SOURCE_EXTRACT_SCHEMA but also asks the AI to read a data dictionary's key/flag
+# columns and infer mandatory, primary key, foreign key + the referenced table.column.
+RICH_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tables": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "columns": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "dataType": {"type": "string"},
+                                "length": {"type": ["integer", "null"]},
+                                "mandatory": {"type": "boolean"},
+                                "pk": {"type": "boolean"},
+                                "fk": {"type": "boolean"},
+                                "fkReference": {"type": ["string", "null"]},
+                                "businessTerm": {"type": "string"},
+                                "description": {"type": "string"},
+                                "sample": {"type": "string"},
+                            },
+                            "required": ["name", "dataType"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["name", "columns"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["tables"],
+    "additionalProperties": False,
+}
+
+
 # One new target ENTITY (table + its columns) parsed from a natural-language
 # instruction (POST /api/ai/parse-entity). confidence 0 means "could not parse".
 ENTITY_SCHEMA = {
@@ -201,5 +244,31 @@ COLUMNS_SCHEMA = {
         "note": {"type": "string"},
     },
     "required": ["columns", "confidence"],
+    "additionalProperties": False,
+}
+
+# Know Your Data — insurance domain classifier (kyd_domain_service).
+DOMAIN_CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_insurance_related": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "detected_topics": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["is_insurance_related", "confidence", "detected_topics", "reasoning"],
+    "additionalProperties": False,
+}
+
+# Know Your Data — retrieval-strategy router (kyd_query_router).
+ROUTE_QUERY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "route": {"type": "string",
+                  "enum": ["vector_search", "sql_query", "pandas_query", "hybrid"]},
+        "target_sources": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["route", "target_sources", "reasoning"],
     "additionalProperties": False,
 }

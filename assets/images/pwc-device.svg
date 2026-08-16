@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 102 36" role="img" aria-label="PwC">
+  <!-- PwC device only (two stepped bars / flag), no wordmark. Orange reads on light and dark. -->
+  <polygon points="0,36 16,20 56,20 40,36"   fill="#EB5C1C"/>
+  <polygon points="46,16 62,0 102,0 86,16"   fill="#EB5C1C"/>
+</svg>

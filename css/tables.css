@@ -34,6 +34,21 @@ table.grid-table td.wrap{white-space:normal;min-width:180px;}
 .metadata-tree .tree-node > i{flex:none;}
 /* Long table names are truncated to fit; the full name shows on hover (title). */
 .metadata-tree .tree-node .tree-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
+/* Source-tree table names are UPPERCASE (e.g. CLAIM_MASTER), which reads larger than the
+   lowercase Target System entities at the same size — nudge it down so both look consistent. */
+#sourceTree .tree-node{font-size:.78rem;}
+
+/* Inline-editable Target System fields grid (every column property editable; table name stays read-only). */
+#targetFieldsTable td .cell-inp{width:100%;min-width:60px;background:transparent;border:1px solid transparent;
+  border-radius:4px;padding:3px 6px;font-size:.8rem;color:var(--text-main);}
+#targetFieldsTable td .cell-inp:hover{border-color:var(--border);}
+#targetFieldsTable td .cell-inp:focus{outline:none;border-color:var(--primary);background:var(--bg-card);}
+#targetFieldsTable td select.cell-inp{cursor:pointer;}
+#targetFieldsTable td .cell-inp.cell-len{max-width:80px;}
+#targetFieldsTable td .cell-inp.cell-fkref{margin-top:3px;max-width:160px;}
+#targetFieldsTable td .cell-inp.saved{border-color:var(--success);background:var(--success-bg);}
+#targetFieldsTable td .cell-chk{width:16px;height:16px;cursor:pointer;vertical-align:middle;}
+#targetFieldsTable td.cell-center{text-align:center;}
 .metadata-tree .tree-node:hover{background:#f1f5f9;}
 .metadata-tree .tree-node.active{background:var(--primary);color:#fff;}
 .metadata-tree .tree-children{padding-left:18px;}

@@ -46,6 +46,34 @@ def test_signup_onboard_then_reach_pages(client):
     assert me["activeClientId"] == r.get_json()["client"]["id"]
 
 
+def test_login_reports_specific_reason(client):
+    client.post("/api/auth/signup", json={"email": "who@example.com", "password": "password123", "name": "W"})
+    client.post("/api/auth/logout")
+
+    # Unknown email -> tells the user no such account.
+    r = client.post("/api/auth/login", json={"email": "ghost@example.com", "password": "password123"})
+    assert r.status_code == 401
+    body = r.get_json()
+    assert body["reason"] == "no_account" and "No account" in body["error"]
+
+    # Right email, wrong password -> tells the user the password is wrong.
+    r = client.post("/api/auth/login", json={"email": "who@example.com", "password": "WRONGpass1"})
+    assert r.status_code == 401
+    body = r.get_json()
+    assert body["reason"] == "bad_password" and "password" in body["error"].lower()
+
+    # Correct credentials still log in.
+    r = client.post("/api/auth/login", json={"email": "who@example.com", "password": "password123"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+
+
+def test_login_blank_fields_report_what_is_missing(client):
+    r = client.post("/api/auth/login", json={"email": "", "password": ""})
+    assert r.status_code == 400 and r.get_json()["reason"] == "empty"
+    r = client.post("/api/auth/login", json={"email": "x@example.com", "password": ""})
+    assert r.status_code == 400 and r.get_json()["reason"] == "empty_password"
+
+
 def test_logout_clears_session(client):
     client.post("/api/auth/signup", json={"email": "out@example.com", "password": "password123", "name": "O"})
     assert client.get("/api/auth/me").status_code == 200

@@ -12,12 +12,31 @@ const STRATEGY_HINTS = {
   Aggressive: "Aggressive: generate as many candidate mappings as possible, including low-confidence guesses."
 };
 
+/* Apply the Settings "Default Mapping Strategy" to this page's dropdown on load.
+   The user can still change it per run; this only sets the starting value + hint. */
+function seedStrategyFromSettings(){
+  const sel = document.getElementById("mappingStrategy");
+  if(!sel || typeof getSettings !== "function") return;
+  const def = getSettings().mappingStrategy;
+  if(def && STRATEGY_HINTS[def]){
+    sel.value = def;
+    const hint = document.getElementById("strategyHint");
+    if(hint) hint.textContent = STRATEGY_HINTS[def];
+  }
+}
+
 const LS_AI_MAPPINGS = "aims_ai_mappings";   // generated mappings live here for the workspace
 const LS_BIZ_CONTEXT = "aims_business_context";   // user-saved Business Context prompt
+const LS_GEN_SYS_PROMPT = "aims_gen_system_prompt";  // user-edited AI system prompt (device pref)
 
 // The prompt shipped in the HTML is the DEFAULT; captured on load so "Default" can
 // restore it. A user-saved value (localStorage) overrides it until reset.
 let defaultBizContext = "";
+
+// The mapping system prompt comes from the backend (single source of truth). We fetch
+// the default for the current strategy; a user edit (localStorage) overrides it and is
+// sent verbatim to generation. Empty override => backend uses its strategy-driven default.
+let defaultSystemPrompt = "";
 
 let targetSchema = null;
 let sourceCache = null;   // {connection, schema, tables:[...]} loaded from the chosen source
@@ -125,13 +144,71 @@ function bizCtxState(state){
   else { el.textContent = "Using default"; el.className = "text-xs text-muted-2"; el.style.color = ""; }
 }
 
+/* ---- Editable AI system prompt ----
+   The default lives on the backend (GET /api/ai/mapping-prompt?strategy=...), so the
+   textbox always mirrors what the server would use. An edit is saved per-device and
+   sent as `systemPrompt` to generation; leaving it at the default sends nothing, so the
+   Strategy dropdown stays authoritative. */
+async function fetchDefaultSysPrompt(){
+  const sel = document.getElementById("mappingStrategy");
+  const strat = sel ? sel.value : "Balanced";
+  try{
+    const r = await fetch("/api/ai/mapping-prompt?strategy=" + encodeURIComponent(strat));
+    const d = await r.json();
+    return d && d.prompt ? d.prompt : defaultSystemPrompt;
+  }catch(e){ return defaultSystemPrompt; }
+}
+
+function sysPromptState(state){
+  const el = document.getElementById("sysPromptState");
+  if(!el) return;
+  if(state === "edited"){ el.textContent = "Edited"; el.style.color = "var(--warning)"; }
+  else { el.textContent = "Using default"; el.style.color = ""; }
+}
+
+async function initSystemPrompt(){
+  const ta = document.getElementById("genSystemPrompt");
+  if(!ta) return;
+  defaultSystemPrompt = await fetchDefaultSysPrompt();
+  const saved = lsGet(LS_GEN_SYS_PROMPT, null);
+  if(saved !== null && saved !== undefined && saved !== ""){
+    ta.value = saved; sysPromptState(saved === defaultSystemPrompt ? "default" : "edited");
+  } else {
+    ta.value = defaultSystemPrompt; sysPromptState("default");
+  }
+
+  const resetBtn = document.getElementById("resetSysPromptBtn");
+  if(resetBtn) resetBtn.addEventListener("click", async () => {
+    defaultSystemPrompt = await fetchDefaultSysPrompt();
+    ta.value = defaultSystemPrompt;
+    lsRemove(LS_GEN_SYS_PROMPT);
+    sysPromptState("default");
+    if(typeof showNotification === "function") showNotification("AI prompt restored to the default.", "primary");
+  });
+
+  ta.addEventListener("input", () => {
+    if(ta.value === defaultSystemPrompt){ lsRemove(LS_GEN_SYS_PROMPT); sysPromptState("default"); }
+    else { lsSet(LS_GEN_SYS_PROMPT, ta.value); sysPromptState("edited"); }
+  });
+
+  // Keep the prompt in sync with the Strategy dropdown while it is unedited.
+  const strat = document.getElementById("mappingStrategy");
+  if(strat) strat.addEventListener("change", async () => {
+    const wasDefault = (ta.value === defaultSystemPrompt);
+    defaultSystemPrompt = await fetchDefaultSysPrompt();
+    if(wasDefault){ ta.value = defaultSystemPrompt; sysPromptState("default"); }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("ai-mapping-generator.html");
   if(typeof migrateLegacyTargetSchema === "function") migrateLegacyTargetSchema();
   targetSchema = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
 
   loadGeneratedCols();   // lock+check columns already mapped
+  seedStrategyFromSettings();  // apply the Settings "Default Mapping Strategy" (user can still change it)
   initBizContext();      // restore a saved Business Context (falls back to the default)
+  initSystemPrompt();    // load the editable AI system prompt (default from backend)
   buildSourceOptions();
   buildTargetSummary();
   renderTablePicker();
@@ -459,8 +536,11 @@ async function generateMappings(){
   });
   const commonSource = {connection: src.connection, schema: src.schema, tables: src.tables};
   const businessContext = document.getElementById("bizContext").value;
-  const instructions = document.getElementById("aiInstructions").value;
   const strategy = document.getElementById("mappingStrategy").value;
+  // Send the edited system prompt only when it differs from the current default, so an
+  // untouched box lets the backend interpolate the chosen strategy itself.
+  const sysBox = document.getElementById("genSystemPrompt");
+  const systemPrompt = (sysBox && sysBox.value.trim() && sysBox.value !== defaultSystemPrompt) ? sysBox.value : "";
 
   const allNewRows = [];
   const joins = {};   // join conditions for THIS run's tables only
@@ -487,7 +567,7 @@ async function generateMappings(){
           fields: e.fields.map(f => ({name:f.name, dataType:f.dataType, length:f.length,
             mandatory:f.mandatory, pk:f.pk, fk:f.fk, fkReference:f.fkReference, accepted:f.accepted, description:f.description}))
         }],
-        businessContext, instructions, strategy
+        businessContext, strategy, systemPrompt
       };
 
       let res, data;
@@ -601,8 +681,10 @@ function buildMappingRows(items){
       nullHandling: m.nullHandling || (field.mandatory ? "Reject null" : "Allow null"),
       confidence: Math.max(0, Math.min(100, m.confidence || 0)),
       aiExplanation: m.explanation ? [m.explanation] : [],
-      validationStatus: unmapped ? "Critical" : (m.confidence >= 70 ? "Passed" : "Warning"),
-      reviewStatus: unmapped ? "Needs Review" : (m.confidence >= 70 ? "AI Generated" : "Needs Review"),
+      // Confidence-based status from the Settings thresholds (not a hardcoded cutoff):
+      // "Passed"/Approved requires >= High; below the Medium threshold always needs review.
+      validationStatus: autoValidationStatus({mappingType: m.mappingType, confidence: m.confidence}),
+      reviewStatus: unmapped ? "Needs Review" : (m.confidence >= getSettings().mediumConfidence ? "AI Generated" : "Needs Review"),
       createdBy: "AI Engine (Claude)", updatedBy: "AI Engine (Claude)",
       lastUpdated: new Date().toISOString(), comments: []
     };

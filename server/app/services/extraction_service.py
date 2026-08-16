@@ -20,7 +20,7 @@ from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET, EXTRACT_MAX_CHUNKS
 from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary
 from app.parsers.sql_ddl_parser import parse_sql_ddl
-from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA
+from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA, RICH_EXTRACT_SCHEMA
 from app.services.ai_client import (
     anthropic_client, schema_attempts, parse_mapping_json,
 )
@@ -48,18 +48,21 @@ def _merge_part_into(part: List[Dict[str, Any]], merged: Dict[str, Any], order: 
             bucket["columns"].append(c)
 
 
-def extract_source(filename: str, raw: bytes) -> Result:
+def extract_source(filename: str, raw: bytes, rich: bool = False) -> Result:
     """Read an uploaded file and infer the SOURCE tables & columns.
 
     Returns (payload, status). Fast-paths structured Excel dictionaries and SQL
-    DDL; otherwise loops the AI over file chunks and merges the results.
+    DDL; otherwise loops the AI over file chunks and merges the results. When
+    `rich`, the deterministic fast-paths are skipped and the AI is used for every
+    file so it can also detect PK / FK / descriptions from the data dictionary.
     """
     if not raw:
         return {"ok": False, "error": "The uploaded file is empty."}, 400
 
     # Fast path #1: a STRUCTURED Excel data dictionary is parsed directly from cells —
     # instant, verbatim, no AI (falls through to AI if the layout isn't recognisable).
-    if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+    # Skipped in rich mode (we want the AI to infer PK/FK/descriptions).
+    if not rich and filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
         xl = parse_xlsx_dictionary(raw)
         if xl:
             cc = sum(len(t["columns"]) for t in xl)
@@ -77,7 +80,7 @@ def extract_source(filename: str, raw: bytes) -> Result:
     # Fast path #2: SQL scripts with CREATE TABLE statements are parsed deterministically
     # so EVERY table is captured (the LLM tends to summarise large DDL). If the script
     # has no parseable CREATE TABLE, fall through to the AI path below.
-    if filename.lower().endswith(".sql") or "create table" in full_text.lower():
+    if not rich and (filename.lower().endswith(".sql") or "create table" in full_text.lower()):
         ddl_tables = parse_sql_ddl(full_text)
         if ddl_tables:
             col_count = sum(len(t["columns"]) for t in ddl_tables)
@@ -101,10 +104,10 @@ def extract_source(filename: str, raw: bytes) -> Result:
         for idx, chunk in enumerate(chunks):
             # one chunk failing must not abort the whole extraction — retry once, then skip
             try:
-                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks), rich=rich)
             except Exception:  # noqa: BLE001
                 try:
-                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks), rich=rich)
                 except Exception:  # noqa: BLE001
                     part = []
             _merge_part_into(part, merged, order)
@@ -130,7 +133,7 @@ def extract_source(filename: str, raw: bytes) -> Result:
         return {"ok": False, "error": msg}, 400
 
 
-def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
+def extract_source_stream(filename: str, raw: bytes, rich: bool = False) -> Iterator[str]:
     """Same as extract_source but STREAMS newline-delimited JSON progress events so
     the UI can show a progress bar. Yields NDJSON lines. Events:
       {"type":"start","chunks":N,"fileName":..,"unit":"chunks|sheet-slices|pages"}
@@ -146,7 +149,8 @@ def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
         return
 
     # Fast path #1: structured Excel dictionary — parsed directly from cells, instant.
-    if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+    # Skipped in rich mode (we want the AI to infer PK/FK/descriptions).
+    if not rich and filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
         xl = parse_xlsx_dictionary(raw)
         if xl:
             cc = sum(len(t["columns"]) for t in xl)
@@ -168,8 +172,8 @@ def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
         return
     full_text = "\n".join(chunks)
 
-    # SQL fast-path (deterministic, instant) — report as a single step.
-    if filename.lower().endswith(".sql") or "create table" in full_text.lower():
+    # SQL fast-path (deterministic, instant) — report as a single step. Skipped in rich mode.
+    if not rich and (filename.lower().endswith(".sql") or "create table" in full_text.lower()):
         ddl = parse_sql_ddl(full_text)
         if ddl:
             cc = sum(len(t["columns"]) for t in ddl)
@@ -211,10 +215,10 @@ def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
             # the whole extraction — retry once, then skip and keep going.
             part: List[Dict[str, Any]] = []
             try:
-                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks), rich=rich)
             except Exception:  # noqa: BLE001
                 try:
-                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks))
+                    part = _ai_extract_tables_from_text(model, filename, chunk, idx + 1, len(chunks), rich=rich)
                 except Exception:  # noqa: BLE001
                     failed += 1
                     part = []
@@ -243,9 +247,10 @@ def extract_source_stream(filename: str, raw: bytes) -> Iterator[str]:
 
 
 def _ai_extract_tables_from_text(model: str, filename: str, text: str,
-                                 part_no: int, part_total: int) -> List[Dict[str, Any]]:
+                                 part_no: int, part_total: int, rich: bool = False) -> List[Dict[str, Any]]:
     """One model call: infer source tables/columns from a single text chunk.
-    Returns a normalised list of {name, columns:[...]} (empty on failure)."""
+    Returns a normalised list of {name, columns:[...]} (empty on failure). When
+    `rich`, also detects mandatory / pk / fk / fkReference from the data dictionary."""
     if len(text) > EXTRACT_TEXT_BUDGET:
         text = text[:EXTRACT_TEXT_BUDGET] + "\n... (truncated)"
 
@@ -268,6 +273,17 @@ def _ai_extract_tables_from_text(model: str, filename: str, text: str,
         '"length": null, "businessTerm": "", "description": "", "sample": ""} ] } ] }. '
         "length is an integer or null. No prose, no markdown fences."
     )
+    if rich:
+        system += (
+            "\n\nADDITIONALLY, for EACH column also determine and include these keys: "
+            "'mandatory' (true if required / not null), 'pk' (true if it is a primary key), "
+            "'fk' (true if it is a foreign key or references another table), and 'fkReference' "
+            "('table.column' when the dictionary states the referenced table/column, else null). "
+            "Read the data dictionary's key/flag/description columns to decide these — e.g. "
+            "'Is Primary Key'/'Primary Key'/'PK', 'Foreign Key'/'FK'/'References'/'Referenced Table', "
+            "'Is Null'/'Nullable'/'Mandatory'/'Required', and typekey/reference hints. Base every "
+            "value on the text — never guess a foreign-key reference that isn't stated."
+        )
     user = ("SOURCE FILE: " + filename + " (part " + str(part_no) + " of " + str(part_total) +
             ")\n\nFILE CONTENTS:\n" + text)
 
@@ -279,7 +295,8 @@ def _ai_extract_tables_from_text(model: str, filename: str, text: str,
         with client.messages.stream(**base_kwargs, **extra) as stream:
             return stream.get_final_message()
 
-    resp = call_ai("Source Metadata Extraction", run, schema_attempts(SOURCE_EXTRACT_SCHEMA))
+    resp = call_ai("Source Metadata Extraction" + (" (rich)" if rich else ""), run,
+                   schema_attempts(RICH_EXTRACT_SCHEMA if rich else SOURCE_EXTRACT_SCHEMA))
     if getattr(resp, "stop_reason", None) == "refusal":
         return []
     out = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
@@ -295,14 +312,21 @@ def _ai_extract_tables_from_text(model: str, filename: str, text: str,
         for c in (t.get("columns") or []):
             if not isinstance(c, dict) or not c.get("name"):
                 continue
-            cols.append({
+            col = {
                 "name": str(c.get("name", "")),
                 "dataType": str(c.get("dataType", "") or ""),
                 "length": c.get("length"),
                 "businessTerm": str(c.get("businessTerm", "") or ""),
                 "description": str(c.get("description", "") or ""),
                 "sample": c.get("sample", ""),
-            })
+            }
+            if rich:
+                fk = bool(c.get("fk"))
+                col["mandatory"] = bool(c.get("mandatory"))
+                col["pk"] = bool(c.get("pk"))
+                col["fk"] = fk
+                col["fkReference"] = (str(c.get("fkReference")).strip() if (fk and c.get("fkReference")) else "")
+            cols.append(col)
         if cols:
             result.append({"name": str(t["name"]), "columns": cols})
     return result

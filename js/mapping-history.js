@@ -8,6 +8,15 @@ let hState = { all: [], filtered: [], filters:{changeType:"", source:"", user:""
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("mapping-history.html");
+
+  // Apply the Settings "Default Grid Page Size" (only when it's one of the offered
+  // options here; user can still override per page).
+  const hps = document.getElementById("hPageSize");
+  if(hps){
+    hps.value = String(getSettings().pageSize);
+    hState.pageSize = +hps.value || hState.pageSize;
+  }
+
   await loadHistory();
   buildFilterBar();
   applyHistoryPipeline();

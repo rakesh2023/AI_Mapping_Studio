@@ -125,6 +125,22 @@ def app_db_path() -> str:
     return os.environ.get("AIMS_APP_DB") or os.path.join(SERVER_DIR, "aims_app.db")
 
 
+# --- Know Your Data (KYD) feature --- #
+# Uploaded file bytes are stored as a BLOB in the app DB (document_files), NOT on
+# disk: static_routes serves the whole repo root, so an on-disk path under the repo
+# would be cross-tenant readable. DB storage keeps files scoped by our queries.
+KYD_ACCEPT_EXTS = ("pdf", "xml", "json", "sql", "xlsx", "xls", "csv")
+
+
+def kyd_max_upload_bytes() -> int:
+    """Max size of a single Know Your Data upload (env AIMS_KYD_MAX_UPLOAD_MB, default 25 MB)."""
+    try:
+        mb = int(os.environ.get("AIMS_KYD_MAX_UPLOAD_MB", "25"))
+    except (TypeError, ValueError):
+        mb = 25
+    return max(1, mb) * 1024 * 1024
+
+
 def secret_key() -> str:
     """Secret used to sign Flask session cookies (env AIMS_SECRET_KEY).
 
