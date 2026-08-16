@@ -58,6 +58,7 @@ a{color:var(--accent-deep); text-underline-offset:2px}
 .topbar .wrap{display:flex; align-items:center; justify-content:space-between; height:60px}
 .brand{display:flex; align-items:center; gap:12px; font-weight:700; letter-spacing:.01em}
 .mark{width:34px; height:15px; flex:none}
+.mark polygon{fill:var(--accent)}
 .brand .serif{font-size:18px}
 .brand small{display:block; font-weight:400; font-size:11.5px; letter-spacing:.02em; color:var(--muted); font-family:ui-monospace,Consolas,monospace}
 .toggle{
@@ -167,13 +168,21 @@ footer{border-top:1px solid var(--line); padding:34px 0 60px; color:var(--muted)
 footer code{background:var(--sunk); border:1px solid var(--line); border-radius:6px; padding:2px 7px; font-size:12.5px}
 .note{font-size:12.5px; color:var(--faint); margin-top:18px; max-width:70ch}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+@page{margin:14mm}
+@media print{
+  body{print-color-adjust:exact; -webkit-print-color-adjust:exact}
+  .toggle{display:none}
+  .topbar{position:static}
+  section,.hero,.arch,.card,.panel,.stats{break-inside:avoid}
+  .stats{box-shadow:none}
+}
 </style>
 
 <div class="topbar">
   <div class="wrap">
     <div class="brand">
-      <svg class="mark" viewBox="0 0 102 36" aria-hidden="true"><polygon points="0,36 16,20 56,20 40,36" fill="var(--accent)"/><polygon points="46,16 62,0 102,0 86,16" fill="var(--accent)"/></svg>
-      <div><span class="serif">AI Mapping Studio</span><small>PwC · Data Migration</small></div>
+      <svg class="mark" viewBox="0 0 102 36" aria-hidden="true"><polygon points="0,36 16,20 56,20 40,36"/><polygon points="46,16 62,0 102,0 86,16"/></svg>
+      <div><span class="serif">AI Mapping Studio</span><small>PwC · Data Conversion</small></div>
     </div>
     <button class="toggle" id="themeBtn" aria-label="Toggle color theme"><span id="themeIcon">◐</span> Theme</button>
   </div>
@@ -182,8 +191,8 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
 <header class="hero">
   <div class="wrap">
     <div class="kicker">Executive Brief</div>
-    <h1 class="serif">AI‑assisted <em>source‑to‑target</em> mapping for data migrations.</h1>
-    <p class="lede">AI Mapping Studio turns the slowest, most error‑prone part of an enterprise data migration — deciding how every target column is populated from a legacy source — into an AI‑generated draft that analysts review, correct, validate, and ship as runnable SQL. <span class="soft">Insurance / Guidewire‑inspired, built for migration teams.</span></p>
+    <h1 class="serif">AI‑assisted <em>source‑to‑target</em> mapping for data conversions.</h1>
+    <p class="lede">AI Mapping Studio turns the slowest, most error‑prone part of an enterprise data conversion — deciding how every target column is populated from a legacy source — into an AI‑generated draft that analysts review, correct, validate, and ship as runnable SQL. <span class="soft">Insurance / Guidewire‑inspired, built for data conversion teams.</span></p>
 
     <div class="stats">
       <div class="stat"><div class="n">8</div><span class="l">AI‑assisted features</span></div>
@@ -198,8 +207,8 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
 <section>
   <div class="wrap">
     <div class="eyebrow">The problem</div>
-    <h2 class="serif">A migration lives or dies on its mapping.</h2>
-    <p class="intro">Every migration needs a column‑level Source‑to‑Target Mapping: for each target field, which source column feeds it, what transformation applies, and how keys and joins line up. Across hundreds of tables this is slow, manual, and easy to get wrong. AI Mapping Studio proposes the mapping, then keeps a human firmly in control of approving it.</p>
+    <h2 class="serif">A conversion lives or dies on its mapping.</h2>
+    <p class="intro">Every conversion needs a column‑level Source‑to‑Target Mapping: for each target field, which source column feeds it, what transformation applies, and how keys and joins line up. Across hundreds of tables this is slow, manual, and easy to get wrong. AI Mapping Studio proposes the mapping, then keeps a human firmly in control of approving it.</p>
     <div class="grid">
       <div class="card"><span class="tag">Ingest</span><h3>Bring in any schema</h3><p>Connect a live SQL Server, or upload a data dictionary, DDL, or spreadsheet — extracted automatically, with instant deterministic parsing for SQL and structured Excel.</p></div>
       <div class="card"><span class="tag">Generate</span><h3>AI drafts the mapping</h3><p>Claude proposes each column's source, transformation rule, business rule, null handling, a 0–100 confidence, and the SQL JOIN that assembles each target entity.</p></div>
@@ -241,7 +250,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
         <div class="node accent">Claude<span>via corporate gateway</span></div>
       </div></div>
     </div>
-    <p class="arch-note">Frontend: HTML + vanilla JavaScript, no framework, no build step. Backend: Flask, layered <span class="mono">api → services → parsers/schemas → core</span>. Two SQLite files hold the app's own data; live SQL Server is only the migration's source and target.</p>
+    <p class="arch-note">Frontend: HTML + vanilla JavaScript, no framework, no build step. Backend: Flask, layered <span class="mono">api → services → parsers/schemas → core</span>. Two SQLite files hold the app's own data; live SQL Server is only the conversion's source and target.</p>
   </div>
 </section>
 
