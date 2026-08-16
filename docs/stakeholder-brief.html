@@ -195,10 +195,10 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
     <p class="lede">AI Mapping Studio turns the slowest, most error‑prone part of an enterprise data conversion — deciding how every target column is populated from a legacy source — into an AI‑generated draft that analysts review, correct, validate, and ship as runnable SQL. <span class="soft">Insurance / Guidewire‑inspired, built for data conversion teams.</span></p>
 
     <div class="stats">
-      <div class="stat"><div class="n">8</div><span class="l">AI‑assisted features</span></div>
+      <div class="stat"><div class="n">13</div><span class="l">AI‑assisted operations</span></div>
       <div class="stat"><div class="n">Multi</div><span class="l">Tenant &amp; data‑isolated</span></div>
-      <div class="stat"><div class="n">34</div><span class="l">API endpoints</span></div>
-      <div class="stat"><div class="n">SQL&nbsp;+&nbsp;AI</div><span class="l">Live DB &amp; Claude</span></div>
+      <div class="stat"><div class="n">38</div><span class="l">API endpoints</span></div>
+      <div class="stat"><div class="n">Chat</div><span class="l">Ask your own documents</span></div>
       <div class="stat"><div class="n">0</div><span class="l">Build steps to run</span></div>
     </div>
   </div>
@@ -228,6 +228,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
       <div class="card"><h3>Validation</h3><p>A rules engine flags low‑confidence and unmapped‑mandatory fields against configurable thresholds.</p></div>
       <div class="card"><h3>ETL &amp; Deploy</h3><p>Generate stored procedures and CREATE TABLE DDL, edit them, and deploy with all‑or‑nothing transactions.</p></div>
       <div class="card"><h3>Export &amp; Usage</h3><p>Export the mapping document (CSV/JSON) and track AI token usage per feature and per client.</p></div>
+      <div class="card"><span class="tag">New</span><h3>Know Your Data</h3><p>Upload insurance documents — policies, claims, DDL, spreadsheets — and ask questions in a chat. Answers cite the exact source, with a whole‑document mode for smaller files.</p></div>
     </div>
   </div>
 </section>
@@ -242,15 +243,15 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
       <div class="flowdown">↓</div>
       <div class="layer"><div class="role">Gateway</div><div class="nodes"><div class="node accent">Flask app<span>Auth guard → CSRF guard → API blueprints</span></div></div></div>
       <div class="flowdown">↓</div>
-      <div class="layer"><div class="role">Logic</div><div class="nodes"><div class="node">Services<span>Mapping · Extraction · ETL · Deploy · Auth · Tenant store</span></div></div></div>
+      <div class="layer"><div class="role">Logic</div><div class="nodes"><div class="node">Services<span>Mapping · Extraction · ETL · Deploy · Auth · Tenant store · Document Q&amp;A</span></div></div></div>
       <div class="flowdown">↓</div>
       <div class="layer"><div class="role">Data &amp; AI</div><div class="nodes">
-        <div class="node store">SQLite<span>Users, clients, per‑tenant docs</span></div>
+        <div class="node store">SQLite<span>Users, clients, per‑tenant docs, uploads &amp; vectors</span></div>
         <div class="node store">SQL Server<span>Live source / target</span></div>
         <div class="node accent">Claude<span>via corporate gateway</span></div>
       </div></div>
     </div>
-    <p class="arch-note">Frontend: HTML + vanilla JavaScript, no framework, no build step. Backend: Flask, layered <span class="mono">api → services → parsers/schemas → core</span>. Two SQLite files hold the app's own data; live SQL Server is only the conversion's source and target.</p>
+    <p class="arch-note">Frontend: HTML + vanilla JavaScript, no framework, no build step. Backend: Flask, layered <span class="mono">api → services → parsers/schemas → core</span>. SQLite files hold the app's own data — including uploaded documents and their retrieval vectors; live SQL Server is only the conversion's source and target.</p>
   </div>
 </section>
 
@@ -258,7 +259,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   <div class="wrap">
     <div class="eyebrow">How AI is used</div>
     <h2 class="serif">Claude, applied narrowly and safely.</h2>
-    <p class="intro">Eight bounded, single‑request features — each returns structured data or SQL that the application parses and a person reviews. The model never acts on its own.</p>
+    <p class="intro">Thirteen bounded operations — each returns structured data, SQL, or a grounded answer that the application parses and a person reviews. The model never acts on its own.</p>
     <ul class="ai-features">
       <li><span class="dot"></span><span><b>Mapping generation</b> — per target table</span></li>
       <li><span class="dot"></span><span><b>Single‑field regeneration</b> — grounded on the real source</span></li>
@@ -268,8 +269,12 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
       <li><span class="dot"></span><span><b>CREATE TABLE DDL</b> generation</span></li>
       <li><span class="dot"></span><span><b>Add column / entity</b> from plain language</span></li>
       <li><span class="dot"></span><span><b>Deploy‑time SQL auto‑fix</b> — human‑gated</span></li>
+      <li><span class="dot"></span><span><b>Insurance‑domain check</b> — flags off‑topic uploads</span></li>
+      <li><span class="dot"></span><span><b>Query routing</b> — structured vs. document questions</span></li>
+      <li><span class="dot"></span><span><b>Text‑to‑SQL</b> — over ingested structured data</span></li>
+      <li><span class="dot"></span><span><b>Grounded answers</b> — with source citations</span></li>
     </ul>
-    <div class="callout"><b>Guardrails.</b> Prompts forbid inventing tables or columns; hallucinated DDL is flagged; a deploy that fails is auto‑corrected but <b>never auto‑deployed</b> — the fix is surfaced for review. Usage logs record token counts only — never prompt or response content. <b>No RAG, no vector database, and no autonomous agents.</b></div>
+    <div class="callout"><b>Guardrails.</b> Prompts forbid inventing tables or columns; hallucinated DDL is flagged; a deploy that fails is auto‑corrected but <b>never auto‑deployed</b> — the fix is surfaced for review. <b>Know Your Data</b> uses retrieval (RAG) over a local vector store and only answers from the user's own uploaded, insurance‑relevant documents — every answer carries citations. Usage logs record token counts only — never prompt or response content, and <b>no autonomous agents</b> act on their own.</div>
   </div>
 </section>
 
@@ -287,6 +292,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
           <li>CSRF protection, login throttling, and connection‑attempt rate limiting</li>
           <li>Connection passwords never persisted; no credentials in logs or AI prompts</li>
           <li>Human‑gated deploys; all‑or‑nothing transactions with rollback</li>
+          <li>Uploaded documents are per‑tenant and insurance‑scoped; chat answers stay grounded in them with citations</li>
         </ul>
       </div>
       <div class="panel rec">
@@ -308,7 +314,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
     <h2 class="serif">Working software, documented.</h2>
     <div class="status-row">
       <span class="pill k-good"><span class="k"></span> Core workflow functional</span>
-      <span class="pill k-good"><span class="k"></span> Backend test suite (30 files)</span>
+      <span class="pill k-good"><span class="k"></span> Backend test suite (32 files)</span>
       <span class="pill k-info"><span class="k"></span> Full technical docs in <code style="font-size:12px" class="mono">docs/</code></span>
       <span class="pill k-warn"><span class="k"></span> Not yet production‑hardened</span>
     </div>

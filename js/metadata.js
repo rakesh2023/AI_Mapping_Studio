@@ -53,6 +53,43 @@ function renderNoConnectionState(){
   if(sb) sb.addEventListener("click", loadSampleMetadata);
 }
 
+/* Inline "processing" state shown while live metadata is being read (replaces the
+   old load-time toasts). Cleared by renderModeBadge/renderTree on success, or by
+   the error / no-connection states on failure. */
+function renderLoadingState(name){
+  const label = name ? escapeHtml(name) : "the source";
+  const badge = document.getElementById("sourceModeBadge");
+  if(badge) badge.innerHTML =
+    '<span class="badge-soft badge-medium"><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Reading objects…</span>';
+  const title = document.getElementById("sourceCardTitle");
+  if(title) title.innerHTML = '<i class="bi bi-diagram-3"></i> ' + label;
+  const tree = document.getElementById("sourceTree");
+  if(tree) tree.innerHTML =
+    '<li class="text-xs text-muted-2 d-flex align-items-center gap-2 p-2">' +
+      '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>' +
+      '<span>Loading tables from ' + label + '…</span>' +
+    '</li>';
+  const body = document.getElementById("columnTableBody");
+  if(body) body.innerHTML =
+    '<tr><td colspan="12"><div class="empty-state">' +
+      '<div class="spinner-border text-primary mb-2" role="status" aria-hidden="true"></div>' +
+      '<h4>Reading objects from ' + label + '…</h4>' +
+      '<p class="text-xs text-muted-2">Fetching tables and columns from the live database.</p>' +
+    '</div></td></tr>';
+}
+
+/* After a failed/empty (re)load, undo the loading state: restore the previous view
+   if we already had one, otherwise show the no-connection prompt. */
+function restoreSourceView(){
+  if(sourceMeta){
+    renderModeBadge();
+    renderTree();
+    if(activeTable) selectTable(activeTable.name);
+  } else {
+    renderNoConnectionState();
+  }
+}
+
 async function loadSampleMetadata(){
   sourceMeta = await fetchJSON("source-metadata.json");
   if(sourceMeta){ sourceMode = "sample"; renderModeBadge(); renderTree(); if(sourceMeta.tables.length) selectTable(sourceMeta.tables[0].name); }
@@ -136,18 +173,19 @@ async function loadLiveObjects(conn){
   const pw = await ensureConnPassword(conn);
   if(pw === null) return;   // cancelled
   cfg.password = pw;
+  renderLoadingState(conn.name || cfg.database);
   try{
     const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
     const data = await res.json();
     if(!data.ok){
       showNotification("Could not read metadata: " + (data.error||""), "danger");
       markConnStatus("Failed");
-      if(!sourceMeta) renderNoConnectionState();
+      restoreSourceView();
       return;
     }
     if(!data.tables.length){
       showNotification("No base tables found in " + (data.schema||"the database") + ".", "warning");
-      if(!sourceMeta) renderNoConnectionState();
+      restoreSourceView();
       return;
     }
     sourceMeta = {connection: data.connection, schema: data.schema, tables: data.tables};
@@ -160,7 +198,7 @@ async function loadLiveObjects(conn){
     if(c){ c.status = "Connected"; c.tableCount = data.tableCount; c.columnCount = data.columnCount; c.schema = data.schema; upsertDbConnection(c); renderSavedConnections(); }
   }catch(err){
     showNotification("Backend not reachable. Start it with python server/app.py.", "danger");
-    if(!sourceMeta) renderNoConnectionState();
+    restoreSourceView();
   }
 }
 
