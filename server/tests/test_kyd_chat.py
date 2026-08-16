@@ -140,6 +140,37 @@ def test_condense_used_with_history(fix, monkeypatch):
     assert captured["q"] == "STANDALONE: does the policy cover flooding?"
 
 
+# ---- Full-document mode reads the whole file, skips the router ---- #
+def test_send_full_document_mode(fix, monkeypatch):
+    uid, cid = fix["uid"], fix["cid"]
+    did, fname = fix["ready_doc"]("policy.pdf", "unstructured")
+    # give the document some chunks (what full mode concatenates)
+    conn = connect()
+    try:
+        for i, t in enumerate(["Page one: coverage terms.", "Page two: exclusions.", "Page three: premiums."]):
+            conn.execute("INSERT INTO document_chunks(document_id,user_id,client_id,chunk_index,text,created_at) "
+                         "VALUES(?,?,?,?,?, 't')", (did, uid, cid, i, t))
+        conn.commit()
+    finally:
+        conn.close()
+    sess = CS.create_session(uid, cid)[0]["session"]["id"]
+
+    captured = {}
+    # In full mode the router must NOT be consulted.
+    monkeypatch.setattr(CS.kyd_query_router, "route_query",
+                        lambda q, s: (_ for _ in ()).throw(AssertionError("router must not run in full mode")))
+    monkeypatch.setattr(CS.kyd_rag_service, "answer",
+                        lambda q, ctx: (captured.__setitem__("ctx", ctx) or
+                                        {"answer": "Full-file answer.", "usage": None, "grounded": True}))
+
+    payload, status = CS.send_message(uid, cid, sess, "summarize the document", mode="full")
+    assert status == 200 and payload["route"] == "full_document" and payload["mode"] == "full"
+    # whole document (all 3 chunks) was passed as one labeled source
+    assert captured["ctx"] and "Document: policy.pdf" in captured["ctx"][0]["text"]
+    assert "exclusions" in captured["ctx"][0]["text"] and "premiums" in captured["ctx"][0]["text"]
+    assert payload["citations"][0]["type"] == "document" and payload["citations"][0]["documentId"] == did
+
+
 # ---- HTTP smoke (routes + scoping) ---- #
 def test_http_session_and_send(fix, monkeypatch):
     from app import create_app

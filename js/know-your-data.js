@@ -18,8 +18,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderTypeChips();
   wireDropzone();
   wireChat();
+  wireCollapse();
   await loadDocuments();
 });
+
+/* Collapse the whole left column (upload + documents) to give the chat full width. */
+function wireCollapse() {
+  const btn = document.getElementById("kydCollapseBtn");
+  if (!btn) return;
+  applyCollapse(!!lsGet("aims_kyd_left_collapsed", false));
+  btn.addEventListener("click", () => {
+    const collapsed = !lsGet("aims_kyd_left_collapsed", false);
+    lsSet("aims_kyd_left_collapsed", collapsed);
+    applyCollapse(collapsed);
+  });
+}
+
+function applyCollapse(collapsed) {
+  const body = document.getElementById("kydUploadBody");
+  const docs = document.getElementById("kydDocsCard");
+  const left = document.getElementById("kydLeftCol");
+  const chat = document.getElementById("kydChatCol");
+  const btn = document.getElementById("kydCollapseBtn");
+  if (body) body.style.display = collapsed ? "none" : "";
+  if (docs) docs.style.display = collapsed ? "none" : "";
+  if (left) left.className = collapsed ? "col-12" : "col-lg-7";     // thin header bar when collapsed
+  if (chat) chat.className = collapsed ? "col-12" : "col-lg-5";     // chat spans full width when collapsed
+  if (btn) {
+    const i = btn.querySelector("i");
+    if (i) i.className = "bi " + (collapsed ? "bi-chevron-down" : "bi-chevron-up");
+    btn.title = collapsed ? "Expand upload & documents" : "Collapse upload & documents — more room for chat";
+  }
+}
 
 /* ------------------------------------------------------------------ *
  * API (real endpoints)
@@ -231,6 +261,11 @@ function showErrors(errors) {
 function wireChat() {
   const form = document.getElementById("kydChatForm");
   const newBtn = document.getElementById("kydNewChat");
+  const full = document.getElementById("kydFullDoc");
+  if (full) {
+    full.checked = !!lsGet("aims_kyd_full_doc", false);   // device pref (local)
+    full.addEventListener("change", () => lsSet("aims_kyd_full_doc", full.checked));
+  }
   if (form) form.addEventListener("submit", (e) => { e.preventDefault(); sendChat(); });
   if (newBtn) newBtn.addEventListener("click", () => {
     kydChat.sessionId = null;
@@ -282,8 +317,10 @@ async function sendChat() {
   try {
     const sid = await ensureSession();
     if (!sid) throw new Error("no session");
+    const full = document.getElementById("kydFullDoc");
+    const mode = (full && full.checked) ? "full" : "rag";
     const r = await jsonFetch("/api/kyd/chat/sessions/" + sid + "/messages", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, mode: mode }),
     });
     typing.remove();
     if (!r.ok) { appendBubble("assistant", escapeHtml(r.data.error || "Sorry — something went wrong.")); return; }
@@ -329,7 +366,8 @@ function clearWelcome() {
 }
 
 function routeBadge(route) {
-  const map = { vector_search: "semantic", sql_query: "SQL", pandas_query: "SQL", hybrid: "hybrid" };
+  const map = { vector_search: "semantic", sql_query: "SQL", pandas_query: "SQL",
+    hybrid: "hybrid", full_document: "full document" };
   return '<span class="kyd-route">' + (map[route] || route) + "</span>";
 }
 

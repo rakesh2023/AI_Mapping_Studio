@@ -65,6 +65,35 @@ def _extract_sql(text: str) -> str:
     return ""
 
 
+# A corrected CREATE PROCEDURE can be as large as the original — keep the cap high
+# and continue if needed, so the fix itself is never truncated.
+FIX_MAX_TOKENS = 24000
+_CONTINUE_LIMIT = 5
+
+
+def _generate(client, model, system, user, max_tokens, attempts):
+    """Call the model, stitching continuations if it hits the output-token cap.
+    Returns (full_text, last_response)."""
+    messages = [{"role": "user", "content": user}]
+    full, resp = "", None
+    for _ in range(_CONTINUE_LIMIT + 1):
+        base_kwargs = dict(model=model, max_tokens=max_tokens, system=system, messages=messages)
+
+        def run(extra, _bk=base_kwargs):
+            with client.messages.stream(**_bk, **extra) as stream:
+                return stream.get_final_message()
+
+        resp = call_ai("ETL Deploy - AI SQL Fix", run, attempts)
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return full, resp
+        part = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        full += part
+        if getattr(resp, "stop_reason", None) != "max_tokens":
+            break
+        messages = [{"role": "user", "content": user}, {"role": "assistant", "content": full}]
+    return full, resp
+
+
 def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
     """Return {ok, batch} with a corrected version of `batch`, or {ok:False,error}.
 
@@ -106,17 +135,14 @@ def fix_batch(batch: str, error: Dict[str, Any]) -> Dict[str, Any]:
     model = ai_model()
     try:
         client = anthropic_client()
-        base_kwargs = dict(model=model, max_tokens=4000, system=system,
-                           messages=[{"role": "user", "content": user}])
-
-        def run(extra):
-            with client.messages.stream(**base_kwargs, **extra) as stream:
-                return stream.get_final_message()
-
-        resp = call_ai("ETL Deploy - AI SQL Fix", run, [{"output_config": {"effort": "medium"}}, {}])
+        text, resp = _generate(client, model, system, user, FIX_MAX_TOKENS,
+                               [{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The fix request was declined by safety classifiers."}
-        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        # Never surface a half-corrected batch: if it was STILL truncating after
+        # continuation, report failure instead of applying a partial (truncated) fix.
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            return {"ok": False, "error": "The corrected SQL was too large to return in full — not applying a partial (truncated) fix."}
         # Salvage the SQL even if the model wrapped it in prose or a code fence, so a
         # chatty reply no longer causes us to throw away a valid correction.
         fixed = _extract_sql(text)

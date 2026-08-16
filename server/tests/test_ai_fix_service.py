@@ -85,6 +85,30 @@ def test_fix_salvages_sql_after_prose(monkeypatch):
     assert "The problem is" not in out["batch"]
 
 
+def test_fix_refuses_truncated_correction(monkeypatch):
+    # Model keeps hitting the output cap (stop_reason='max_tokens') -> we must NOT
+    # return a partial batch (that was the deploy-time truncation bug).
+    class _MsgTrunc:
+        def __init__(self, text):
+            self.content = [types.SimpleNamespace(type="text", text=text)]
+            self.stop_reason = "max_tokens"
+    class _StreamT:
+        def __init__(self, m): self._m = m
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get_final_message(self): return self._m
+    def _client_trunc():
+        class C:
+            class messages:
+                @staticmethod
+                def stream(**kw): return _StreamT(_MsgTrunc("CREATE PROCEDURE [dbo].[p] AS BEGIN SELECT a.c1 AS C1,"))
+        return C()
+    monkeypatch.setattr(fx, "anthropic_client", _client_trunc)
+    out = fx.fix_batch("CREATE PROCEDURE [dbo].[p] AS BEGIN SELECT a.c1 AS C1, a.c2 AS C2 END",
+                       {"number": 102, "message": "syntax"})
+    assert out["ok"] is False and "truncated" in out["error"].lower()
+
+
 def test_fix_salvages_sql_from_fenced_block_after_prose(monkeypatch):
     reply = "Sure — here's the fix:\n\n```sql\nALTER TABLE t ADD c int NOT NULL\n```\nLet me know!"
     monkeypatch.setattr(fx, "anthropic_client", lambda: _client(reply))

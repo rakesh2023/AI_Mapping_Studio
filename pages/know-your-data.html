@@ -5,11 +5,11 @@
 <title>Know Your Data - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260816c">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260816c">
-<link rel="stylesheet" href="../css/forms.css?v=20260816c">
-<link rel="stylesheet" href="../css/responsive.css?v=20260816c">
-<link rel="stylesheet" href="../css/know-your-data.css?v=20260816c">
+<link rel="stylesheet" href="../css/common.css?v=20260816j">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260816j">
+<link rel="stylesheet" href="../css/forms.css?v=20260816j">
+<link rel="stylesheet" href="../css/responsive.css?v=20260816j">
+<link rel="stylesheet" href="../css/know-your-data.css?v=20260816j">
 </head>
 <body>
 <div class="app-shell">
@@ -27,22 +27,28 @@
 
       <div class="row g-4">
         <!-- Left: upload + documents -->
-        <div class="col-lg-7">
+        <div class="col-lg-7" id="kydLeftCol">
           <div class="card-el">
-            <div class="section-title"><i class="bi bi-cloud-arrow-up"></i> Upload documents</div>
-            <div id="kydDropzone" class="kyd-dropzone" tabindex="0" role="button"
-                 aria-label="Upload documents: drag and drop files here or press Enter to browse">
-              <div class="kyd-dz-ico"><i class="bi bi-cloud-arrow-up"></i></div>
-              <div class="kyd-dz-title">Drag &amp; drop files here, or click to browse</div>
-              <div class="kyd-dz-hint">Insurance data only · up to 25&nbsp;MB per file · multiple files supported</div>
-              <div class="kyd-dz-types" id="kydTypes"></div>
+            <div class="section-title d-flex align-items-center justify-content-between">
+              <span><i class="bi bi-cloud-arrow-up"></i> Upload documents</span>
+              <button type="button" class="icon-btn" id="kydCollapseBtn"
+                      title="Collapse upload &amp; documents — more room for chat"><i class="bi bi-chevron-up"></i></button>
             </div>
-            <input type="file" id="kydFileInput" multiple hidden
-                   accept=".pdf,.xml,.json,.sql,.xlsx,.xls,.csv">
-            <div id="kydErrors" class="kyd-errors" style="display:none;"></div>
+            <div id="kydUploadBody">
+              <div id="kydDropzone" class="kyd-dropzone" tabindex="0" role="button"
+                   aria-label="Upload documents: drag and drop files here or press Enter to browse">
+                <div class="kyd-dz-ico"><i class="bi bi-cloud-arrow-up"></i></div>
+                <div class="kyd-dz-title">Drag &amp; drop files here, or click to browse</div>
+                <div class="kyd-dz-hint">Insurance data only · up to 25&nbsp;MB per file · multiple files supported</div>
+                <div class="kyd-dz-types" id="kydTypes"></div>
+              </div>
+              <input type="file" id="kydFileInput" multiple hidden
+                     accept=".pdf,.xml,.json,.sql,.xlsx,.xls,.csv">
+              <div id="kydErrors" class="kyd-errors" style="display:none;"></div>
+            </div>
           </div>
 
-          <div class="card-el mt-4">
+          <div class="card-el mt-4" id="kydDocsCard">
             <div class="section-title d-flex align-items-center justify-content-between">
               <span><i class="bi bi-collection"></i> Documents</span>
               <span id="kydCount" class="text-xs text-muted-2"></span>
@@ -52,11 +58,18 @@
         </div>
 
         <!-- Right: chat -->
-        <div class="col-lg-5">
+        <div class="col-lg-5" id="kydChatCol">
           <div class="card-el kyd-chat-card">
             <div class="section-title d-flex align-items-center justify-content-between">
               <span><i class="bi bi-chat-dots"></i> Chat with your data</span>
-              <button type="button" class="btn btn-sm btn-outline-soft" id="kydNewChat" title="Start a new chat"><i class="bi bi-plus-lg me-1"></i>New</button>
+              <div class="d-flex align-items-center gap-3">
+                <div class="form-check form-switch kyd-full-toggle mb-0"
+                     title="On: read the whole document like claude.ai (uses more tokens). Off: retrieval (RAG) with maximum context.">
+                  <input class="form-check-input" type="checkbox" id="kydFullDoc">
+                  <label class="form-check-label" for="kydFullDoc">Full file</label>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-soft" id="kydNewChat" title="Start a new chat"><i class="bi bi-plus-lg me-1"></i>New</button>
+              </div>
             </div>
             <div id="kydChatMsgs" class="kyd-chat-msgs"></div>
             <form id="kydChatForm" class="kyd-chat-input" autocomplete="off">
@@ -72,8 +85,8 @@
 </div>
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260816c"></script>
-<script src="../js/navigation.js?v=20260816c"></script>
-<script src="../js/know-your-data.js?v=20260816c"></script>
+<script src="../js/common.js?v=20260816j"></script>
+<script src="../js/navigation.js?v=20260816j"></script>
+<script src="../js/know-your-data.js?v=20260816j"></script>
 </body>
 </html>

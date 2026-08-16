@@ -26,9 +26,10 @@ Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
 
 LAST_N_TURNS = 10                 # history messages fed to condense
-VECTOR_MIN_SCORE = 0.05           # below this a vector hit is treated as no-context
-VECTOR_TOP_K = 5
+VECTOR_MIN_SCORE = 0.0            # RAG "max context": keep every retrieved hit
+VECTOR_TOP_K = 12                 # RAG "max context": retrieve more chunks
 SQL_ROWS_IN_CONTEXT = 20          # rows rendered into the answer context
+FULL_DOC_BUDGET_CHARS = 600_000   # ~150k tokens: cap for full-document mode
 
 
 def _now() -> str:
@@ -91,10 +92,14 @@ def get_messages(user_id: int, client_id: int, session_id: int) -> Result:
 # --------------------------------------------------------------------------- #
 # Send message (the full turn)
 # --------------------------------------------------------------------------- #
-def send_message(user_id: int, client_id: int, session_id: int, question: str) -> Result:
+def send_message(user_id: int, client_id: int, session_id: int, question: str,
+                 mode: str = "rag") -> Result:
+    """mode='full' reads the whole scoped document(s) like claude.ai; mode='rag'
+    (default) uses retrieval with maximum context."""
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Empty message."}, 400
+    mode = "full" if str(mode).lower() == "full" else "rag"
 
     conn = connect()
     try:
@@ -114,15 +119,20 @@ def send_message(user_id: int, client_id: int, session_id: int, question: str) -
     # (b) condense follow-up into a standalone question when there's prior context
     standalone = _condense(history, question) if history else question
 
-    # (c) route over the user's ready sources
     sources, name2doc, doc2stx = _ready_sources(user_id, client_id)
-    route_info = kyd_query_router.route_query(standalone, sources)
-    route = route_info.get("route", "vector_search")
-    targets = route_info.get("target_sources") or [s["name"] for s in sources]
-    target_docs = [name2doc[n] for n in targets if n in name2doc]
 
-    # (d) retrieve context per the route
-    contexts, citations = _retrieve(user_id, client_id, route, standalone, target_docs, doc2stx)
+    if mode == "full":
+        # Read the whole scoped document(s) — no retrieval, like claude.ai.
+        doc_ids = _scoped_doc_ids(scope, list(name2doc.values()))
+        contexts, citations = _full_contexts(user_id, client_id, doc_ids)
+        route = "full_document"
+    else:
+        # (c) route over the user's ready sources, then (d) retrieve (max context)
+        route_info = kyd_query_router.route_query(standalone, sources)
+        route = route_info.get("route", "vector_search")
+        targets = route_info.get("target_sources") or [s["name"] for s in sources]
+        target_docs = [name2doc[n] for n in targets if n in name2doc]
+        contexts, citations = _retrieve(user_id, client_id, route, standalone, target_docs, doc2stx)
 
     # (e)/(f) fallback if nothing usable, else grounded answer
     if not contexts:
@@ -136,10 +146,64 @@ def send_message(user_id: int, client_id: int, session_id: int, question: str) -
 
     assistant = _persist_turn(user_id, client_id, session_id, question, answer_text,
                               route, citations, usage, set_title=not history)
-    return {"ok": True, "sessionId": session_id, "route": route,
+    return {"ok": True, "sessionId": session_id, "route": route, "mode": mode,
             "standaloneQuestion": standalone, "answer": answer_text,
             "citations": citations, "usage": usage,
             "message": assistant}, 200
+
+
+def _scoped_doc_ids(scope_json, all_ids):
+    """Session document_scope (JSON list of ids) intersected with the ready docs,
+    or all ready docs when no scope is set."""
+    if scope_json:
+        try:
+            ids = [i for i in __import__("json").loads(scope_json) if i in set(all_ids)]
+            if ids:
+                return ids
+        except (ValueError, TypeError):
+            pass
+    return all_ids
+
+
+def _full_contexts(user_id, client_id, doc_ids):
+    """Build whole-document context by concatenating each ready doc's chunks in
+    order, capped by FULL_DOC_BUDGET_CHARS. Returns (contexts, citations)."""
+    if not doc_ids:
+        return [], []
+    contexts, citations, used = [], [], 0
+    conn = connect()
+    try:
+        for did in doc_ids:
+            drow = conn.execute(
+                "SELECT filename FROM documents WHERE id=? AND user_id=? AND client_id=? AND status='ready'",
+                (did, user_id, client_id),
+            ).fetchone()
+            if not drow:
+                continue
+            rows = conn.execute(
+                "SELECT text FROM document_chunks WHERE document_id=? AND user_id=? AND client_id=? "
+                "ORDER BY chunk_index", (did, user_id, client_id),
+            ).fetchall()
+            body = "\n".join(r["text"] for r in rows).strip()
+            if not body:
+                continue
+            remaining = FULL_DOC_BUDGET_CHARS - used
+            if remaining <= 0:
+                break
+            truncated = len(body) > remaining
+            if truncated:
+                body = body[:remaining]
+            used += len(body)
+            label = f"S{len(contexts) + 1}"
+            text = "Document: " + drow["filename"] + "\n" + body + ("\n…(truncated)" if truncated else "")
+            contexts.append({"label": label, "text": text})
+            citations.append({"type": "document", "documentId": did, "label": label,
+                              "snippet": drow["filename"]})
+            if truncated:
+                break
+    finally:
+        conn.close()
+    return contexts, citations
 
 
 def _condense(history: List[Any], question: str) -> str:

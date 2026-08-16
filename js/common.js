@@ -38,13 +38,13 @@ const SIDEBAR_SECTIONS = [
     {label:"Dashboard", icon:"bi-speedometer2", href:"dashboard.html"}
   ]},
   {title:"Setup", items:[
+    {label:"Know Your Data", icon:"bi-file-earmark-text", href:"know-your-data.html"},
     {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
     {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"}
   ]},
   {title:"Discover", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
-    {label:"Data Profiling", icon:"bi-bar-chart-line", href:"data-profiling.html"},
-    {label:"Know Your Data", icon:"bi-file-earmark-text", href:"know-your-data.html"}
+    {label:"Data Profiling", icon:"bi-bar-chart-line", href:"data-profiling.html"}
   ]},
   {title:"Mapping", items:[
     {label:"AI Mapping Generator", icon:"bi-stars", href:"ai-mapping-generator.html"},
@@ -809,6 +809,19 @@ async function initShell(activeHref){
   // onboarding (they live on the Admin page). Everyone else needs a client.
   const _isAdmin = !!(AUTH.user && AUTH.user.isAdmin);
   if(!AUTH.activeClientId && !_isAdmin){ go("/onboarding"); return; }
+
+  // Self-heal the SPA shell: if a framed content page was opened at the TOP level
+  // (deep link, bookmark, refresh, or a stray full navigation), it would render its
+  // own sidebar and then FULL-RELOAD on every nav click. Bounce it into the shell
+  // (app.html#<page>) so the persistent sidebar/header always own navigation.
+  if(!framed){
+    const _file = (location.pathname.split("/").pop() || "").toLowerCase();
+    const STANDALONE = ["app.html", "login.html", "onboarding.html", "admin.html"];
+    if(STANDALONE.indexOf(_file) === -1){
+      window.location.replace("/pages/app.html#" + _file + (location.search || ""));
+      return;
+    }
+  }
 
   // Load this client's server-side data into the in-memory cache BEFORE any page
   // controller reads it (controllers await initShell, so the cache is ready in time).

@@ -119,5 +119,8 @@ def send_message(session_id):
         return err
     uid, cid = scope
     body = request.get_json(silent=True) or {}
-    payload, status = chat.send_message(uid, cid, session_id, body.get("message") or body.get("question") or "")
+    payload, status = chat.send_message(
+        uid, cid, session_id,
+        body.get("message") or body.get("question") or "",
+        mode=body.get("mode") or "rag")
     return jsonify(payload), status

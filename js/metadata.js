@@ -136,7 +136,6 @@ async function loadLiveObjects(conn){
   const pw = await ensureConnPassword(conn);
   if(pw === null) return;   // cancelled
   cfg.password = pw;
-  showNotification("Reading objects from " + (conn.name || cfg.database) + "…", "primary", 1500);
   try{
     const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
     const data = await res.json();
@@ -159,7 +158,6 @@ async function loadLiveObjects(conn){
     // reflect live result back onto the saved connection (shared with Source Systems)
     const c = getDbConnection(conn.id);
     if(c){ c.status = "Connected"; c.tableCount = data.tableCount; c.columnCount = data.columnCount; c.schema = data.schema; upsertDbConnection(c); renderSavedConnections(); }
-    showNotification("Loaded " + data.tableCount + " tables from " + data.connection + " (live).", "success");
   }catch(err){
     showNotification("Backend not reachable. Start it with python server/app.py.", "danger");
     if(!sourceMeta) renderNoConnectionState();

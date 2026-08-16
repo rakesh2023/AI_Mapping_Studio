@@ -127,6 +127,10 @@
 .kyd-chat-input{ display:flex; gap:8px; margin-top:12px; }
 .kyd-chat-input .form-control{ flex:1; }
 .kyd-chat-hint{ font-size:.75rem; color:var(--text-muted); margin-top:6px; min-height:1em; }
+.kyd-full-toggle{ padding-left:2.4em; }
+.kyd-full-toggle .form-check-label{ font-size:.78rem; font-weight:500; color:var(--text-muted); cursor:pointer; white-space:nowrap; }
+.kyd-full-toggle .form-check-input{ cursor:pointer; }
+.kyd-full-toggle .form-check-input:checked{ background-color:var(--accent); border-color:var(--accent); }
 
 @keyframes kyd-blink{ 0%,100%{ opacity:.25; } 50%{ opacity:1; } }
 @keyframes kyd-pulse{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }

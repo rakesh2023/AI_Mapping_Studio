@@ -19,6 +19,13 @@ from app.services.ai_client_service import call_ai
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
 
+# Output-token caps. A wide table's stored proc (one SELECT line per target column)
+# easily exceeds a small cap; when the model hits the cap it tends to "close" the
+# statement early and drop the remaining columns. Keep these generous; continuation
+# still stitches anything beyond a single response.
+ETL_MAX_TOKENS = 24000
+DDL_MAX_TOKENS = 16000
+
 
 def _short_name(name: str) -> str:
     """SP / log TableName short form: strip a leading CMT_/PMT_ prefix."""
@@ -147,14 +154,21 @@ def generate_etl(body: Dict[str, Any]) -> Result:
     )
 
     system = (
-        "You are a senior SQL Server ETL engineer. Produce ONE stored procedure that "
+        "You are a senior ETL / SQL engineer. Produce ONE stored procedure that "
         "inserts into a target table from mapped source columns.\n\n"
+        "DIALECT: default to Microsoft SQL Server (T-SQL). If the ADDITIONAL INSTRUCTIONS "
+        "specify a different target dialect (e.g. Oracle PL/SQL, PostgreSQL, MySQL), generate "
+        "for THAT dialect instead and adapt the template accordingly.\n\n"
         "Start from the TEMPLATE below as the DEFAULT structure and fill its three "
         "placeholders:\n"
         "  <target columns>            -> the INSERT column list (the target columns)\n"
         "  <source expr AS target column, one per line> -> the SELECT list\n"
         "  <FROM / JOIN>               -> the FROM / JOIN clause\n\n"
         "COLUMN RULES:\n"
+        "- OUTPUT EVERY COLUMN: emit exactly one SELECT line for EACH target column in the "
+        "COLUMN MAPPINGS list, in order. The SELECT list MUST have the same number of columns "
+        "as the INSERT list. NEVER omit, merge, summarise, abbreviate, or stop early — include "
+        "all of them even if there are hundreds.\n"
         "- One SELECT line per target column, in the SAME order as the INSERT list, as "
         "'<expr> AS <TargetColumn>'.\n"
         "- The list separator comma MUST come immediately after the column alias and BEFORE any "
@@ -199,7 +213,7 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         # long proc is never truncated (parts are stitched together).
         text, resp = _generate_with_continuation(
             client, "ETL Code Generator - Stored Procedure", model, system, user,
-            max_tokens=8000, attempts=[{"output_config": {"effort": "medium"}}, {}])
+            max_tokens=ETL_MAX_TOKENS, attempts=[{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         sql = _strip_fences(text)
@@ -211,13 +225,49 @@ def generate_etl(body: Dict[str, Any]) -> Result:
             sql = _strip_leading_use(sql)
         if not sql.strip():
             return {"ok": False, "error": "The AI returned no SQL for this table."}, 400
-        return {"ok": True, "model": model, "targetTable": target_table,
-                "procedure": proc, "sql": sql}, 200
+
+        # Completeness guard: never silently ship a half procedure. If any target
+        # column didn't make it into the SELECT list (output-token truncation, the
+        # model closing early, etc.), flag it loudly rather than returning half.
+        target_cols, seen = [], set()
+        for m in rows:
+            tc = (m.get("targetColumn") or "").strip()
+            if tc and tc.lower() not in seen:
+                seen.add(tc.lower()); target_cols.append(tc)
+        # The 'AS <col>' completeness check is T-SQL-shaped; skip it when the user asked
+        # for a different dialect (aliasing differs) to avoid false "incomplete" flags.
+        other_dialect = bool(re.search(r"oracle|postgre|pl/?sql|mysql|snowflake|bigquery|db2|sqlite|mariadb",
+                                       instructions or "", re.IGNORECASE))
+        missing = [] if other_dialect else _missing_target_columns(sql, target_cols)
+        payload = {"ok": True, "model": model, "targetTable": target_table,
+                   "procedure": proc, "sql": sql, "warnings": []}
+        if missing:
+            shown = ", ".join(missing[:20]) + ("…" if len(missing) > 20 else "")
+            payload["incomplete"] = True
+            payload["missingColumns"] = missing
+            payload["warnings"] = [
+                "This procedure is INCOMPLETE: %d of %d target columns are missing from the "
+                "SELECT list (likely truncated) — do NOT deploy as-is. Missing: %s"
+                % (len(missing), len(target_cols), shown)]
+            print("[etl] incomplete proc for %s — missing %d/%d columns: %s"
+                  % (target_table, len(missing), len(target_cols), missing))
+        return payload, 200
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()
         msg = str(exc) or (exc.__class__.__name__ + " (see server log)")
         return {"ok": False, "error": msg}, 400
+
+
+def _missing_target_columns(sql: str, target_cols: List[str]) -> List[str]:
+    """Target columns with no 'AS <col>' alias in the generated SELECT list —
+    i.e. columns the procedure dropped (usually from truncation)."""
+    low = (sql or "").lower()
+    missing = []
+    for c in target_cols:
+        if not re.search(r"\bas\s+\[?" + re.escape(c.lower()) + r"\]?", low):
+            missing.append(c)
+    return missing
 
 
 def _strip_fences(text: str) -> str:
@@ -316,9 +366,11 @@ def generate_ddl(body: dict):
         "HARD RULES (cannot be overridden):\n"
         "- Use ONLY the columns listed in COLUMNS. Do NOT invent, rename, or drop columns "
         "unless an instruction explicitly says to. Keep each column's real name and data "
-        "type accurate to the schema.\n"
-        "- Target dialect is Microsoft SQL Server (T-SQL): bracket identifiers like "
-        "[dbo].[Table] and [column]; use SQL Server types.\n\n"
+        "type accurate to the schema.\n\n"
+        "DIALECT (default, overridable): default to Microsoft SQL Server (T-SQL) — bracket "
+        "identifiers like [dbo].[Table] and [column] and use SQL Server types. If the "
+        "ADDITIONAL INSTRUCTIONS specify another dialect (Oracle, PostgreSQL, MySQL, …), "
+        "generate for that dialect instead.\n\n"
         "The instructions may add NOT NULL/defaults, composite primary keys, indexes, "
         "column comments, IF NOT EXISTS, etc. Apply them faithfully. If there are no "
         "instructions, return clean standard DDL equivalent to the baseline.\n\n"
@@ -338,7 +390,7 @@ def generate_ddl(body: dict):
         # Wide tables can exceed one response; auto-continue so the DDL is never truncated.
         text, resp = _generate_with_continuation(
             client, "ETL Code Generator - Create Table", model, system, user,
-            max_tokens=6000, attempts=[{"output_config": {"effort": "medium"}}, {}])
+            max_tokens=DDL_MAX_TOKENS, attempts=[{"output_config": {"effort": "medium"}}, {}])
         if getattr(resp, "stop_reason", None) == "refusal":
             return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
         sql = _strip_fences(text)

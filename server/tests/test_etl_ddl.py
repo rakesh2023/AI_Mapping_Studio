@@ -104,6 +104,48 @@ def test_generate_etl_keeps_use_when_instructed(monkeypatch):
     assert s == 200 and p["sql"].startswith("USE [CommonStage]")
 
 
+# ---- completeness guard: never silently ship a half (truncated) procedure ----
+
+_ETL_BODY3 = {"targetTable": "CMT_ACTIVITY", "database": "CommonStage",
+              "joinCondition": "FROM cs_activity a",
+              "mappings": [{"targetColumn": "PMT_ID", "sourceTable": "cs_activity", "sourceColumn": "activityid", "mappingType": "Direct"},
+                           {"targetColumn": "ClaimNo", "sourceTable": "cs_activity", "sourceColumn": "claimno", "mappingType": "Direct"},
+                           {"targetColumn": "Amount", "sourceTable": "cs_activity", "sourceColumn": "amount", "mappingType": "Direct"}]}
+
+
+def test_generate_etl_complete_has_no_warning(monkeypatch):
+    full = ("SET ANSI_NULLS ON\nGO\nCREATE PROCEDURE [dbo].[INSERT_CommonStage_ACTIVITY]\nAS\nBEGIN\n"
+            "  INSERT INTO CMT_ACTIVITY (PMT_ID, ClaimNo, Amount)\n  SELECT\n"
+            "    a.activityid AS PMT_ID,\n    a.claimno AS ClaimNo,\n    a.amount AS Amount\n  FROM cs_activity a;\nEND")
+    monkeypatch.setattr(es, "anthropic_client", lambda: _client(full))
+    p, s = es.generate_etl(dict(_ETL_BODY3))
+    assert s == 200 and p["ok"] is True
+    assert p["warnings"] == [] and not p.get("incomplete")
+
+
+def test_generate_etl_flags_missing_columns(monkeypatch):
+    # Simulate a truncated proc: only the first column made it into the SELECT list.
+    half = ("SET ANSI_NULLS ON\nGO\nCREATE PROCEDURE [dbo].[INSERT_CommonStage_ACTIVITY]\nAS\nBEGIN\n"
+            "  INSERT INTO CMT_ACTIVITY (PMT_ID)\n  SELECT\n    a.activityid AS PMT_ID\n  FROM cs_activity a;\nEND")
+    monkeypatch.setattr(es, "anthropic_client", lambda: _client(half))
+    p, s = es.generate_etl(dict(_ETL_BODY3))
+    assert s == 200 and p["ok"] is True
+    assert p.get("incomplete") is True
+    assert set(p["missingColumns"]) == {"ClaimNo", "Amount"}
+    assert p["warnings"] and "INCOMPLETE" in p["warnings"][0]
+
+
+def test_generate_etl_other_dialect_skips_completeness_guard(monkeypatch):
+    # Oracle output uses different aliasing; the T-SQL 'AS <col>' guard must NOT
+    # false-flag it as incomplete when the user explicitly asked for Oracle.
+    oracle = ("CREATE OR REPLACE PROCEDURE INSERT_CommonStage_ACTIVITY AS BEGIN\n"
+              "  INSERT INTO CMT_ACTIVITY (PMT_ID, ClaimNo, Amount)\n"
+              "  SELECT a.activityid, a.claimno, a.amount FROM cs_activity a;\nEND;")
+    monkeypatch.setattr(es, "anthropic_client", lambda: _client(oracle))
+    p, s = es.generate_etl(dict(_ETL_BODY3, instructions="generate this in Oracle PL/SQL format"))
+    assert s == 200 and p["ok"] is True and not p.get("incomplete")
+
+
 def test_strip_leading_use_only_first_statement():
     # a USE that is NOT the leading statement is left untouched
     sql = "SET ANSI_NULLS ON\nGO\nUSE [Other]\nGO\nSELECT 1"
