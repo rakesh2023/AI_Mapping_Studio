@@ -42,6 +42,8 @@ This documentation was produced by analyzing the actual source code of the repos
 | 26 | [Developer Modification Guide](26-developer-modification-guide.md) | Where to change what |
 | 27 | [Source Reference Index](27-source-reference-index.md) | File → purpose → key symbols |
 
+> **Stakeholder brief:** [`stakeholder-brief.html`](stakeholder-brief.html) — a self‑contained, styled one‑page executive overview (purpose, capabilities, architecture, AI usage, security posture). Open it in a browser or print it to PDF.
+
 ## One‑paragraph summary
 
 **AI Mapping Studio** is a PwC‑themed, AI‑assisted **source‑to‑target data‑migration mapping** tool (insurance / Guidewire‑inspired). A static HTML/CSS/vanilla‑JS frontend is served by a single Python/Flask service that (a) talks to live **Microsoft SQL Server** databases via `pyodbc`, (b) calls **Anthropic Claude** through a corporate gateway for mapping generation, schema extraction, ETL/DDL generation, and SQL auto‑fix, and (c) persists per‑tenant working data in **SQLite**. It is **multi‑tenant**: email/password auth, admin‑managed users, per‑user Clients, and server‑side data isolation scoped by `(user_id, client_id)`.

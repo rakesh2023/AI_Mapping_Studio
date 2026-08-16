@@ -54,6 +54,8 @@ Full technical documentation lives in [`docs/`](docs/00-README.md) (start at the
 | Performance, tech debt, troubleshooting | [23](docs/23-performance-scalability.md), [24](docs/24-technical-debt.md), [25](docs/25-troubleshooting.md) |
 | Modification guide & source index | [26](docs/26-developer-modification-guide.md), [27](docs/27-source-reference-index.md) |
 
+**Stakeholder brief:** [`docs/stakeholder-brief.html`](docs/stakeholder-brief.html) — a self‑contained, styled one‑page executive overview (open in a browser or print to PDF).
+
 ## Repository layout
 
 ```
