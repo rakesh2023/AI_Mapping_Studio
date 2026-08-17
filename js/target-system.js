@@ -34,6 +34,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Edit Column modal controls
   const ecSaveBtn = document.getElementById("ecSaveBtn");
   if(ecSaveBtn) ecSaveBtn.addEventListener("click", ecSave);
+  const ecDeleteBtn = document.getElementById("ecDeleteBtn");
+  if(ecDeleteBtn) ecDeleteBtn.addEventListener("click", ecDelete);
+  const delEntBtn = document.getElementById("deleteEntityBtn");
+  if(delEntBtn) delEntBtn.addEventListener("click", deleteActiveEntity);
   const ecTypeEl = document.getElementById("ecType");
   if(ecTypeEl) ecTypeEl.addEventListener("change", ecToggleLen);
   const ecFkEl = document.getElementById("ecFk");
@@ -354,6 +358,8 @@ function selectEntity(name){
     ' <span class="text-muted-2 text-xs">(' + escapeHtml(activeEntity.table || name) + ')</span>';
   const addBtn = document.getElementById("addColumnBtn");
   if(addBtn) addBtn.style.display = "";   // an entity is selected -> allow adding a column
+  const delBtn = document.getElementById("deleteEntityBtn");
+  if(delBtn) delBtn.style.display = "";   // ...and deleting the whole table
   renderTargetFields();
 }
 
@@ -475,6 +481,22 @@ function ecSave(){
   selectEntity(activeEntity.name);
   flashRow(name);
   showNotification("Column '" + name + "' updated.", "success", 2500);
+}
+
+/* Delete the column currently open in the Edit Column modal (with confirmation). */
+async function ecDelete(){
+  if(!ecEditing){ return; }
+  const name = ecEditing;
+  const entity = activeEntity.name;
+  const tableLabel = activeEntity.table || entity;
+  if(ecModal) ecModal.hide();   // close the editor first to avoid a nested modal
+  const ok = (typeof confirmDialog === "function")
+    ? await confirmDialog('Delete column <strong>' + escapeHtml(name) + '</strong> from <strong>' +
+        escapeHtml(tableLabel) + '</strong>? This removes it from the target schema.', "Delete column")
+    : window.confirm("Delete column '" + name + "'?");
+  if(!ok) return;
+  removeColumn(entity, name);   // filters the field, updates count, persists, re-renders
+  showNotification("Column '" + name + "' deleted.", "success", 2500);
 }
 
 /* Apply a full patch to a field on the active target connection and persist. */
@@ -1017,6 +1039,21 @@ function persistEntity(entity){
 }
 
 /* Remove a just-added entity (Undo). */
+/* Delete the currently-selected entity (target table) with confirmation. */
+async function deleteActiveEntity(){
+  if(!activeEntity){ showNotification("Select a table first.", "warning"); return; }
+  const name = activeEntity.name;
+  const colCount = (activeEntity.fields || []).length;
+  const ok = (typeof confirmDialog === "function")
+    ? await confirmDialog('Delete table <strong>' + escapeHtml(name) + '</strong> and its <strong>' +
+        colCount + '</strong> column' + (colCount === 1 ? '' : 's') +
+        ' from the target schema? This cannot be undone.', "Delete table")
+    : window.confirm("Delete table '" + name + "' and all its columns?");
+  if(!ok) return;
+  removeEntity(name);   // filters the entity, updates counts, persists, re-renders (selects first entity)
+  showNotification("Table '" + name + "' deleted.", "success", 2500);
+}
+
 function removeEntity(name){
   const activeId = getActiveTargetId();
   const conn = activeId ? getTargetConnection(activeId) : null;
