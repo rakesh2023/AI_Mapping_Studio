@@ -1,214 +1,360 @@
 <title>AI Mapping Studio</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+/* ============================ Design tokens ============================ *
+ * Dark-first, product-launch aesthetic that mirrors the app itself:
+ * near-black grounds, warm neutrals, a single vivid PwC-orange accent.
+ * Light variant available via the header toggle ([data-theme="light"]).    */
 :root{
-  --paper:#FBFAF7; --surface:#FFFFFF; --sunk:#F4F0EA;
-  --ink:#211B16; --muted:#6E655C; --faint:#928779;
-  --line:#E8E1D8; --line-strong:#D8CEC1;
-  --accent:#E1610F; --accent-deep:#B84C0C; --accent-soft:#FBEADD;
-  --good:#178A4C; --warn:#C77A00; --bad:#C0271F;
-  --good-bg:#E9F5EE; --warn-bg:#FBF1DD; --bad-bg:#FBEAE8;
-  --shadow:0 1px 2px rgba(33,27,22,.04), 0 8px 28px -18px rgba(33,27,22,.22);
+  --bg:#0c0c0f; --bg-2:#111114; --surface:#17171b; --surface-2:#1e1e24; --sunk:#0f0f13;
+  --ink:#f5f3ef; --ink-dim:#d9d5d0; --muted:#a6a1aa; --faint:#726d78;
+  --line:#26262d; --line-2:#33333c;
+  --accent:#ff7d24; --accent-2:#ff9752; --accent-deep:#d04a02; --accent-ink:#1a0d04;
+  --accent-soft:rgba(255,125,36,.13); --accent-line:rgba(255,125,36,.34);
+  --good:#41d18f; --good-bg:rgba(65,209,143,.13);
+  --warn:#f2b23c; --warn-bg:rgba(242,178,60,.13);
+  --bad:#f26a60;  --bad-bg:rgba(242,106,96,.13);
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 24px 60px -30px rgba(0,0,0,.8);
+  --shadow-lift:0 40px 90px -40px rgba(0,0,0,.85), 0 8px 24px -14px rgba(0,0,0,.6);
+  --glow:0 0 0 1px var(--accent-line), 0 30px 70px -30px rgba(255,125,36,.35);
 }
-:root:not([data-theme="light"]){}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --paper:#141110; --surface:#201A16; --sunk:#1A1512;
-    --ink:#F2ECE4; --muted:#B4A99C; --faint:#8A7E70;
-    --line:#322A23; --line-strong:#413730;
-    --accent:#F3812F; --accent-deep:#F3812F; --accent-soft:#2C2018;
-    --good:#4FB97C; --warn:#E0A93C; --bad:#E76A5F;
-    --good-bg:#16281D; --warn-bg:#2C2311; --bad-bg:#2E1917;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px -18px rgba(0,0,0,.6);
-  }
-}
-:root[data-theme="dark"]{
-  --paper:#141110; --surface:#201A16; --sunk:#1A1512;
-  --ink:#F2ECE4; --muted:#B4A99C; --faint:#8A7E70;
-  --line:#322A23; --line-strong:#413730;
-  --accent:#F3812F; --accent-deep:#F3812F; --accent-soft:#2C2018;
-  --good:#4FB97C; --warn:#E0A93C; --bad:#E76A5F;
-  --good-bg:#16281D; --warn-bg:#2C2311; --bad-bg:#2E1917;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px -18px rgba(0,0,0,.6);
+:root[data-theme="light"]{
+  --bg:#f4f2ee; --bg-2:#efece7; --surface:#ffffff; --surface-2:#faf8f5; --sunk:#efece7;
+  --ink:#1b1712; --ink-dim:#2c2620; --muted:#645d55; --faint:#938b81;
+  --line:#e4ded4; --line-2:#d6cec1;
+  --accent:#d85413; --accent-2:#e06a24; --accent-deep:#b23f04; --accent-ink:#fff;
+  --accent-soft:rgba(216,84,19,.09); --accent-line:rgba(216,84,19,.28);
+  --good:#158a4c; --good-bg:rgba(21,138,76,.1);
+  --warn:#b4740a; --warn-bg:rgba(180,116,10,.12);
+  --bad:#c0271f;  --bad-bg:rgba(192,39,31,.1);
+  --shadow:0 1px 2px rgba(28,22,16,.05), 0 18px 44px -26px rgba(28,22,16,.28);
+  --shadow-lift:0 40px 80px -38px rgba(28,22,16,.4), 0 8px 20px -12px rgba(28,22,16,.18);
+  --glow:0 0 0 1px var(--accent-line), 0 30px 70px -34px rgba(216,84,19,.3);
 }
 
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{
-  margin:0; background:var(--paper); color:var(--ink);
+  margin:0; background:var(--bg); color:var(--ink);
   font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
-  font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased;
+  font-size:17px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
 }
-.serif{font-family:Georgia,"Times New Roman",'Iowan Old Style',serif}
-.mono{font-family:ui-monospace,"Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace}
-.wrap{max-width:1060px; margin:0 auto; padding:0 26px}
-a{color:var(--accent-deep); text-underline-offset:2px}
+.mono{font-family:"Cascadia Mono","Consolas",ui-monospace,"SFMono-Regular",Menlo,monospace}
+.wrap{max-width:1120px; margin:0 auto; padding:0 28px}
+a{color:var(--accent); text-underline-offset:2px}
+h1,h2,h3{text-wrap:balance}
 
-/* ---- eyebrow ---- */
+/* eyebrow */
 .eyebrow{
-  display:inline-flex; align-items:center; gap:9px;
-  font-family:ui-monospace,Consolas,monospace; font-size:12px; font-weight:700;
-  letter-spacing:.16em; text-transform:uppercase; color:var(--accent-deep);
-  margin:0 0 14px;
+  display:inline-flex; align-items:center; gap:10px; font-family:"Cascadia Mono",Consolas,monospace;
+  font-size:11.5px; font-weight:700; letter-spacing:.22em; text-transform:uppercase; color:var(--accent);
+  margin:0 0 16px;
 }
-.eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); border-radius:2px}
+.eyebrow::before{content:""; width:24px; height:2px; background:var(--accent); border-radius:2px}
 
-/* ---- top bar ---- */
-.topbar{border-bottom:1px solid var(--line); background:var(--surface)}
-.topbar .wrap{display:flex; align-items:center; justify-content:space-between; height:60px}
-.brand{display:flex; align-items:center; gap:12px; font-weight:700; letter-spacing:.01em}
-.mark{width:34px; height:15px; flex:none}
+/* ---------------------------- top bar ---------------------------- */
+.topbar{position:sticky; top:0; z-index:50; background:color-mix(in srgb,var(--bg) 82%, transparent);
+  backdrop-filter:saturate(140%) blur(10px); border-bottom:1px solid var(--line)}
+.topbar .wrap{display:flex; align-items:center; justify-content:space-between; height:62px}
+.brand{display:flex; align-items:center; gap:12px}
+.mark{width:38px; height:17px; flex:none}
 .mark polygon{fill:var(--accent)}
-.brand .serif{font-size:18px}
-.brand small{display:block; font-weight:400; font-size:11.5px; letter-spacing:.02em; color:var(--muted); font-family:ui-monospace,Consolas,monospace}
-.toggle{
-  font:inherit; font-size:13px; color:var(--muted); background:transparent;
-  border:1px solid var(--line-strong); border-radius:999px; padding:6px 13px; cursor:pointer;
-  display:inline-flex; gap:7px; align-items:center;
-}
+.brand b{font-weight:800; letter-spacing:-.01em; font-size:16px}
+.brand small{display:block; font-weight:500; font-size:11px; letter-spacing:.04em; color:var(--muted);
+  font-family:"Cascadia Mono",Consolas,monospace}
+.toggle{font:inherit; font-size:12.5px; color:var(--muted); background:transparent; border:1px solid var(--line-2);
+  border-radius:999px; padding:7px 14px; cursor:pointer; display:inline-flex; gap:7px; align-items:center}
 .toggle:hover{color:var(--ink); border-color:var(--accent)}
 .toggle:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
-/* ---- hero ---- */
-.hero{padding:72px 0 44px}
-.kicker{color:var(--muted); font-family:ui-monospace,Consolas,monospace; font-size:12.5px; letter-spacing:.14em; text-transform:uppercase}
-.hero h1{
-  font-size:clamp(38px,6vw,64px); line-height:1.02; margin:16px 0 20px; letter-spacing:-.015em;
-  text-wrap:balance; font-weight:700;
-}
-.hero h1 em{font-style:normal; color:var(--accent)}
-.lede{font-size:clamp(19px,2.2vw,22px); color:var(--ink); max-width:60ch; margin:0}
-.lede .soft{color:var(--muted)}
+/* ---------------------------- hero ---------------------------- */
+.hero{position:relative; padding:88px 0 40px; overflow:hidden}
+.hero::before{content:""; position:absolute; inset:-30% -10% auto -10%; height:640px; z-index:0; pointer-events:none;
+  background:radial-gradient(60% 60% at 70% 10%, rgba(255,125,36,.20), transparent 70%),
+             radial-gradient(50% 50% at 10% 0%, rgba(255,125,36,.10), transparent 70%);}
+.hero .wrap{position:relative; z-index:1}
+.tag-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px}
+.chip{font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; letter-spacing:.04em; color:var(--ink-dim);
+  border:1px solid var(--line-2); background:var(--surface); border-radius:999px; padding:5px 12px; display:inline-flex; gap:7px; align-items:center}
+.chip .k{width:7px; height:7px; border-radius:50%; background:var(--good)}
+.chip .k.o{background:var(--accent)}
+.hero-kicker{font-size:clamp(16px,1.9vw,22px); font-weight:800; letter-spacing:-.01em; margin:0 0 16px; text-wrap:balance}
+.hero-kicker .ai{color:var(--accent)} .hero-kicker .hu{color:var(--good)} .hero-kicker .dash{color:var(--faint); font-weight:600}
+.hero h1{font-size:clamp(17px,4vw,50px); line-height:1.1; margin:0 0 22px; letter-spacing:-.02em; font-weight:800; max-width:none; white-space:nowrap}
+.hero h1 .arw{color:var(--accent); font-weight:700; margin:0 .05em}
+.hero h1 .sep{color:var(--faint); font-weight:600; margin:0 .04em}
+.lede{font-size:clamp(18px,2.1vw,21px); color:var(--ink-dim); max-width:62ch; margin:0}
+.lede b{color:var(--ink); font-weight:600}
 
-/* ---- stat strip ---- */
-.stats{
-  display:grid; grid-template-columns:repeat(5,1fr); gap:1px;
-  background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden;
-  margin:44px 0 8px; box-shadow:var(--shadow);
-}
-.stat{background:var(--surface); padding:20px 18px}
-.stat .n{font-family:Georgia,serif; font-size:30px; line-height:1; color:var(--accent); font-variant-numeric:tabular-nums}
-.stat .l{display:block; margin-top:8px; font-size:12.5px; color:var(--muted); letter-spacing:.01em}
-@media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)} .stat:last-child{grid-column:1/-1}}
+/* device / window mock */
+.shot{border-radius:16px; border:1px solid var(--line-2); background:#141417; overflow:hidden; box-shadow:var(--shadow-lift)}
+.shot.hero-shot{margin-top:52px; box-shadow:var(--glow), var(--shadow-lift)}
+.shot-bar{display:flex; align-items:center; gap:8px; padding:11px 15px; background:#0e0e11; border-bottom:1px solid #26262d}
+.shot-bar .d{width:11px; height:11px; border-radius:50%; background:#3a3a42}
+.shot-bar .d:nth-child(1){background:#ff5f57}.shot-bar .d:nth-child(2){background:#febc2e}.shot-bar .d:nth-child(3){background:#28c840}
+.shot-bar .u{margin-left:12px; font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; color:#6f6a78;
+  background:#17171b; border:1px solid #26262d; border-radius:7px; padding:3px 12px; flex:1; max-width:360px}
+.shot-cap{margin:14px 2px 0; font-size:13px; color:var(--muted)}
+.shot-cap b{color:var(--ink-dim); font-weight:600}
 
-/* ---- section ---- */
-section{padding:52px 0; border-top:1px solid var(--line)}
-section h2{font-family:Georgia,serif; font-size:clamp(26px,3.4vw,34px); margin:0 0 10px; letter-spacing:-.01em; text-wrap:balance; font-weight:700}
-.intro{color:var(--muted); max-width:64ch; margin:0 0 30px; font-size:17.5px}
+/* ===== In-shot app chrome (fixed dark palette = looks like a real screenshot) ===== */
+.app{display:grid; grid-template-columns:172px 1fr; background:#0f0f12; color:#dcd9e0; font-size:12.5px}
+.app-side{background:linear-gradient(180deg,#141417,#0f0f12); border-right:1px solid #212127; padding:14px 10px; min-height:100%}
+.app-brand{display:flex; align-items:center; gap:8px; padding:2px 6px 14px}
+.app-brand .m{width:26px;height:12px}.app-brand .m polygon{fill:#ff7d24}
+.app-brand b{font-size:12px; color:#fff; font-weight:700}
+.app-sec{font-family:"Cascadia Mono",Consolas,monospace; font-size:9px; letter-spacing:.16em; color:#5f5a68; margin:12px 8px 6px; text-transform:uppercase}
+.nav{display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:8px; color:#b3aebb; margin-bottom:2px}
+.nav i{font-style:normal; width:15px; text-align:center; opacity:.9}
+.nav.on{background:#d04a02; color:#fff; box-shadow:0 6px 16px -8px rgba(208,74,2,.8)}
+.app-main{min-width:0}
+.app-top{display:flex; align-items:center; justify-content:space-between; padding:11px 16px; border-bottom:1px solid #1e1e24; background:#0d0d10}
+.app-top .t{font-weight:700; color:#f1eff3; font-size:13px}
+.app-top .r{display:flex; align-items:center; gap:8px}
+.pillx{font-family:"Cascadia Mono",Consolas,monospace; font-size:10px; padding:4px 10px; border-radius:999px; border:1px solid #2a2a31; color:#b3aebb}
+.pillx.rdy{color:#41d18f; border-color:rgba(65,209,143,.35)}
+.pillx.cl{color:#ffb27a; border-color:rgba(255,125,36,.35)}
+.app-body{padding:16px}
 
-/* ---- capability grid ---- */
+/* mapping grid mock */
+.mg{width:100%; border-collapse:separate; border-spacing:0; font-size:12px}
+.mg th{ text-align:left; font-family:"Cascadia Mono",Consolas,monospace; font-size:9.5px; letter-spacing:.08em; text-transform:uppercase;
+  color:#7d7883; padding:0 12px 9px; border-bottom:1px solid #23232a; white-space:nowrap}
+.mg td{padding:11px 12px; border-bottom:1px solid #1a1a20; vertical-align:middle}
+.mg tr td:first-child{border-left:3px solid transparent; border-radius:2px 0 0 2px}
+.r-ok td:first-child{border-left-color:#41d18f}.r-rev td:first-child{border-left-color:#f2b23c}.r-ai td:first-child{border-left-color:#ff7d24}
+.r-ok{background:rgba(65,209,143,.06)}.r-rev{background:rgba(242,178,60,.06)}.r-ai{background:rgba(255,125,36,.06)}
+.cmono{font-family:"Cascadia Mono",Consolas,monospace; color:#e7e4ec}
+.tsub{color:#8b8692; font-size:10.5px}
+.typ{font-size:10px; background:#202026; color:#c3bfca; border-radius:6px; padding:3px 8px; white-space:nowrap}
+.conf{display:flex; align-items:center; gap:8px; min-width:96px}
+.conf .bar{flex:1; height:6px; background:#26262d; border-radius:4px; overflow:hidden}
+.conf .bar span{display:block; height:100%; border-radius:4px}
+.conf .n{font-family:"Cascadia Mono",Consolas,monospace; font-size:10.5px; color:#b3aebb; width:30px; text-align:right}
+.stat-pill{font-size:10px; font-weight:600; padding:4px 9px; border-radius:999px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap}
+.stat-pill .k{width:6px;height:6px;border-radius:50%}
+.s-ok{background:rgba(65,209,143,.14); color:#57d89b}.s-ok .k{background:#41d18f}
+.s-rev{background:rgba(242,178,60,.14); color:#f2b23c}.s-rev .k{background:#f2b23c}
+.s-ai{background:rgba(255,125,36,.14); color:#ff9752}.s-ai .k{background:#ff7d24}
+
+/* KYD chat mock */
+.kyd{display:grid; grid-template-columns:1fr; gap:12px}
+.kfile{display:flex; align-items:center; gap:11px; padding:11px 13px; background:#17171b; border:1px solid #26262d; border-radius:11px}
+.kfile .ic{width:34px;height:34px;border-radius:9px;background:rgba(65,209,143,.14);color:#41d18f;display:flex;align-items:center;justify-content:center;font-size:15px}
+.kfile .nm{font-weight:600;color:#eceaf0;font-size:12.5px}.kfile .mt{color:#8b8692;font-size:10.5px;font-family:"Cascadia Mono",Consolas,monospace}
+.kfile .rdy{margin-left:auto;font-size:10px;color:#41d18f;background:rgba(65,209,143,.13);border:1px solid rgba(65,209,143,.3);border-radius:999px;padding:4px 11px}
+.bub{max-width:82%; padding:11px 14px; border-radius:14px; font-size:12.5px; line-height:1.55}
+.bub.me{margin-left:auto; background:#d04a02; color:#fff; border-bottom-right-radius:5px}
+.bub.ai{background:#1a1a20; border:1px solid #26262d; color:#dcd9e0; border-bottom-left-radius:5px}
+.bub.ai b{color:#fff}
+.krow{display:flex; align-items:center; gap:8px; margin-top:9px; flex-wrap:wrap}
+.kroute{font-family:"Cascadia Mono",Consolas,monospace; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:#ff9752; background:rgba(255,125,36,.13); border:1px solid rgba(255,125,36,.3); border-radius:999px; padding:3px 9px}
+.kcite{font-size:10.5px; color:#b3aebb; background:#17171b; border:1px solid #2a2a31; border-radius:7px; padding:3px 9px; font-family:"Cascadia Mono",Consolas,monospace}
+
+/* console mock */
+.con{background:#0b0b0e; border-radius:10px; padding:14px 16px; font-family:"Cascadia Mono",Consolas,monospace; font-size:11.5px; line-height:1.9; color:#b3aebb}
+.con .ok{color:#41d18f}.con .o{color:#ff9752}.con .dim{color:#6f6a78}
+.con .barx{height:7px; background:#1c1c22; border-radius:4px; margin-top:10px; overflow:hidden}
+.con .barx span{display:block; height:100%; width:82%; background:linear-gradient(90deg,#d04a02,#ff9752); border-radius:4px}
+
+/* ---------------------------- stat band ---------------------------- */
+.band{margin:56px 0 8px; display:grid; grid-template-columns:repeat(5,1fr); gap:1px; background:var(--line);
+  border:1px solid var(--line); border-radius:16px; overflow:hidden; box-shadow:var(--shadow)}
+.band .cell{background:var(--surface); padding:24px 20px}
+.band .n{font-size:34px; font-weight:800; letter-spacing:-.03em; line-height:1;
+  background:linear-gradient(180deg,var(--accent-2),var(--accent-deep)); -webkit-background-clip:text; background-clip:text; color:transparent; font-variant-numeric:tabular-nums}
+.band .l{display:block; margin-top:9px; font-size:12.5px; color:var(--muted)}
+@media(max-width:780px){.band{grid-template-columns:repeat(2,1fr)} .band .cell:last-child{grid-column:1/-1}}
+
+/* ---------------------------- sections ---------------------------- */
+section{padding:64px 0; border-top:1px solid var(--line)}
+section h2{font-size:clamp(28px,3.6vw,40px); margin:0 0 12px; letter-spacing:-.025em; font-weight:800}
+.intro{color:var(--muted); max-width:66ch; margin:0 0 34px; font-size:17.5px; line-height:1.6}
+
+/* capability / workflow grid */
 .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
-@media(max-width:820px){.grid{grid-template-columns:1fr 1fr}}
-@media(max-width:520px){.grid{grid-template-columns:1fr}}
-.card{
-  background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:22px 20px;
-  box-shadow:var(--shadow);
-}
-.card h3{margin:0 0 7px; font-size:16.5px; letter-spacing:-.005em}
+@media(max-width:860px){.grid{grid-template-columns:1fr 1fr}}
+@media(max-width:540px){.grid{grid-template-columns:1fr}}
+.card{position:relative; background:linear-gradient(180deg,var(--surface),var(--surface)); border:1px solid var(--line);
+  border-radius:15px; padding:24px 22px; box-shadow:var(--shadow); transition:transform .18s, border-color .18s}
+.card:hover{transform:translateY(-3px); border-color:var(--accent-line)}
+.card .tag{font-family:"Cascadia Mono",Consolas,monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); display:block; margin-bottom:12px}
+.card h3{margin:0 0 8px; font-size:17px; letter-spacing:-.01em; font-weight:700}
 .card p{margin:0; font-size:14.5px; color:var(--muted); line-height:1.55}
-.card .tag{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent-deep); display:block; margin-bottom:11px}
+.card .ico{width:38px;height:38px;border-radius:11px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:14px}
 
-/* ---- architecture diagram ---- */
-.arch{
-  background:var(--sunk); border:1px solid var(--line); border-radius:16px; padding:28px 24px;
-  display:flex; flex-direction:column; gap:14px;
-}
-.layer{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
-.layer .role{
-  flex:0 0 118px; font-family:ui-monospace,Consolas,monospace; font-size:11.5px; letter-spacing:.08em;
-  text-transform:uppercase; color:var(--faint); text-align:right; padding-top:6px;
-}
-@media(max-width:640px){.layer .role{flex-basis:100%; text-align:left}}
-.nodes{display:flex; gap:10px; flex-wrap:wrap; flex:1}
-.node{
-  background:var(--surface); border:1px solid var(--line-strong); border-radius:10px;
-  padding:11px 15px; font-size:14px; font-weight:600; flex:1; min-width:130px;
-}
-.node span{display:block; font-weight:400; font-size:12px; color:var(--muted); margin-top:3px}
-.node.accent{border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent)}
-.node.store{background:var(--sunk)}
-.flowdown{align-self:center; color:var(--faint); font-size:18px; line-height:1}
-.arch-note{font-size:13.5px; color:var(--muted); margin:6px 2px 0}
+/* product tour */
+.tour{display:flex; flex-direction:column; gap:44px; margin-top:6px}
+.tour-row{display:grid; grid-template-columns:1fr 1fr; gap:34px; align-items:center}
+.tour-row.rev .tour-txt{order:2}
+@media(max-width:840px){.tour-row,.tour-row.rev .tour-txt{grid-template-columns:1fr; order:0}}
+.tour-txt .k{font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin-bottom:10px}
+.tour-txt h3{font-size:23px; margin:0 0 10px; letter-spacing:-.02em; font-weight:700}
+.tour-txt p{color:var(--muted); font-size:15px; margin:0 0 14px}
+.tlist{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px}
+.tlist li{display:flex; gap:10px; font-size:14px; color:var(--ink-dim)}
+.tlist li::before{content:"→"; color:var(--accent); font-family:"Cascadia Mono",Consolas,monospace}
 
-/* ---- AI list ---- */
-.ai-features{display:grid; grid-template-columns:1fr 1fr; gap:10px 26px; margin:0 0 26px; padding:0; list-style:none}
+/* AI features */
+.ai-features{display:grid; grid-template-columns:1fr 1fr; gap:0 30px; margin:0 0 24px; padding:0; list-style:none}
 @media(max-width:640px){.ai-features{grid-template-columns:1fr}}
-.ai-features li{display:flex; gap:11px; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--line); font-size:15px}
+.ai-features li{display:flex; gap:12px; align-items:baseline; padding:11px 0; border-bottom:1px solid var(--line); font-size:14.5px; color:var(--ink-dim)}
 .ai-features .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none;transform:translateY(-2px)}
-.ai-features b{font-weight:600}
-.callout{
-  background:var(--accent-soft); border:1px solid var(--line); border-left:3px solid var(--accent);
-  border-radius:10px; padding:16px 18px; font-size:14.5px; color:var(--ink);
-}
-.callout b{color:var(--accent-deep)}
+.ai-features b{font-weight:600; color:var(--ink)}
+.callout{background:var(--accent-soft); border:1px solid var(--accent-line); border-radius:13px; padding:18px 20px; font-size:14.5px; color:var(--ink-dim)}
+.callout b{color:var(--accent)}
 
-/* ---- security two-col ---- */
+/* architecture */
+.arch{background:var(--sunk); border:1px solid var(--line); border-radius:18px; padding:30px 26px; display:flex; flex-direction:column; gap:14px}
+.layer{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+.layer .role{flex:0 0 116px; font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); text-align:right; padding-top:6px}
+@media(max-width:640px){.layer .role{flex-basis:100%; text-align:left}}
+.nodes{display:flex; gap:12px; flex-wrap:wrap; flex:1}
+.node{background:var(--surface); border:1px solid var(--line-2); border-radius:12px; padding:13px 16px; font-size:14px; font-weight:600; flex:1; min-width:140px}
+.node span{display:block; font-weight:400; font-size:12px; color:var(--muted); margin-top:4px}
+.node.accent{border-color:var(--accent-line); box-shadow:inset 0 0 0 1px var(--accent-line)}
+.node.store{background:var(--sunk)}
+.flowdown{align-self:center; color:var(--faint); font-size:18px}
+.arch-note{font-size:13.5px; color:var(--muted); margin:8px 2px 0}
+
+/* security two-col */
 .two{display:grid; grid-template-columns:1fr 1fr; gap:18px}
 @media(max-width:720px){.two{grid-template-columns:1fr}}
-.panel{background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:22px 20px; box-shadow:var(--shadow)}
-.panel h3{margin:0 0 14px; font-size:15px; display:flex; align-items:center; gap:9px}
-.panel h3 .badge{font-family:ui-monospace,Consolas,monospace; font-size:10.5px; letter-spacing:.06em; padding:3px 8px; border-radius:999px}
-.badge.on{background:var(--good-bg); color:var(--good)}
-.badge.rec{background:var(--warn-bg); color:var(--warn)}
-.panel ul{margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:11px}
-.panel li{font-size:14px; color:var(--ink); padding-left:20px; position:relative; line-height:1.5}
-.panel li::before{position:absolute; left:0; top:1px; font-family:ui-monospace,Consolas,monospace; font-size:13px}
-.panel.good li::before{content:"✓"; color:var(--good)}
-.panel.rec li::before{content:"→"; color:var(--warn)}
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:15px; padding:24px 22px; box-shadow:var(--shadow)}
+.panel h3{margin:0 0 16px; font-size:15px; display:flex; align-items:center; gap:10px; font-weight:700}
+.panel h3 .badge{font-family:"Cascadia Mono",Consolas,monospace; font-size:10px; letter-spacing:.06em; padding:4px 9px; border-radius:999px}
+.badge.on{background:var(--good-bg); color:var(--good)} .badge.rec{background:var(--warn-bg); color:var(--warn)}
+.panel ul{margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:12px}
+.panel li{font-size:14px; color:var(--ink-dim); padding-left:22px; position:relative; line-height:1.5}
+.panel li::before{position:absolute; left:0; top:0; font-family:"Cascadia Mono",Consolas,monospace; font-size:13px}
+.panel.good li::before{content:"✓"; color:var(--good)} .panel.rec li::before{content:"→"; color:var(--warn)}
 .panel li span{color:var(--muted)}
 
-/* ---- status ---- */
-.status-row{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px}
-.pill{display:inline-flex; align-items:center; gap:8px; font-size:13px; padding:8px 14px; border-radius:999px; border:1px solid var(--line-strong); background:var(--surface)}
-.pill .k{width:8px;height:8px;border-radius:50%}
-.pill.k-good .k{background:var(--good)} .pill.k-warn .k{background:var(--warn)} .pill.k-info .k{background:var(--accent)}
+/* status */
+.status-row{display:flex; gap:12px; flex-wrap:wrap}
+.spill{display:inline-flex; align-items:center; gap:9px; font-size:13px; padding:9px 15px; border-radius:999px; border:1px solid var(--line-2); background:var(--surface); color:var(--ink-dim)}
+.spill .k{width:8px;height:8px;border-radius:50%}
+.spill.g .k{background:var(--good)}.spill.w .k{background:var(--warn)}.spill.i .k{background:var(--accent)}
 
-/* ---- footer ---- */
-footer{border-top:1px solid var(--line); padding:34px 0 60px; color:var(--muted); font-size:14px}
-footer code{background:var(--sunk); border:1px solid var(--line); border-radius:6px; padding:2px 7px; font-size:12.5px}
-.note{font-size:12.5px; color:var(--faint); margin-top:18px; max-width:70ch}
-@media (prefers-reduced-motion: reduce){*{transition:none!important}}
-@page{margin:14mm}
+/* footer */
+footer{border-top:1px solid var(--line); padding:40px 0 66px; color:var(--muted); font-size:14px}
+footer code{background:var(--sunk); border:1px solid var(--line); border-radius:6px; padding:2px 7px; font-size:12.5px; color:var(--ink-dim)}
+.note{font-size:12.5px; color:var(--faint); margin-top:18px; max-width:74ch}
+
+/* motion (screen only) */
+@media (prefers-reduced-motion:no-preference){
+  .reveal{opacity:0; transform:translateY(16px); animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+/* print / PDF — force the light palette so it's readable + paper-friendly.
+   (Product mockups keep their own fixed dark palette, like real screenshots.) */
+@page{margin:12mm}
 @media print{
-  body{print-color-adjust:exact; -webkit-print-color-adjust:exact}
-  .toggle{display:none}
-  .topbar{position:static}
-  section,.hero,.arch,.card,.panel,.stats{break-inside:avoid}
-  .stats{box-shadow:none}
+  :root{
+    --bg:#ffffff; --bg-2:#f7f4f0; --surface:#ffffff; --surface-2:#faf8f5; --sunk:#f4f1ec;
+    --ink:#1b1712; --ink-dim:#2c2620; --muted:#5b544c; --faint:#938b81;
+    --line:#e4ded4; --line-2:#d6cec1;
+    --accent:#c8500f; --accent-2:#d8641c; --accent-deep:#a83a00;
+    --accent-soft:rgba(200,80,15,.08); --accent-line:rgba(200,80,15,.28);
+    --good:#158a4c; --good-bg:rgba(21,138,76,.1);
+    --warn:#a5680a; --warn-bg:rgba(165,104,10,.12);
+    --bad:#c0271f; --bad-bg:rgba(192,39,31,.1);
+    --shadow:0 1px 2px rgba(0,0,0,.06); --shadow-lift:0 8px 20px -12px rgba(0,0,0,.25); --glow:0 0 0 1px var(--accent-line);
+  }
+  body{background:#fff; print-color-adjust:exact; -webkit-print-color-adjust:exact}
+  .hero::before{display:none}
+  .band .n{-webkit-text-fill-color:initial; color:var(--accent-deep)}
+  .hero h1{font-size:28px!important; white-space:nowrap}   /* keep the pipeline on one line in the PDF */
+  .topbar{position:static} .toggle{display:none}
+  section,.hero,.card,.panel,.band,.shot,.arch,.tour-row{break-inside:avoid}
+  .reveal{opacity:1; transform:none; animation:none}
 }
 </style>
 
+<!-- ============================ TOP BAR ============================ -->
 <div class="topbar">
   <div class="wrap">
     <div class="brand">
       <svg class="mark" viewBox="0 0 102 36" aria-hidden="true"><polygon points="0,36 16,20 56,20 40,36"/><polygon points="46,16 62,0 102,0 86,16"/></svg>
-      <div><span class="serif">AI Mapping Studio</span><small>PwC · Data Conversion</small></div>
+      <div><b>AI Mapping Studio</b><small>PwC · Data Conversion</small></div>
     </div>
-    <button class="toggle" id="themeBtn" aria-label="Toggle color theme"><span id="themeIcon">◐</span> Theme</button>
+    <button class="toggle" id="themeBtn" aria-label="Toggle color theme"><span id="themeIcon">☀</span> Theme</button>
   </div>
 </div>
 
+<!-- ============================ HERO ============================ -->
 <header class="hero">
   <div class="wrap">
-    <div class="kicker">Executive Brief</div>
-    <h1 class="serif">AI‑assisted <em>source‑to‑target</em> mapping for data conversions.</h1>
-    <p class="lede">AI Mapping Studio turns the slowest, most error‑prone part of an enterprise data conversion — deciding how every target column is populated from a legacy source — into an AI‑generated draft that analysts review, correct, validate, and ship as runnable SQL. <span class="soft">Insurance / Guidewire‑inspired, built for data conversion teams.</span></p>
-
-    <div class="stats">
-      <div class="stat"><div class="n">13</div><span class="l">AI‑assisted operations</span></div>
-      <div class="stat"><div class="n">Multi</div><span class="l">Tenant &amp; data‑isolated</span></div>
-      <div class="stat"><div class="n">38</div><span class="l">API endpoints</span></div>
-      <div class="stat"><div class="n">Chat</div><span class="l">Ask your own documents</span></div>
-      <div class="stat"><div class="n">0</div><span class="l">Build steps to run</span></div>
+    <div class="tag-row reveal">
+      <span class="chip"><span class="k o"></span> Executive Brief</span>
+      <span class="chip"><span class="k"></span> Working software</span>
+      <span class="chip">Insurance · Guidewire-inspired</span>
     </div>
+    <p class="hero-kicker reveal" style="animation-delay:.03s"><span class="ai">Drafted by AI</span> <span class="dash">—</span> <span class="hu">Signed off by Human.</span></p>
+    <h1 class="reveal" style="animation-delay:.06s">Data Conversion <span class="sep">—</span> Map <span class="arw">→</span> Develop <span class="arw">→</span> Deploy</h1>
+    <p class="lede reveal" style="animation-delay:.12s">AI Mapping Studio turns the slowest, most error-prone part of an enterprise data conversion — deciding how every target column is populated from a legacy source — into an <b>AI-generated draft</b> that analysts review, correct, validate, and ship as <b>runnable SQL</b>.</p>
+
+    <!-- HERO PRODUCT SHOT: Mapping Workspace -->
+    <div class="shot hero-shot reveal" style="animation-delay:.2s" role="img" aria-label="Mapping Workspace screenshot: a review grid of source-to-target column mappings with AI confidence scores and approval status.">
+      <div class="shot-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="u mono">ai-mapping-studio · Mapping Workspace</span></div>
+      <div class="app">
+        <aside class="app-side">
+          <div class="app-brand"><svg class="m" viewBox="0 0 102 36"><polygon points="0,36 16,20 56,20 40,36"/><polygon points="46,16 62,0 102,0 86,16"/></svg><b>AI Mapping Studio</b></div>
+          <div class="app-sec">Setup</div>
+          <div class="nav"><i>▦</i> Know Your Data</div>
+          <div class="nav"><i>⌸</i> Source Systems</div>
+          <div class="nav"><i>⛃</i> Target System</div>
+          <div class="app-sec">Mapping</div>
+          <div class="nav"><i>✦</i> AI Generator</div>
+          <div class="nav on"><i>▤</i> Mapping Workspace</div>
+          <div class="nav"><i>✓</i> Validation</div>
+          <div class="nav"><i>⧉</i> ETL &amp; Deploy</div>
+        </aside>
+        <div class="app-main">
+          <div class="app-top">
+            <div class="t">Mapping Workspace — cs_claim</div>
+            <div class="r"><span class="pillx rdy">● AI Ready</span><span class="pillx cl">▦ PWC_Markel</span></div>
+          </div>
+          <div class="app-body">
+            <table class="mg">
+              <thead><tr><th>Source column</th><th>Target column</th><th>Type</th><th>Confidence</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr class="r-ok"><td class="cmono">clm.publicid</td><td class="cmono">PolicyRef</td><td><span class="typ">Direct</span></td><td><div class="conf"><div class="bar"><span style="width:98%;background:#41d18f"></span></div><span class="n">98</span></div></td><td><span class="stat-pill s-ok"><span class="k"></span>Approved</span></td></tr>
+                <tr class="r-ok"><td class="cmono">clm.claimid</td><td class="cmono">ClaimNumber</td><td><span class="typ">Direct</span></td><td><div class="conf"><div class="bar"><span style="width:96%;background:#41d18f"></span></div><span class="n">96</span></div></td><td><span class="stat-pill s-ok"><span class="k"></span>Approved</span></td></tr>
+                <tr class="r-rev"><td class="cmono">clm.lossdate</td><td class="cmono">LossDate</td><td><span class="typ">Format Conv.</span></td><td><div class="conf"><div class="bar"><span style="width:88%;background:#f2b23c"></span></div><span class="n">88</span></div></td><td><span class="stat-pill s-rev"><span class="k"></span>Review</span></td></tr>
+                <tr class="r-rev"><td class="cmono">clm.coveredpartytype</td><td class="cmono">PartyRole</td><td><span class="typ">Lookup</span></td><td><div class="conf"><div class="bar"><span style="width:81%;background:#f2b23c"></span></div><span class="n">81</span></div></td><td><span class="stat-pill s-rev"><span class="k"></span>Review</span></td></tr>
+                <tr class="r-ai"><td class="cmono tsub">(no source equiv.)</td><td class="cmono">src_upd_dt</td><td><span class="typ">Default · (getdate())</span></td><td><div class="conf"><div class="bar"><span style="width:100%;background:#ff7d24"></span></div><span class="n">AI</span></div></td><td><span class="stat-pill s-ai"><span class="k"></span>AI draft</span></td></tr>
+                <tr class="r-rev"><td class="cmono">clm.reserveamt</td><td class="cmono">ReserveAmount</td><td><span class="typ">Type Conv.</span></td><td><div class="conf"><div class="bar"><span style="width:77%;background:#f2b23c"></span></div><span class="n">77</span></div></td><td><span class="stat-pill s-rev"><span class="k"></span>Review</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="shot-cap"><b>Mapping Workspace.</b> Every target column gets an AI-proposed source, transformation rule and a 0–100 confidence — analysts approve, edit, or regenerate, with row colour showing review status at a glance.</p>
   </div>
 </header>
 
+<!-- ============================ STAT BAND ============================ -->
+<div class="wrap">
+  <div class="band reveal">
+    <div class="cell"><div class="n">13</div><span class="l">AI-assisted operations</span></div>
+    <div class="cell"><div class="n">Multi</div><span class="l">Tenant &amp; data-isolated</span></div>
+    <div class="cell"><div class="n">38</div><span class="l">API endpoints</span></div>
+    <div class="cell"><div class="n">Chat</div><span class="l">Ask your own documents</span></div>
+    <div class="cell"><div class="n">0</div><span class="l">Build steps to run</span></div>
+  </div>
+</div>
+
+<!-- ============================ PROBLEM ============================ -->
 <section>
   <div class="wrap">
     <div class="eyebrow">The problem</div>
-    <h2 class="serif">A conversion lives or dies on its mapping.</h2>
-    <p class="intro">Every conversion needs a column‑level Source‑to‑Target Mapping: for each target field, which source column feeds it, what transformation applies, and how keys and joins line up. Across hundreds of tables this is slow, manual, and easy to get wrong. AI Mapping Studio proposes the mapping, then keeps a human firmly in control of approving it.</p>
+    <h2>A conversion lives or dies on its mapping.</h2>
+    <p class="intro">Every conversion needs a column-level Source-to-Target Mapping: for each target field, which source column feeds it, what transformation applies, and how keys and joins line up. Across hundreds of tables this is slow, manual, and easy to get wrong. AI Mapping Studio proposes the mapping, then keeps a human firmly in control of approving it.</p>
     <div class="grid">
       <div class="card"><span class="tag">Ingest</span><h3>Bring in any schema</h3><p>Connect a live SQL Server, or upload a data dictionary, DDL, or spreadsheet — extracted automatically, with instant deterministic parsing for SQL and structured Excel.</p></div>
       <div class="card"><span class="tag">Generate</span><h3>AI drafts the mapping</h3><p>Claude proposes each column's source, transformation rule, business rule, null handling, a 0–100 confidence, and the SQL JOIN that assembles each target entity.</p></div>
@@ -217,27 +363,155 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   </div>
 </section>
 
+<!-- ============================ PRODUCT TOUR ============================ -->
 <section>
   <div class="wrap">
-    <div class="eyebrow">What it does</div>
-    <h2 class="serif">The workflow, end to end.</h2>
-    <div class="grid">
-      <div class="card"><h3>Source &amp; Target systems</h3><p>Manage connections — live SQL Server or uploaded files — with exactly one active target schema driving the whole app.</p></div>
-      <div class="card"><h3>AI Mapping Generator</h3><p>Pick target tables, tune the strategy and the editable prompt, and generate mappings table‑by‑table with a live console.</p></div>
-      <div class="card"><h3>Mapping Workspace</h3><p>Confidence scoring, approve/reject, inline edits, single‑field regeneration, and a full audit trail of every change.</p></div>
-      <div class="card"><h3>Validation</h3><p>A rules engine flags low‑confidence and unmapped‑mandatory fields against configurable thresholds.</p></div>
-      <div class="card"><h3>ETL &amp; Deploy</h3><p>Generate stored procedures and CREATE TABLE DDL, edit them, and deploy with all‑or‑nothing transactions.</p></div>
-      <div class="card"><h3>Export &amp; Usage</h3><p>Export the mapping document (CSV/JSON) and track AI token usage per feature and per client.</p></div>
-      <div class="card"><span class="tag">New</span><h3>Know Your Data</h3><p>Upload insurance documents — policies, claims, DDL, spreadsheets — and ask questions in a chat. Answers cite the exact source, with a whole‑document mode for smaller files.</p></div>
+    <div class="eyebrow">Product tour</div>
+    <h2>See it working.</h2>
+    <p class="intro">Three of the screens that carry the workflow, from asking questions of your own documents to generating deployable code.</p>
+
+    <div class="tour">
+      <!-- Know Your Data -->
+      <div class="tour-row">
+        <div class="tour-txt">
+          <div class="k">Know Your Data</div>
+          <h3>Chat with your insurance documents.</h3>
+          <p>Upload policies, claims, DDL or spreadsheets. The app validates that a file is insurance-relevant, ingests it, and lets analysts ask questions in plain language — every answer cites the exact source it came from.</p>
+          <ul class="tlist">
+            <li>Retrieval (RAG) with a whole-document mode for smaller files</li>
+            <li>Answers routed to SQL or document search automatically</li>
+            <li>Per-tenant &amp; insurance-scoped — nothing leaks across clients</li>
+          </ul>
+        </div>
+        <div>
+          <div class="shot" role="img" aria-label="Know Your Data chat: an uploaded schema file and a question answered with a citation.">
+            <div class="shot-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="u mono">Know Your Data · Chat</span></div>
+            <div class="app" style="grid-template-columns:1fr">
+              <div class="app-main">
+                <div class="app-top"><div class="t">Chat with your data</div><div class="r"><span class="pillx">Full file ●</span></div></div>
+                <div class="app-body"><div class="kyd">
+                  <div class="kfile"><div class="ic">▦</div><div><div class="nm">CMT_Schema.xlsx</div><div class="mt">XLSX · 124 KB · 28 tables</div></div><span class="rdy">✓ Ready</span></div>
+                  <div class="bub me">How many tables are in the schema, and which relate to claims?</div>
+                  <div class="bub ai">The schema defines <b>28 tables</b>. The claims-related ones include <b>cs_claim</b>, <b>cs_claimcontact</b>, <b>cs_claimcontactrole</b>, <b>cs_activity</b> and <b>cs_check</b>.
+                    <div class="krow"><span class="kroute">semantic</span><span class="kcite">▤ CMT_Schema.xlsx · p.3</span></div>
+                  </div>
+                </div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI generation console -->
+      <div class="tour-row rev">
+        <div class="tour-txt">
+          <div class="k">AI Mapping Generator</div>
+          <h3>Generate mappings table-by-table.</h3>
+          <p>Pick target tables, tune the strategy and the editable prompt, then watch a live console generate mappings entity-by-entity — chunked so even the widest tables never truncate.</p>
+          <ul class="tlist">
+            <li>Loops per entity and merges by column — no dropped fields</li>
+            <li>Grounded on the real source; the model never invents tables</li>
+            <li>Every run's token usage is tracked per feature and client</li>
+          </ul>
+        </div>
+        <div>
+          <div class="shot" role="img" aria-label="AI generation console showing per-table mapping progress.">
+            <div class="shot-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="u mono">AI Mapping Generator · Console</span></div>
+            <div class="app" style="grid-template-columns:1fr">
+              <div class="app-main">
+                <div class="app-top"><div class="t">Generate Mapping with AI</div><div class="r"><span class="pillx rdy">● running</span></div></div>
+                <div class="app-body"><div class="con">
+                  <div><span class="dim">▸</span> Reading target schema… <span class="ok">64 tables, 1662 columns</span></div>
+                  <div><span class="o">✦</span> cs_claim <span class="dim">—</span> <span class="ok">42/42 columns mapped</span></div>
+                  <div><span class="o">✦</span> cs_activity <span class="dim">—</span> <span class="ok">66/66 columns mapped</span></div>
+                  <div><span class="o">✦</span> cs_claimcontactrole <span class="dim">—</span> mapping <span class="dim">28/31…</span></div>
+                  <div class="barx"><span></span></div>
+                  <div class="dim" style="margin-top:8px">JOIN inferred · confidence scored · merged by column</div>
+                </div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Target System -->
+      <div class="tour-row">
+        <div class="tour-txt">
+          <div class="k">Target System</div>
+          <h3>One active schema drives everything.</h3>
+          <p>Manage SQL Server or file-based targets, browse the entity tree and every column's type, keys and defaults — the one active target schema feeds mapping, validation and CREATE TABLE generation.</p>
+          <ul class="tlist">
+            <li>Live metadata read, or AI-extracted from an uploaded file</li>
+            <li>Add, edit and delete tables &amp; columns inline</li>
+            <li>Schema defaults flow straight into generated DDL</li>
+          </ul>
+        </div>
+        <div>
+          <div class="shot" role="img" aria-label="Target System entity browser with a column grid.">
+            <div class="shot-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="u mono">Target System · CommonStage</span></div>
+            <div class="app">
+              <aside class="app-side">
+                <div class="app-sec">Entities · 64</div>
+                <div class="nav"><i>⛃</i> cs_activity</div>
+                <div class="nav"><i>⛃</i> cs_claim</div>
+                <div class="nav on"><i>⛃</i> cs_claimcontactrole</div>
+                <div class="nav"><i>⛃</i> cs_coverage</div>
+                <div class="nav"><i>⛃</i> cs_document</div>
+                <div class="nav"><i>⛃</i> cs_exposure</div>
+              </aside>
+              <div class="app-main">
+                <div class="app-top"><div class="t">cs_claimcontactrole</div><div class="r"><span class="pillx">1662 columns</span></div></div>
+                <div class="app-body">
+                  <table class="mg">
+                    <thead><tr><th>Column</th><th>Type</th><th>Len</th><th>Mandatory</th></tr></thead>
+                    <tbody>
+                      <tr><td class="cmono">claimcontactid</td><td><span class="typ">varchar</span></td><td class="tsub">100</td><td><span class="stat-pill s-ok"><span class="k"></span>Required</span></td></tr>
+                      <tr><td class="cmono">coveredpartytype</td><td><span class="typ">varchar</span></td><td class="tsub">50</td><td><span class="tsub">Optional</span></td></tr>
+                      <tr><td class="cmono">partynumber</td><td><span class="typ">numeric</span></td><td class="tsub">18</td><td><span class="tsub">Optional</span></td></tr>
+                      <tr><td class="cmono">policyid</td><td><span class="typ">varchar</span></td><td class="tsub">100</td><td><span class="tsub">Optional</span></td></tr>
+                      <tr><td class="cmono">src_upd_dt</td><td><span class="typ">datetime</span></td><td class="tsub">—</td><td><span class="tsub">Optional</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
+<!-- ============================ HOW AI IS USED ============================ -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow">How AI is used</div>
+    <h2>Claude, applied narrowly and safely.</h2>
+    <p class="intro">Thirteen bounded operations — each returns structured data, SQL, or a grounded answer that the application parses and a person reviews. The model never acts on its own.</p>
+    <ul class="ai-features">
+      <li><span class="dot"></span><span><b>Mapping generation</b> — per target table</span></li>
+      <li><span class="dot"></span><span><b>Single-field regeneration</b> — grounded on the real source</span></li>
+      <li><span class="dot"></span><span><b>Schema extraction</b> — from uploaded files</span></li>
+      <li><span class="dot"></span><span><b>Rich extraction</b> — infers keys &amp; nullability</span></li>
+      <li><span class="dot"></span><span><b>ETL stored-procedure</b> generation</span></li>
+      <li><span class="dot"></span><span><b>CREATE TABLE DDL</b> generation</span></li>
+      <li><span class="dot"></span><span><b>Add column / entity</b> from plain language</span></li>
+      <li><span class="dot"></span><span><b>Deploy-time SQL auto-fix</b> — human-gated</span></li>
+      <li><span class="dot"></span><span><b>Insurance-domain check</b> — flags off-topic uploads</span></li>
+      <li><span class="dot"></span><span><b>Query routing</b> — structured vs. document questions</span></li>
+      <li><span class="dot"></span><span><b>Text-to-SQL</b> — over ingested structured data</span></li>
+      <li><span class="dot"></span><span><b>Grounded answers</b> — with source citations</span></li>
+    </ul>
+    <div class="callout"><b>Guardrails.</b> Prompts forbid inventing tables or columns; hallucinated DDL is flagged; a deploy that fails is auto-corrected but <b>never auto-deployed</b> — the fix is surfaced for review. Know Your Data uses retrieval (RAG) over a local vector store and only answers from the user's own uploaded, insurance-relevant documents — every answer carries citations. Usage logs record token counts only — never prompt or response content, and <b>no autonomous agents</b> act on their own.</div>
+  </div>
+</section>
+
+<!-- ============================ ARCHITECTURE ============================ -->
 <section>
   <div class="wrap">
     <div class="eyebrow">Architecture</div>
-    <h2 class="serif">One service, cleanly layered.</h2>
-    <p class="intro">A static browser frontend and the API are served from a single origin. Everything privileged — database access, AI calls, persistence — happens on the server, scoped to the signed‑in user and their active client.</p>
+    <h2>One service, cleanly layered.</h2>
+    <p class="intro">A static browser frontend and the API are served from a single origin. Everything privileged — database access, AI calls, persistence — happens on the server, scoped to the signed-in user and their active client.</p>
     <div class="arch">
       <div class="layer"><div class="role">User</div><div class="nodes"><div class="node">Browser<span>Static HTML + vanilla JS, SPA shell</span></div></div></div>
       <div class="flowdown">↓</div>
@@ -246,7 +520,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
       <div class="layer"><div class="role">Logic</div><div class="nodes"><div class="node">Services<span>Mapping · Extraction · ETL · Deploy · Auth · Tenant store · Document Q&amp;A</span></div></div></div>
       <div class="flowdown">↓</div>
       <div class="layer"><div class="role">Data &amp; AI</div><div class="nodes">
-        <div class="node store">SQLite<span>Users, clients, per‑tenant docs, uploads &amp; vectors</span></div>
+        <div class="node store">SQLite<span>Users, clients, per-tenant docs, uploads &amp; vectors</span></div>
         <div class="node store">SQL Server<span>Live source / target</span></div>
         <div class="node accent">Claude<span>via corporate gateway</span></div>
       </div></div>
@@ -255,44 +529,22 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   </div>
 </section>
 
-<section>
-  <div class="wrap">
-    <div class="eyebrow">How AI is used</div>
-    <h2 class="serif">Claude, applied narrowly and safely.</h2>
-    <p class="intro">Thirteen bounded operations — each returns structured data, SQL, or a grounded answer that the application parses and a person reviews. The model never acts on its own.</p>
-    <ul class="ai-features">
-      <li><span class="dot"></span><span><b>Mapping generation</b> — per target table</span></li>
-      <li><span class="dot"></span><span><b>Single‑field regeneration</b> — grounded on the real source</span></li>
-      <li><span class="dot"></span><span><b>Schema extraction</b> — from uploaded files</span></li>
-      <li><span class="dot"></span><span><b>Rich extraction</b> — infers keys &amp; nullability</span></li>
-      <li><span class="dot"></span><span><b>ETL stored‑procedure</b> generation</span></li>
-      <li><span class="dot"></span><span><b>CREATE TABLE DDL</b> generation</span></li>
-      <li><span class="dot"></span><span><b>Add column / entity</b> from plain language</span></li>
-      <li><span class="dot"></span><span><b>Deploy‑time SQL auto‑fix</b> — human‑gated</span></li>
-      <li><span class="dot"></span><span><b>Insurance‑domain check</b> — flags off‑topic uploads</span></li>
-      <li><span class="dot"></span><span><b>Query routing</b> — structured vs. document questions</span></li>
-      <li><span class="dot"></span><span><b>Text‑to‑SQL</b> — over ingested structured data</span></li>
-      <li><span class="dot"></span><span><b>Grounded answers</b> — with source citations</span></li>
-    </ul>
-    <div class="callout"><b>Guardrails.</b> Prompts forbid inventing tables or columns; hallucinated DDL is flagged; a deploy that fails is auto‑corrected but <b>never auto‑deployed</b> — the fix is surfaced for review. <b>Know Your Data</b> uses retrieval (RAG) over a local vector store and only answers from the user's own uploaded, insurance‑relevant documents — every answer carries citations. Usage logs record token counts only — never prompt or response content, and <b>no autonomous agents</b> act on their own.</div>
-  </div>
-</section>
-
+<!-- ============================ TRUST & SECURITY ============================ -->
 <section>
   <div class="wrap">
     <div class="eyebrow">Trust &amp; security</div>
-    <h2 class="serif">What's in place — and what's next.</h2>
-    <p class="intro">An honest posture: strong tenant isolation and API hardening today; production‑hardening still ahead. Nothing below is claimed unless it's in the code.</p>
+    <h2>What's in place — and what's next.</h2>
+    <p class="intro">An honest posture: strong tenant isolation and API hardening today; production-hardening still ahead. Nothing below is claimed unless it's in the code.</p>
     <div class="two">
       <div class="panel good">
         <h3>In place <span class="badge on">Implemented</span></h3>
         <ul>
-          <li>Email/password auth, hashed passwords, admin‑managed accounts <span>(self‑signup off by default)</span></li>
-          <li>Per‑tenant data isolation scoped to user + client, enforced server‑side</li>
-          <li>CSRF protection, login throttling, and connection‑attempt rate limiting</li>
+          <li>Email/password auth, hashed passwords, admin-managed accounts <span>(self-signup off by default)</span></li>
+          <li>Per-tenant data isolation scoped to user + client, enforced server-side</li>
+          <li>CSRF protection, login throttling, and connection-attempt rate limiting</li>
           <li>Connection passwords never persisted; no credentials in logs or AI prompts</li>
-          <li>Human‑gated deploys; all‑or‑nothing transactions with rollback</li>
-          <li>Uploaded documents are per‑tenant and insurance‑scoped; chat answers stay grounded in them with citations</li>
+          <li>Human-gated deploys; all-or-nothing transactions with rollback</li>
+          <li>Uploaded documents are per-tenant and insurance-scoped; chat answers stay grounded in them with citations</li>
         </ul>
       </div>
       <div class="panel rec">
@@ -308,36 +560,45 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   </div>
 </section>
 
+<!-- ============================ WHERE IT STANDS ============================ -->
 <section>
   <div class="wrap">
     <div class="eyebrow">Where it stands</div>
-    <h2 class="serif">Working software, documented.</h2>
+    <h2>Working software, documented.</h2>
     <div class="status-row">
-      <span class="pill k-good"><span class="k"></span> Core workflow functional</span>
-      <span class="pill k-good"><span class="k"></span> Backend test suite (32 files)</span>
-      <span class="pill k-info"><span class="k"></span> Full technical docs in <code style="font-size:12px" class="mono">docs/</code></span>
-      <span class="pill k-warn"><span class="k"></span> Not yet production‑hardened</span>
+      <span class="spill g"><span class="k"></span> Core workflow functional</span>
+      <span class="spill g"><span class="k"></span> Backend test suite (32 files)</span>
+      <span class="spill i"><span class="k"></span> Full technical docs in <code class="mono" style="font-size:12px">docs/</code></span>
+      <span class="spill w"><span class="k"></span> Not yet production-hardened</span>
     </div>
-    <p class="intro" style="margin-top:22px">The codebase is clean and layered, with the security‑critical paths (auth, tenant isolation, CSRF, deploy) covered by tests. The remaining work is concentrated in deployment readiness and frontend test coverage — not in core correctness.</p>
+    <p class="intro" style="margin-top:22px">The codebase is clean and layered, with the security-critical paths (auth, tenant isolation, CSRF, deploy) covered by tests. The remaining work is concentrated in deployment readiness and frontend test coverage — not in core correctness.</p>
   </div>
 </section>
 
+<!-- ============================ FOOTER ============================ -->
 <footer>
   <div class="wrap">
-    Prepared from a full source‑code analysis of AI Mapping Studio. The complete 28‑document technical reference — architecture, API, prompt inventory, database, security, testing, and a developer guide — lives in the repository under <code>docs/</code>, indexed by <code>docs/00-README.md</code>.
-    <p class="note">This brief summarizes an internal engineering documentation set. Figures (features, endpoints, tests) reflect the code as analyzed. No secrets or credentials are included.</p>
+    Prepared from a full source-code analysis of AI Mapping Studio. The complete 28-document technical reference — architecture, API, prompt inventory, database, security, testing, and a developer guide — lives in the repository under <code>docs/</code>, indexed by <code>docs/00-README.md</code>.
+    <p class="note">This brief summarizes an internal engineering documentation set. Figures (operations, endpoints, tests) reflect the code as analyzed. The product screens shown are faithful, representative UI mockups built from the app's real theme and data — not captured images. No secrets or credentials are included.</p>
   </div>
 </footer>
 
 <script>
 (function(){
   var root=document.documentElement, btn=document.getElementById('themeBtn'), icon=document.getElementById('themeIcon');
-  function cur(){ if(root.getAttribute('data-theme'))return root.getAttribute('data-theme');
-    return matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; }
-  btn.addEventListener('click',function(){
-    var next=cur()==='dark'?'light':'dark';
-    root.setAttribute('data-theme',next);
-    icon.textContent=next==='dark'?'☾':'☀';
-  });
+  function cur(){ return root.getAttribute('data-theme') || 'dark'; }   // dark-first
+  function paint(t){ icon.textContent = t==='dark' ? '☀' : '☾'; }
+  root.setAttribute('data-theme','dark'); paint('dark');
+  btn.addEventListener('click',function(){ var next=cur()==='dark'?'light':'dark'; root.setAttribute('data-theme',next); paint(next); });
+
+  // Keep the pipeline headline on ONE line: shrink font-size until it fits its width.
+  function fitHero(){
+    var h=document.querySelector('.hero h1'); if(!h) return;
+    var size=50, min=14; h.style.fontSize=size+'px';
+    while(size>min && h.scrollWidth>h.clientWidth){ size-=1; h.style.fontSize=size+'px'; }
+  }
+  window.addEventListener('load',fitHero);
+  window.addEventListener('resize',fitHero);
+  fitHero();
 })();
 </script>

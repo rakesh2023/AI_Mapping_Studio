@@ -91,6 +91,14 @@ body.theme-dark .topbar-logo.logo-dark{display:block;}
 }
 .meta-chip.ai-ready{background:var(--success-bg);color:var(--success);border-color:#c8ecd8;}
 .meta-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block;}
+/* Stakeholder-brief link in the header (accent pill, opens the brief in a new tab) */
+.brief-link{display:inline-flex;align-items:center;gap:7px;font-size:.8rem;font-weight:600;text-decoration:none;
+  color:var(--primary-dark);background:var(--primary-soft);border:1px solid #f3c9a6;border-radius:999px;
+  padding:6px 13px;white-space:nowrap;transition:background .15s,color .15s,border-color .15s;margin-right:2px;}
+.brief-link i{font-size:.95rem;}
+.brief-link:hover{background:var(--primary);color:#fff;border-color:var(--primary);}
+body.theme-dark .brief-link{color:#ffb27a;background:rgba(208,74,2,.16);border-color:rgba(208,74,2,.45);}
+body.theme-dark .brief-link:hover{background:var(--primary);color:#fff;border-color:var(--primary);}
 .icon-btn{
   width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:#fff;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;color:var(--text-main);position:relative;cursor:pointer;

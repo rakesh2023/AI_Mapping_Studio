@@ -13,6 +13,8 @@
 let editingId = null;
 let stagedEntities = null;   // entities[] loaded/extracted in the form, pending save
 let activeEntity = null;     // entity currently shown in the browser grid
+let stagedIsFreshExtract = false;   // true when stagedEntities came from a NEW load/extract (not a preload)
+let activeDiff = null;       // computeSchemaDiff() for the active target (changes since last extract)
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("target-system.html");
@@ -113,6 +115,7 @@ function renderConnections(){
 function openForm(id){
   editingId = id;
   stagedEntities = null;
+  stagedIsFreshExtract = false;   // a preloaded schema is NOT a fresh extract
   const card = document.getElementById("connFormCard");
   const form = document.getElementById("connForm");
   form.reset();
@@ -146,7 +149,7 @@ function openForm(id){
   card.style.display = "block";
   card.scrollIntoView({behavior:"smooth", block:"center"});
 }
-function closeForm(){ document.getElementById("connFormCard").style.display = "none"; editingId = null; stagedEntities = null; }
+function closeForm(){ document.getElementById("connFormCard").style.display = "none"; editingId = null; stagedEntities = null; stagedIsFreshExtract = false; }
 
 function toggleTargetFields(){
   const type = document.getElementById("cType").value;
@@ -192,6 +195,7 @@ async function loadSqlTables(){
     const data = await res.json();
     if(!data.ok){ el.innerHTML = failNote(data.error || "Could not read metadata."); return; }
     stagedEntities = dbMetadataToEntities(data);
+    stagedIsFreshExtract = true;   // diff against the previous extract on save
     const cols = stagedEntities.reduce((a,e)=>a+(e.fields||[]).length,0);
     el.innerHTML = okNote("Loaded " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(data.connection || cfg.database) + ". Save the target to keep it.");
     if(!document.getElementById("cName").value.trim()) document.getElementById("cName").value = data.connection || cfg.database;
@@ -229,6 +233,7 @@ async function loadFileTarget(){
       el.innerHTML = okNote("Extracted " + stagedEntities.length + " tables, " + cols + " columns from " + escapeHtml(out.fileName || file.name) +
         (out.truncatedChunks ? " (file was large — capped at " + out.chunks + " parts)" : "") + ". Save the target to keep it.");
     }
+    stagedIsFreshExtract = true;   // diff against the previous extract on save
     document.getElementById("cFile")._fileName = file.name;
     if(!document.getElementById("cName").value.trim()) document.getElementById("cName").value = file.name.replace(/\.[^.]+$/, "");
   }catch(err){
@@ -279,6 +284,14 @@ function saveConnectionForm(e){
     loadedAt: new Date().toISOString()
   });
   if(!conn.id) conn.id = uid("TGT");
+  // On a fresh re-extract, snapshot the PREVIOUS extract's schema so we can show
+  // "changes since last extract". Object.assign already carried existing.prevExtract
+  // forward for non-extract saves; here we overwrite it with the pre-extract schema.
+  if(stagedIsFreshExtract && existing && existing.entities && existing.entities.length){
+    const snap = snapshotEntities(existing.entities);
+    snap.at = existing.loadedAt || existing.uploadedAt || null;
+    conn.prevExtract = snap;
+  }
   // Never persist the DB password (target schema is already read into entities[]).
   rememberConnPassword(conn.id, conn.password);
   delete conn.password;
@@ -291,7 +304,26 @@ function saveConnectionForm(e){
   renderConnections();
   renderActiveBrowser();
   closeForm();
-  showNotification("Target '" + conn.name + "' saved" + (getActiveTargetId() === conn.id ? " and set active." : "."), "success");
+  let msg = "Target '" + conn.name + "' saved" + (getActiveTargetId() === conn.id ? " and set active." : ".");
+  if(stagedIsFreshExtract && conn.prevExtract){
+    const d = computeSchemaDiff(conn.prevExtract, conn.entities);
+    msg += d.hasChanges ? "  Changes since last extract: " + diffSummaryText(d) + "."
+                        : "  No schema changes since last extract.";
+  }
+  stagedIsFreshExtract = false;
+  showNotification(msg, "success");
+}
+
+/* Compact "+2 tables, -1 col…" summary for the save toast. */
+function diffSummaryText(d){
+  const c = d.counts, p = [];
+  if(c.tablesAdded)     p.push("+" + c.tablesAdded + " table" + (c.tablesAdded > 1 ? "s" : ""));
+  if(c.tablesRemoved)   p.push("-" + c.tablesRemoved + " table" + (c.tablesRemoved > 1 ? "s" : ""));
+  if(c.columnsAdded)    p.push("+" + c.columnsAdded + " col" + (c.columnsAdded > 1 ? "s" : ""));
+  if(c.columnsRenamed)  p.push("⇄ " + c.columnsRenamed + " renamed");
+  if(c.columnsModified) p.push("~" + c.columnsModified + " changed");
+  if(c.columnsRemoved)  p.push("-" + c.columnsRemoved + " col" + (c.columnsRemoved > 1 ? "s" : ""));
+  return p.join(", ");
 }
 
 function activateConn(id){
@@ -323,7 +355,13 @@ function renderActiveBrowser(){
   document.getElementById("noTargetState").style.display = (getTargetConnections().length ? "none" : (has ? "none" : ""));
   const addEntBtn = document.getElementById("addEntityBtn");
   if(addEntBtn) addEntBtn.style.display = has ? "" : "none";   // enable Add Entity once a target is loaded
-  if(!has) return;
+  if(!has){ activeDiff = null; renderDiffPanel(null); return; }
+
+  // Changes since last extract (Target only): diff the active connection's stored
+  // pre-extract snapshot against the current schema.
+  const activeConn = getTargetConnection(getActiveTargetId());
+  activeDiff = (activeConn && activeConn.prevExtract) ? computeSchemaDiff(activeConn.prevExtract, meta.entities) : null;
+  renderDiffPanel(activeDiff);
 
   document.getElementById("schemaMeta").innerHTML =
     '<span class="badge-soft badge-high"><i class="bi bi-hdd-network"></i> ' + escapeHtml(meta.application || "Target") + '</span> ' +
@@ -335,62 +373,165 @@ function renderActiveBrowser(){
   if(meta.entities.length) selectEntity(meta.entities[0].name);
 }
 
+/* ---- "Changes since last extract" panel (Target only) ---- */
+function renderDiffPanel(diff){
+  const panel = document.getElementById("targetDiffPanel");
+  if(!panel) return;
+  if(!diff || !diff.hasChanges){ panel.style.display = "none"; panel.innerHTML = ""; return; }
+  const c = diff.counts, chips = [];
+  if(c.tablesAdded)     chips.push('<span class="badge-soft badge-high">+' + c.tablesAdded + ' table' + (c.tablesAdded > 1 ? 's' : '') + '</span>');
+  if(c.tablesRemoved)   chips.push('<span class="badge-soft badge-low">−' + c.tablesRemoved + ' table' + (c.tablesRemoved > 1 ? 's' : '') + '</span>');
+  if(c.columnsAdded)    chips.push('<span class="badge-soft badge-high">+' + c.columnsAdded + ' column' + (c.columnsAdded > 1 ? 's' : '') + '</span>');
+  if(c.columnsRenamed)  chips.push('<span class="badge-soft badge-medium">⇄ ' + c.columnsRenamed + ' renamed</span>');
+  if(c.columnsModified) chips.push('<span class="badge-soft badge-medium">~' + c.columnsModified + ' changed</span>');
+  if(c.columnsRemoved)  chips.push('<span class="badge-soft badge-low">−' + c.columnsRemoved + ' column' + (c.columnsRemoved > 1 ? 's' : '') + '</span>');
+  const when = diff.at ? '<span class="text-xs text-muted-2 ms-2">since ' + escapeHtml(formatDateTime(diff.at)) + '</span>' : '';
+  const sec = [];
+  if(diff.tablesAdded.length)     sec.push(diffSection("New tables", "badge-high", diff.tablesAdded.map(escapeHtml)));
+  if(diff.tablesRemoved.length)   sec.push(diffSection("Removed tables", "badge-low", diff.tablesRemoved.map(t => escapeHtml(t.name))));
+  if(diff.columnsAdded.length)    sec.push(diffSection("New columns", "badge-high", diff.columnsAdded.map(x => escapeHtml(x.table + "." + x.col))));
+  if(diff.columnsRenamed.length)  sec.push(diffSection("Renamed columns", "badge-medium", diff.columnsRenamed.map(x => escapeHtml(x.table + "." + x.from) + ' <span class="text-muted-2">→ ' + escapeHtml(x.to) + '</span>')));
+  if(diff.columnsModified.length) sec.push(diffSection("Changed columns", "badge-medium", diff.columnsModified.map(x =>
+        escapeHtml(x.table + "." + x.col) + ' <span class="text-muted-2">(' +
+        x.changes.map(ch => escapeHtml(ch.attr + ": " + fmtVal(ch.from) + " → " + fmtVal(ch.to))).join(", ") + ')</span>')));
+  if(diff.columnsRemoved.length)  sec.push(diffSection("Removed columns", "badge-low", diff.columnsRemoved.map(x => escapeHtml(x.table + "." + x.col.name))));
+  panel.style.display = "";
+  panel.innerHTML =
+    '<div class="d-flex align-items-center justify-content-between flex-wrap gap-2">' +
+      '<div class="section-title mb-0"><i class="bi bi-clock-history"></i> Changes since last extract' + when + '</div>' +
+      '<div class="d-flex align-items-center gap-2 flex-wrap">' + chips.join(" ") +
+        '<button type="button" class="btn btn-sm btn-outline-soft" id="diffDismissBtn" title="Clear the change highlights"><i class="bi bi-check2 me-1"></i> Dismiss</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="diff-details mt-2">' + sec.join("") + '</div>';
+  const db = document.getElementById("diffDismissBtn");
+  if(db) db.addEventListener("click", dismissTargetDiff);
+}
+function diffSection(title, badgeCls, items){
+  if(!items.length) return "";
+  return '<div class="diff-sec"><span class="badge-soft ' + badgeCls + ' diff-sec-label">' + title + ' (' + items.length + ')</span>' +
+    '<ul class="diff-list">' + items.map(i => '<li class="mono">' + i + '</li>').join("") + '</ul></div>';
+}
+function fmtVal(v){ if(v == null || v === "") return "∅"; if(v === true) return "yes"; if(v === false) return "no"; return String(v); }
+
+/* Re-baseline: set the snapshot to the current schema so the diff (and all
+   highlights / ghosts) clears. The next re-extract diffs against this baseline. */
+function dismissTargetDiff(){
+  const conn = getTargetConnection(getActiveTargetId());
+  if(!conn) return;
+  const snap = snapshotEntities(conn.entities || []);
+  snap.at = conn.loadedAt || new Date().toISOString();
+  conn.prevExtract = snap;
+  upsertTargetConnection(conn);
+  activeDiff = null;
+  renderActiveBrowser();
+  showNotification("Change highlights cleared.", "primary", 1500);
+}
+
 function renderTargetTree(meta){
   const tree = document.getElementById("targetTree");
+  const diff = activeDiff;
   let items = "";
   meta.entities.forEach(e => {
     const icon = e.isListTable ? "bi-list-ul" : "bi-diagram-2";
-    items += '<li><div class="tree-node" data-entity="' + escapeHtml(e.name) + '" title="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> <span class="tree-name">' + escapeHtml(e.name) + '</span></div></li>';
+    const st = diff && diff.entityStatus[String(e.name).toLowerCase()];
+    const cls = st === "added" ? " is-new" : st === "changed" ? " is-changed" : "";
+    const badge = st === "added" ? ' <span class="badge-soft badge-high diff-badge">NEW</span>'
+                : st === "changed" ? ' <span class="badge-soft badge-medium diff-badge">CHANGED</span>' : '';
+    items += '<li><div class="tree-node' + cls + '" data-entity="' + escapeHtml(e.name) + '" title="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> <span class="tree-name">' + escapeHtml(e.name) + '</span>' + badge + '</div></li>';
   });
+  // Ghost nodes for removed tables (visible even though they're gone from the schema).
+  if(diff && diff.tablesRemoved.length){
+    diff.tablesRemoved.forEach(t => {
+      items += '<li><div class="tree-node is-removed" data-entity="' + escapeHtml(t.name) + '" data-ghost="1" title="Removed in last extract: ' + escapeHtml(t.name) + '"><i class="bi bi-diagram-2"></i> <span class="tree-name">' + escapeHtml(t.name) + '</span> <span class="badge-soft badge-low diff-badge">REMOVED</span></div></li>';
+    });
+  }
   tree.innerHTML =
     '<li><div class="tree-node"><i class="bi bi-box"></i> ' + escapeHtml(meta.application || "Target Schema") + '</div>' +
       '<ul class="tree-children">' + items + '</ul>' +
     '</li>';
-  document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => selectEntity(n.dataset.entity)));
+  document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => selectEntity(n.dataset.entity, n.dataset.ghost === "1")));
 }
 
-function selectEntity(name){
+function selectEntity(name, isGhost){
   const meta = getTargetSchema();
-  activeEntity = meta.entities.find(e => e.name === name);
-  if(!activeEntity) return;
+  if(isGhost){
+    // A table removed in the last extract — synthesize a read-only ghost entity.
+    const tl = String(name).toLowerCase();
+    const removed = activeDiff && activeDiff.tablesRemoved.find(t => String(t.name).toLowerCase() === tl);
+    activeEntity = { name: name, table: name, isListTable: false, fields: [], _ghost: true, _ghostCols: removed ? removed.cols : [] };
+  } else {
+    activeEntity = meta.entities.find(e => e.name === name);
+    if(!activeEntity) return;
+  }
   document.querySelectorAll("[data-entity]").forEach(n => n.classList.toggle("active", n.dataset.entity === name));
   document.getElementById("targetTitle").innerHTML = '<i class="bi bi-table"></i> ' + escapeHtml(name) +
-    ' <span class="text-muted-2 text-xs">(' + escapeHtml(activeEntity.table || name) + ')</span>';
+    (activeEntity._ghost ? ' <span class="badge-soft badge-low">removed</span>'
+                         : ' <span class="text-muted-2 text-xs">(' + escapeHtml(activeEntity.table || name) + ')</span>');
   const addBtn = document.getElementById("addColumnBtn");
-  if(addBtn) addBtn.style.display = "";   // an entity is selected -> allow adding a column
+  if(addBtn) addBtn.style.display = activeEntity._ghost ? "none" : "";   // no editing a removed table
   const delBtn = document.getElementById("deleteEntityBtn");
-  if(delBtn) delBtn.style.display = "";   // ...and deleting the whole table
+  if(delBtn) delBtn.style.display = activeEntity._ghost ? "none" : "";
   renderTargetFields();
 }
 
 function renderTargetFields(){
   if(!activeEntity) return;
   const search = (document.getElementById("targetSearch").value || "").toLowerCase();
-  const fields = activeEntity.fields.filter(f => !search || f.name.toLowerCase().indexOf(search) !== -1);
   const body = document.getElementById("targetFieldsBody");
-  if(!fields.length){
+  const diff = activeDiff;
+  const tl = String(activeEntity.name).toLowerCase();
+
+  // Ghost entity (a removed table): show its former columns as read-only ghost rows.
+  if(activeEntity._ghost){
+    const cols = (activeEntity._ghostCols || []).filter(c => !search || c.name.toLowerCase().indexOf(search) !== -1);
+    body.innerHTML = cols.length ? cols.map(c => ghostFieldRow(activeEntity.table || activeEntity.name, c)).join("")
+      : '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-trash"></i><h4>This table was removed in the last extract.</h4></div></td></tr>';
+    return;
+  }
+
+  const fields = activeEntity.fields.filter(f => !search || f.name.toLowerCase().indexOf(search) !== -1);
+  const removedCols = (diff && diff.removedByTable[tl]) ? diff.removedByTable[tl].filter(c => !search || c.name.toLowerCase().indexOf(search) !== -1) : [];
+  if(!fields.length && !removedCols.length){
     body.innerHTML = '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
     return;
   }
   // Read-only display; a pencil (first column) opens the Edit Column modal to change
-  // any property (the TABLE name stays fixed).
-  body.innerHTML = fields.map(f =>
-    '<tr data-col="' + escapeHtml(f.name) + '">' +
+  // any property (the TABLE name stays fixed). NEW/CHANGED badges come from the diff.
+  let rows = fields.map(f => {
+    const st = diff && diff.columnStatus[tl + "::" + String(f.name).toLowerCase()];
+    const cls = st === "added" ? "is-new" : (st === "changed" || st === "renamed") ? "is-changed" : "";
+    const renamedFrom = st === "renamed" ? renameFrom(diff, tl, f.name) : "";
+    const badge = st === "added" ? ' <span class="badge-soft badge-high diff-badge">NEW</span>'
+                : st === "renamed" ? ' <span class="badge-soft badge-medium diff-badge">RENAMED</span>'
+                : st === "changed" ? ' <span class="badge-soft badge-medium diff-badge">CHANGED</span>' : '';
+    // Per-attribute changes → highlight the exact cell(s) and show "was <old>".
+    const ch = (st === "changed") ? changeMap(diff, tl, f.name) : {};
+    const hl = (attr) => ch[attr] ? ' cell-changed' : '';
+    const was = (attr, fmt) => ch[attr] ? '<span class="was">was ' + escapeHtml(fmt(ch[attr].from)) + '</span>' : '';
+    const fType = (v) => v || "∅";
+    const fLen  = (v) => (v == null || v === "") ? "∅" : String(v);
+    const fMand = (v) => v ? "Required" : "Optional";
+    const fKey  = (v) => v ? "yes" : "no";
+    return '<tr class="' + cls + '" data-col="' + escapeHtml(f.name) + '">' +
       '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
-      '<td class="mono">' + escapeHtml(f.name) + '</td>' +
-      '<td>' + escapeHtml(f.dataType || "") + '</td>' +
-      '<td>' + (f.length ?? "-") + '</td>' +
-      '<td>' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + '</td>' +
-      '<td>' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + '</td>' +
-      '<td>' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + '</td>' +
+      '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
+      '<td class="' + hl("dataType").trim() + '">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +
+      '<td class="' + hl("length").trim() + '">' + (f.length ?? "-") + was("length", fLen) + '</td>' +
+      '<td class="' + hl("mandatory").trim() + '">' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + was("mandatory", fMand) + '</td>' +
+      '<td class="' + hl("pk").trim() + '">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + was("pk", fKey) + '</td>' +
+      '<td class="' + (hl("fk") || hl("fkReference")).trim() + '">' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + was("fk", fKey) + was("fkReference", fType) + '</td>' +
       '<td>' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
       '<td class="wrap">' + escapeHtml(f.description || "") + '</td>' +
       '<td>' + escapeHtml(f.businessTerm || "-") + '</td>' +
       '<td class="wrap">' + escapeHtml(f.accepted || "-") + '</td>' +
       '<td>' + escapeHtml(f.default ?? "-") + '</td>' +
-    '</tr>'
-  ).join("");
+    '</tr>';
+  }).join("");
+  // Ghost rows for columns removed since the last extract.
+  rows += removedCols.map(c => ghostFieldRow(activeEntity.table || activeEntity.name, c)).join("");
+  body.innerHTML = rows;
   // Wire the pencil buttons once (event delegation).
   if(!body._editWired){
     body.addEventListener("click", (e) => {
@@ -399,6 +540,43 @@ function renderTargetFields(){
     });
     body._editWired = true;
   }
+}
+
+/* Map of {attr -> {attr, from, to}} for a modified column, to highlight the exact cells. */
+function changeMap(diff, tl, name){
+  const m = diff && (diff.columnsModified || []).find(x => x.table.toLowerCase() === tl && x.col.toLowerCase() === String(name).toLowerCase());
+  const out = {};
+  if(m) m.changes.forEach(ch => { out[ch.attr] = ch; });
+  return out;
+}
+/* Old name for a renamed column (the current name is `name`). */
+function renameFrom(diff, tl, name){
+  const r = diff && (diff.columnsRenamed || []).find(x => x.table.toLowerCase() === tl && x.to.toLowerCase() === String(name).toLowerCase());
+  return r ? r.from : "";
+}
+
+/* A greyed row for a column removed (red) or renamed-away (orange) in the last extract. */
+function ghostFieldRow(table, c){
+  const renamed = c._renamedTo;
+  const rowCls = renamed ? "is-renamed" : "is-removed";
+  const icon = renamed ? "bi-arrow-right" : "bi-trash";
+  const badge = renamed ? '<span class="badge-soft badge-medium diff-badge">RENAMED → ' + escapeHtml(renamed) + '</span>'
+                        : '<span class="badge-soft badge-low diff-badge">REMOVED</span>';
+  return '<tr class="' + rowCls + '" title="' + (renamed ? 'Renamed to ' + escapeHtml(renamed) : 'Removed in last extract') + '">' +
+    '<td class="cell-center"><i class="bi ' + icon + ' text-muted-2"></i></td>' +
+    '<td class="mono">' + escapeHtml(table || "") + '</td>' +
+    '<td class="mono">' + escapeHtml(c.name) + ' ' + badge + '</td>' +
+    '<td>' + escapeHtml(c.dataType || "") + '</td>' +
+    '<td>' + (c.length != null ? c.length : "-") + '</td>' +
+    '<td>' + (c.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + '</td>' +
+    '<td>' + (c.pk ? '<i class="bi bi-key-fill text-warning"></i>' : "") + '</td>' +
+    '<td>' + (c.fk ? '<i class="bi bi-link-45deg text-primary"></i>' : "") + '</td>' +
+    '<td><span class="text-muted-2">-</span></td>' +
+    '<td class="wrap"></td>' +
+    '<td>-</td>' +
+    '<td class="wrap">-</td>' +
+    '<td>-</td>' +
+  '</tr>';
 }
 
 /* ---- Edit Column modal (all properties; table name stays read-only) ---- */

@@ -138,6 +138,126 @@ function extractedToEntities(tables){
   }));
 }
 
+/* =========================================================================
+   Schema diff — "changes since last extract" (Target System only).
+   snapshotEntities() captures a slim copy of a schema (just what diffing and
+   ghost-row rendering need); computeSchemaDiff() compares a prior snapshot with
+   the current entities and classifies tables/columns as added/removed/modified.
+   Pure functions (no DOM, no storage) so they are trivial to reason about.
+   ========================================================================= */
+function snapshotEntities(entities){
+  const tables = {};
+  (entities || []).forEach(e => {
+    const tname = e.name || e.table || "";
+    if(!tname) return;
+    const cols = {};
+    (e.fields || []).forEach(f => {
+      if(!f || !f.name) return;
+      cols[String(f.name).toLowerCase()] = {
+        name: f.name, dataType: f.dataType || "", length: (f.length != null ? f.length : null),
+        mandatory: !!f.mandatory, pk: !!f.pk, fk: !!f.fk, fkReference: f.fkReference || ""
+      };
+    });
+    tables[String(tname).toLowerCase()] = { name: tname, cols: cols };
+  });
+  return { at: null, tables: tables };
+}
+
+function computeSchemaDiff(prevSnapshot, currEntities){
+  const diff = {
+    tablesAdded: [], tablesRemoved: [], columnsAdded: [], columnsRemoved: [], columnsModified: [], columnsRenamed: [],
+    entityStatus: {}, columnStatus: {}, removedByTable: {},
+    counts: {tablesAdded:0, tablesRemoved:0, columnsAdded:0, columnsRemoved:0, columnsModified:0, columnsRenamed:0},
+    hasChanges: false, at: (prevSnapshot && prevSnapshot.at) || null
+  };
+  if(!prevSnapshot || !prevSnapshot.tables) return diff;
+  const prev = prevSnapshot.tables;
+  const curr = snapshotEntities(currEntities).tables;
+  const COMP = ["dataType", "length", "mandatory", "pk", "fk", "fkReference"];
+  const norm = (v) => v == null ? "" : (typeof v === "boolean" ? (v ? "1" : "0") : String(v).trim().toLowerCase());
+
+  // Added tables (in current, not in prev). Mark every column of a brand-new table
+  // as "added" too, so its rows highlight when the table is opened (the panel still
+  // lists it once under "New tables" rather than flooding "New columns").
+  Object.keys(curr).forEach(tl => {
+    if(!prev[tl]){
+      diff.tablesAdded.push(curr[tl].name);
+      diff.entityStatus[tl] = "added";
+      Object.keys(curr[tl].cols).forEach(cl => { diff.columnStatus[tl + " " + cl] = "added"; });
+    }
+  });
+  // Removed tables (in prev, not in current) — keep their columns for ghost rows.
+  Object.keys(prev).forEach(tl => {
+    if(!curr[tl]){
+      const cols = Object.keys(prev[tl].cols).map(cl => prev[tl].cols[cl]);
+      diff.tablesRemoved.push({ name: prev[tl].name, cols: cols });
+      diff.entityStatus[tl] = "removed";
+      diff.removedByTable[tl] = cols;
+    }
+  });
+  // Columns within tables present in BOTH snapshots.
+  const sig = (co) => COMP.map(a => norm(co[a])).join("|");   // attribute signature (name excluded)
+  Object.keys(curr).forEach(tl => {
+    if(!prev[tl]) return;
+    const pcols = prev[tl].cols, ccols = curr[tl].cols, tname = curr[tl].name;
+    let changedHere = false;
+
+    // Pass 1: bare added / removed names; record modified (same-name) columns.
+    const addedCl = [], removedCl = [];
+    Object.keys(ccols).forEach(cl => {
+      if(!pcols[cl]){ addedCl.push(cl); }
+      else {
+        const changes = [];
+        COMP.forEach(attr => { if(norm(pcols[cl][attr]) !== norm(ccols[cl][attr])) changes.push({attr, from: pcols[cl][attr], to: ccols[cl][attr]}); });
+        if(changes.length){ diff.columnsModified.push({ table: tname, col: ccols[cl].name, changes: changes }); diff.columnStatus[tl + "::" + cl] = "changed"; changedHere = true; }
+      }
+    });
+    Object.keys(pcols).forEach(cl => { if(!ccols[cl]) removedCl.push(cl); });
+
+    // Pass 2: detect RENAMES — a removed + an added column sharing the same attribute
+    // signature, unique on both sides (avoids ambiguous pairing).
+    const remBySig = {}, addBySig = {};
+    removedCl.forEach(cl => { const k = sig(pcols[cl]); (remBySig[k] = remBySig[k] || []).push(cl); });
+    addedCl.forEach(cl => { const k = sig(ccols[cl]); (addBySig[k] = addBySig[k] || []).push(cl); });
+    const renamedRem = {}, renamedAdd = {};
+    Object.keys(remBySig).forEach(k => {
+      if(remBySig[k].length === 1 && addBySig[k] && addBySig[k].length === 1){
+        const oldCl = remBySig[k][0], newCl = addBySig[k][0];
+        renamedRem[oldCl] = true; renamedAdd[newCl] = true;
+        diff.columnsRenamed.push({ table: tname, from: pcols[oldCl].name, to: ccols[newCl].name });
+        diff.columnStatus[tl + "::" + newCl] = "renamed";
+        diff.removedByTable[tl] = diff.removedByTable[tl] || [];
+        diff.removedByTable[tl].push(Object.assign({}, pcols[oldCl], { _renamedTo: ccols[newCl].name }));
+        changedHere = true;
+      }
+    });
+
+    // Pass 3: emit the genuinely added / removed (not part of a rename pair).
+    addedCl.forEach(cl => {
+      if(renamedAdd[cl]) return;
+      diff.columnsAdded.push({ table: tname, col: ccols[cl].name });
+      diff.columnStatus[tl + "::" + cl] = "added"; changedHere = true;
+    });
+    const removedPlain = [];
+    removedCl.forEach(cl => {
+      if(renamedRem[cl]) return;
+      diff.columnsRemoved.push({ table: tname, col: pcols[cl] }); removedPlain.push(pcols[cl]); changedHere = true;
+    });
+    if(removedPlain.length) diff.removedByTable[tl] = (diff.removedByTable[tl] || []).concat(removedPlain);
+
+    if(changedHere && diff.entityStatus[tl] !== "added") diff.entityStatus[tl] = "changed";
+  });
+
+  diff.counts = {
+    tablesAdded: diff.tablesAdded.length, tablesRemoved: diff.tablesRemoved.length,
+    columnsAdded: diff.columnsAdded.length, columnsRemoved: diff.columnsRemoved.length,
+    columnsModified: diff.columnsModified.length, columnsRenamed: diff.columnsRenamed.length
+  };
+  diff.hasChanges = (diff.counts.tablesAdded + diff.counts.tablesRemoved + diff.counts.columnsAdded
+                     + diff.counts.columnsRemoved + diff.counts.columnsModified + diff.counts.columnsRenamed) > 0;
+  return diff;
+}
+
 /* One-time migration: if a legacy single uploaded schema exists but no target
    connections, seed one connection from it and mark it active. Safe to call on
    every page load — it does nothing once a connection exists. */

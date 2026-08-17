@@ -541,11 +541,13 @@ function buildHeaderHTML(){
       '<div class="app-title">AI Mapping Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
     '</div>' +
     '<div class="topbar-meta">' +
+      '<a class="brief-link" href="/docs/stakeholder-brief.html" target="_blank" rel="noopener" title="Open the Stakeholder Brief in a new tab">' +
+        '<i class="bi bi-file-earmark-richtext"></i><span class="d-none d-lg-inline">Stakeholder Brief</span></a>' +
       '<span class="meta-chip ai-ready"><span class="dot"></span> AI Ready</span>' +
       buildClientSwitcherHTML() +
       '<button class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme"><i class="bi ' + (getTheme()==="dark" ? "bi-sun" : "bi-moon-stars") + '"></i></button>' +
       '<button class="icon-btn" id="resetAppBtn" title="Reset application (clear all data)"><i class="bi bi-arrow-counterclockwise"></i></button>' +
-      '<div class="icon-btn" id="notifBtn" title="Notifications (coming soon)"><i class="bi bi-bell"></i></div>' +
+      '<div class="icon-btn" id="notifBtn" title="Notifications (not yet available)"><i class="bi bi-bell"></i></div>' +
       '<div class="user-wrap">' +
         '<div class="user-chip" id="userChip" role="button" tabindex="0">' +
           '<div class="user-avatar">' + user.initials + '</div>' +
@@ -892,7 +894,7 @@ function wireShellEvents(){
   }
   const notifBtn = document.getElementById("notifBtn");
   if(notifBtn){
-    notifBtn.addEventListener("click", () => showNotification("Notifications are coming soon — you'll see mapping alerts and review reminders here.", "primary"));
+    notifBtn.addEventListener("click", () => showNotification("This feature is currently unavailable — not yet implemented.", "primary"));
   }
   const resetBtn = document.getElementById("resetAppBtn");
   if(resetBtn){

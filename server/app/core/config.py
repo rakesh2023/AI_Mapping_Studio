@@ -67,7 +67,7 @@ def ai_model() -> str:
     """
     m = (os.environ.get("AIMS_MODEL")
          or os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
-         or "claude-opus-5")
+         or "bedrock.anthropic.claude-opus-4-8")   # allowed by the corporate key; override via AIMS_MODEL
     return m.split("[", 1)[0]
 
 
