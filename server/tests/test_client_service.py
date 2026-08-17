@@ -1,6 +1,7 @@
 """Unit tests for client_service — creation, validation, and cross-user isolation."""
 from app.services import auth_service as A
 from app.services import client_service as C
+from app.services import tenant_store_service as S
 
 
 def _new_user(email):
@@ -51,3 +52,32 @@ def test_duplicate_client_name_per_user_conflicts():
     C.create_client(uid, "Dup", "", {})
     payload, status = C.create_client(uid, "Dup", "", {})
     assert status == 409 and payload["ok"] is False
+
+
+def test_delete_client_removes_client_and_tenant_data():
+    uid = _new_user("del_owner@example.com")
+    cid = C.create_client(uid, "ToDelete", "Ins", {})[0]["client"]["id"]
+    S.set_doc(uid, cid, "ai_mappings", [{"id": "AI-0001"}])
+
+    p, st = C.delete_client(uid, cid)
+    assert st == 200 and p["ok"] and p["deletedId"] == cid
+
+    # Client is gone, and its per-client data cascaded away.
+    assert C.get_client(uid, cid) is None
+    assert C.list_clients(uid) == []
+    assert S.get_bundle(uid, cid) == {}
+
+
+def test_delete_client_cross_user_rejected():
+    uid_a = _new_user("del_a@example.com")
+    uid_b = _new_user("del_b@example.com")
+    cid_a = C.create_client(uid_a, "A-Only", "Ins", {})[0]["client"]["id"]
+    S.set_doc(uid_a, cid_a, "ai_mappings", [{"secret": True}])
+
+    # User B cannot delete User A's client, even with the real id.
+    p, st = C.delete_client(uid_b, cid_a)
+    assert st == 404 and p["ok"] is False
+
+    # A's client and data are untouched.
+    assert C.get_client(uid_a, cid_a)["name"] == "A-Only"
+    assert S.get_doc(uid_a, cid_a, "ai_mappings")[0]["value"] == [{"secret": True}]

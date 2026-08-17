@@ -177,7 +177,11 @@ textarea.etl-preview::placeholder{color:#7c8ba1;}
 .join-box textarea.mono{font-family:Consolas,monospace;font-size:.78rem;}
 
 /* Workspace: target-table list (left panel) */
-.table-list{display:flex;flex-direction:column;gap:6px;max-height:70vh;overflow-y:auto;}
+.table-list{display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-height:240px;overflow-y:auto;}
+/* Let the Target Tables panel fill its column so the list runs the full height of
+   the mapping grid on the right (Bootstrap rows already stretch columns equally). */
+#tablePanelCol{display:flex;}
+#tablePanelCol > .card-el{display:flex;flex-direction:column;width:100%;}
 .tl-item{border:1px solid var(--border);border-radius:9px;padding:10px 12px;cursor:pointer;transition:.15s;}
 .tl-item:hover{border-color:var(--primary);background:#fdf6f1;}
 .tl-item.active{border-color:var(--primary);background:var(--primary-soft);}

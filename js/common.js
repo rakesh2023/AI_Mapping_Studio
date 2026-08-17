@@ -636,6 +636,7 @@ async function renderClientModalList(){
       '<div class="d-flex gap-2">' +
         (active ? '' : '<button type="button" class="btn btn-sm btn-outline-soft cm-switch" data-id="' + c.id + '">Switch</button>') +
         '<button type="button" class="btn btn-sm btn-outline-soft cm-edit" data-id="' + c.id + '">Edit</button>' +
+        '<button type="button" class="btn btn-sm btn-outline-danger cm-delete" data-id="' + c.id + '" data-name="' + escapeHtml(c.name) + '" title="Delete this client and all its data"><i class="bi bi-trash"></i></button>' +
       '</div></div>';
   }).join("");
   el.querySelectorAll(".cm-switch").forEach(b => b.addEventListener("click", async () => {
@@ -648,6 +649,27 @@ async function renderClientModalList(){
     const c = (AUTH.clients || []).find(x => x.id === Number(b.dataset.id));
     if(c) setClientForm(c);
   }));
+  el.querySelectorAll(".cm-delete").forEach(b => b.addEventListener("click", () => deleteClientFromModal(b.dataset.id, b.dataset.name)));
+}
+
+async function deleteClientFromModal(id, name){
+  const label = name || "this client";
+  const msg =
+    '<div class="mb-2"><b>Delete “' + escapeHtml(label) + '”?</b></div>' +
+    '<div class="text-xs text-muted-2">This permanently removes <b>all</b> of this client’s data — ' +
+    'mappings, joins, source &amp; target connections, mapping history, deploy &amp; export history, ' +
+    'business context, and every uploaded document with its chat history. ' +
+    '<b>This action cannot be undone.</b></div>';
+  const ok = await confirmDialog(msg, "Delete client");
+  if(!ok) return;
+  try{
+    const res = await fetch("/api/clients/" + encodeURIComponent(id), {method:"DELETE"});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ _cmErr((j && j.error) || "Could not delete the client."); return; }
+    // Reload so the switcher, active client and hydrated client data all reflect the
+    // deletion. If it was the last client, the shell will route to onboarding.
+    window.location.reload();
+  }catch(e){ _cmErr("Cannot reach the server."); }
 }
 async function saveClientFromModal(){
   _cmErr(null);

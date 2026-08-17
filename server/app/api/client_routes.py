@@ -51,3 +51,23 @@ def update_client(client_id):
     payload, status = client_service.update_client(
         uid, client_id, body.get("name", ""), body.get("industry", ""), body.get("config") or {})
     return jsonify(payload), status
+
+
+@bp.route("/<int:client_id>", methods=["DELETE"])
+def delete_client(client_id):
+    uid = _uid()
+    if not uid:
+        return jsonify({"ok": False, "error": "Not authenticated."}), 401
+    payload, status = client_service.delete_client(uid, client_id)
+    if status == 200 and payload.get("ok"):
+        # If the active client was the one deleted, fall back to the most-recent
+        # remaining client (or clear it -> the app sends the user to onboarding).
+        remaining = client_service.list_clients(uid)
+        if session.get("cid") == client_id:
+            if remaining:
+                session["cid"] = remaining[0]["id"]
+            else:
+                session.pop("cid", None)
+        payload["clients"] = remaining
+        payload["activeClientId"] = session.get("cid")
+    return jsonify(payload), status

@@ -176,8 +176,12 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "'--' comment — it would be commented out and break the SQL. The last SELECT line has no comma.\n"
         "- Direct -> sourceTable.sourceColumn. Data Type Conversion / Format Conversion -> "
         "CAST(sourceTable.sourceColumn AS <targetType>). Lookup -> select the looked-up "
-        "column and JOIN its lookup table. Constant/Default -> the literal value (no source). "
-        "Not Mapped or missing source -> NULL with a trailing comment '-- Not Mapped'.\n"
+        "column and JOIN its lookup table. Constant/Default -> the literal value (no source).\n"
+        "- DEFAULT VALUES: if a column has a 'default=' attribute, USE that default expression "
+        "as its SELECT value (emit it verbatim, e.g. '(getdate()) AS src_upd_dt' or '0 AS Flag'). "
+        "This takes precedence over NULL and applies EVEN WHEN the type is 'Not Mapped' or there "
+        "is no source column. Only when a column has NEITHER a usable source NOR a 'default=' -> "
+        "emit NULL with a trailing comment '-- Not Mapped'.\n"
         "- Use ONLY the source tables/columns present in the mapping list and the provided "
         "FROM/JOIN. Do NOT invent tables or columns. This is the ONE hard rule that the "
         "user's instructions cannot override.\n"
@@ -328,7 +332,7 @@ def generate_ddl(body: dict):
 
     Applies the user's instruction to a deterministic baseline DDL while keeping
     the real columns accurate. Body: {database, targetTable, columns:[{name,
-    dataType,length,mandatory,pk,fk,fkReference}], baselineDdl, instructions}.
+    dataType,length,mandatory,pk,fk,fkReference,default}], baselineDdl, instructions}.
     Returns (payload, status) with payload.warnings listing any column
     identifiers the AI introduced that are NOT in the real schema.
     """
@@ -356,6 +360,8 @@ def generate_ddl(body: dict):
             attrs.append("PK")
         if c.get("fk"):
             attrs.append("FK -> " + str(c.get("fkReference") or "?"))
+        if c.get("default") not in (None, ""):
+            attrs.append("DEFAULT: " + str(c.get("default")))
         col_lines.append("- " + bits[0] + " " + bits[1] + ("  [" + ", ".join(attrs) + "]" if attrs else ""))
     cols_block = "\n".join(col_lines)
 
@@ -371,6 +377,13 @@ def generate_ddl(body: dict):
         "identifiers like [dbo].[Table] and [column] and use SQL Server types. If the "
         "ADDITIONAL INSTRUCTIONS specify another dialect (Oracle, PostgreSQL, MySQL, …), "
         "generate for that dialect instead.\n\n"
+        "DEFAULTS: when a column lists a DEFAULT, emit a DEFAULT constraint for it, "
+        "translating the value into a valid expression for the dialect — a number -> "
+        "DEFAULT (0); a date/time -> DEFAULT (GETDATE()); a plain value -> DEFAULT "
+        "('value'). If the DEFAULT is a purely descriptive placeholder (e.g. "
+        "'auto-generated', 'system generated', 'identity', 'sequence'), do NOT emit a "
+        "literal DEFAULT — use the right mechanism only if clearly implied (IDENTITY, "
+        "NEWID(), …), otherwise omit it. Never invent defaults for columns that don't list one.\n\n"
         "The instructions may add NOT NULL/defaults, composite primary keys, indexes, "
         "column comments, IF NOT EXISTS, etc. Apply them faithfully. If there are no "
         "instructions, return clean standard DDL equivalent to the baseline.\n\n"

@@ -5,6 +5,7 @@ client-supplied one). Ownership is enforced here at the service/DB layer so a
 user can never read or mutate another user's client, even by guessing ids.
 """
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,6 +15,9 @@ from app.db.app_db import connect, write_lock
 _MAX_NAME = 120
 _MAX_INDUSTRY = 80
 _MAX_CONFIG_CHARS = 20000   # cap the onboarding config blob
+
+# Guard for dynamic DROP: only our namespaced KYD data tables (kyd_d<id>_<slug>).
+_KYD_TABLE_RE = re.compile(r"^kyd_d\d+_[A-Za-z0-9_]+$")
 
 
 def _now() -> str:
@@ -126,3 +130,33 @@ def update_client(user_id: int, client_id: int, name: str, industry: str = "", c
         finally:
             conn.close()
     return {"ok": True, "client": _row_to_client(row)}, 200
+
+
+def delete_client(user_id: int, client_id: int) -> Tuple[Dict[str, Any], int]:
+    """Delete a client the user owns AND everything under it.
+
+    FK ON DELETE CASCADE (enabled per connection) removes tenant_documents, KYD
+    documents (+ their files, chunks and structured registry rows) and chat
+    sessions/messages. The dynamic per-document structured data tables
+    (``kyd_d<id>_<slug>``) are NOT part of the FK graph, so drop them explicitly
+    first. Scoped by user_id so a user can only ever delete their own client.
+    """
+    if not owns_client(user_id, client_id):
+        return {"ok": False, "error": "Client not found."}, 404
+    with write_lock():
+        conn = connect()
+        try:
+            # Drop physical KYD structured tables for this client's documents before
+            # the registry rows cascade away with the client.
+            for r in conn.execute(
+                "SELECT physical_table FROM structured_tables WHERE user_id=? AND client_id=?",
+                (user_id, client_id),
+            ).fetchall():
+                pt = r["physical_table"]
+                if pt and _KYD_TABLE_RE.match(pt):
+                    conn.execute(f'DROP TABLE IF EXISTS "{pt}"')
+            conn.execute("DELETE FROM clients WHERE id=? AND user_id=?", (client_id, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"ok": True, "deletedId": client_id}, 200

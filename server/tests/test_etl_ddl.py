@@ -25,6 +25,17 @@ def _client(reply, refusal=False):
     return C()
 
 
+def _capturing_client(reply, sink):
+    """Like _client but records the kwargs (system/messages) passed to stream()."""
+    class C:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sink.append(kw)
+                return _Stream(_Msg(reply))
+    return C()
+
+
 COLS = [
     {"name": "activityid", "dataType": "int", "length": None, "mandatory": True, "pk": True},
     {"name": "subject", "dataType": "varchar", "length": 100, "mandatory": False, "pk": False},
@@ -64,6 +75,29 @@ def test_generate_ddl_flags_hallucinated_column(monkeypatch):
     p, s = es.generate_ddl({"targetTable": "cs_activity", "columns": COLS, "instructions": "x"})
     assert s == 200 and p["ok"] is True
     assert "boguscol" in [w.lower() for w in p["warnings"]]
+
+
+def test_generate_ddl_passes_default_to_prompt(monkeypatch):
+    # A column's `default` must reach the model so it can emit a DEFAULT constraint.
+    cols = [
+        {"name": "id", "dataType": "int", "mandatory": True, "pk": True},
+        {"name": "created", "dataType": "datetime", "mandatory": True, "default": "GETDATE()"},
+        {"name": "status", "dataType": "varchar", "length": 20, "default": "Active"},
+        {"name": "publicid", "dataType": "varchar", "length": 20, "default": "auto-generated"},
+    ]
+    sink = []
+    reply = "CREATE TABLE [dbo].[cs_activity] ( [id] int NOT NULL );"
+    monkeypatch.setattr(es, "anthropic_client", lambda: _capturing_client(reply, sink))
+    p, s = es.generate_ddl({"targetTable": "cs_activity", "columns": cols})
+    assert s == 200 and p["ok"] is True
+    user_msg = sink[0]["messages"][0]["content"]
+    # Real defaults are surfaced; the descriptive placeholder is surfaced too (the
+    # prompt instructs the model to skip literal defaults for placeholders).
+    assert "DEFAULT: GETDATE()" in user_msg
+    assert "DEFAULT: Active" in user_msg
+    assert "DEFAULT: auto-generated" in user_msg
+    # And the system prompt tells the model how to handle defaults.
+    assert "DEFAULT" in sink[0]["system"]
 
 
 def test_generate_ddl_strips_fences(monkeypatch):
@@ -111,6 +145,28 @@ _ETL_BODY3 = {"targetTable": "CMT_ACTIVITY", "database": "CommonStage",
               "mappings": [{"targetColumn": "PMT_ID", "sourceTable": "cs_activity", "sourceColumn": "activityid", "mappingType": "Direct"},
                            {"targetColumn": "ClaimNo", "sourceTable": "cs_activity", "sourceColumn": "claimno", "mappingType": "Direct"},
                            {"targetColumn": "Amount", "sourceTable": "cs_activity", "sourceColumn": "amount", "mappingType": "Direct"}]}
+
+
+def test_generate_etl_uses_mapping_default_even_when_not_mapped(monkeypatch):
+    # A 'Not Mapped' column that carries a defaultValue must send that default into the
+    # prompt, and the system prompt must tell the model to use it (not NULL).
+    body = {"targetTable": "CMT_CLAIM", "database": "CommonStage",
+            "joinCondition": "FROM cs_claim c",
+            "mappings": [
+                {"targetColumn": "PMT_ID", "sourceTable": "cs_claim", "sourceColumn": "id", "mappingType": "Direct"},
+                {"targetColumn": "src_upd_dt", "sourceTable": "", "sourceColumn": "",
+                 "mappingType": "Not Mapped", "defaultValue": "(getdate())", "nullHandling": "Set NULL"},
+            ]}
+    sink = []
+    reply = ("SET ANSI_NULLS ON\nGO\nCREATE PROCEDURE [dbo].[INSERT_CommonStage_CLAIM]\nAS\nBEGIN\n"
+             "  INSERT INTO CMT_CLAIM (PMT_ID, src_upd_dt)\n  SELECT\n"
+             "    c.id AS PMT_ID,\n    (getdate()) AS src_upd_dt\n  FROM cs_claim c;\nEND")
+    monkeypatch.setattr(es, "anthropic_client", lambda: _capturing_client(reply, sink))
+    p, s = es.generate_etl(body)
+    assert s == 200 and p["ok"] is True
+    user_msg = sink[0]["messages"][0]["content"]
+    assert "default=(getdate())" in user_msg          # the default reaches the model
+    assert "default=" in sink[0]["system"]            # and the rule to use it is present
 
 
 def test_generate_etl_complete_has_no_warning(monkeypatch):
