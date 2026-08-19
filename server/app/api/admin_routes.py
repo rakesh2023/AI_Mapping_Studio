@@ -7,7 +7,7 @@ deleting one permanently removes all their data.
 """
 from flask import Blueprint, request, jsonify, session
 
-from app.services import admin_service
+from app.services import admin_service, feedback_service
 
 bp = Blueprint("admin_api", __name__, url_prefix="/api/admin")
 
@@ -51,4 +51,22 @@ def delete_user(target_id):
     if admin_service.is_admin(target_id):
         return jsonify({"ok": False, "error": "Admin accounts cannot be deleted here."}), 400
     payload, status = admin_service.delete_user(target_id)
+    return jsonify(payload), status
+
+
+@bp.route("/feedback", methods=["GET"])
+def list_feedback():
+    uid, err = _require_admin()
+    if err:
+        return err
+    return jsonify({"ok": True, "feedback": feedback_service.list_feedback()}), 200
+
+
+@bp.route("/feedback/<int:fid>/status", methods=["POST"])
+def set_feedback_status(fid):
+    uid, err = _require_admin()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    payload, status = feedback_service.set_status(fid, body.get("status", ""))
     return jsonify(payload), status

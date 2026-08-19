@@ -50,3 +50,43 @@ def test_password_is_hashed_not_plaintext():
     finally:
         conn.close()
     assert row["password_hash"] and "password123" not in row["password_hash"]
+
+
+# ---- change-password + forced-first-login flag ----
+
+def test_admin_created_user_must_change_password():
+    from app.services import admin_service as AD
+    payload, status = AD.create_user("newhire@example.com", "temp-pass-123", "New Hire")
+    assert status == 201 and payload["ok"] is True
+    assert payload["user"]["mustChangePassword"] is True   # forced on first login
+
+
+def test_change_password_flow():
+    uid = A.signup("cp@example.com", "password123", "CP")[0]["user"]["id"]
+
+    # wrong current -> rejected
+    p, s = A.change_password(uid, "WRONG", "newpassword1")
+    assert s == 400 and p["reason"] == "bad_current"
+
+    # too short -> rejected
+    p, s = A.change_password(uid, "password123", "short")
+    assert s == 400 and p["reason"] == "weak"
+
+    # same as current -> rejected
+    p, s = A.change_password(uid, "password123", "password123")
+    assert s == 400 and p["reason"] == "same"
+
+    # valid -> succeeds, old password stops working, new one authenticates
+    p, s = A.change_password(uid, "password123", "brand-new-pass-1")
+    assert s == 200 and p["ok"] is True
+    assert A.authenticate("cp@example.com", "password123") is None
+    assert A.authenticate("cp@example.com", "brand-new-pass-1") is not None
+
+
+def test_change_password_clears_must_change_flag():
+    from app.services import admin_service as AD
+    uid = AD.create_user("forced@example.com", "temp-pass-123", "Forced")[0]["user"]["id"]
+    assert A.get_user(uid)["mustChangePassword"] is True
+    p, s = A.change_password(uid, "temp-pass-123", "chosen-pass-99")
+    assert s == 200 and p["ok"] is True
+    assert A.get_user(uid)["mustChangePassword"] is False

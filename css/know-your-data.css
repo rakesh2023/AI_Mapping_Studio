@@ -12,10 +12,10 @@
   padding:38px 24px; text-align:center; cursor:pointer;
   transition:border-color .15s ease, background .15s ease;
 }
-.kyd-dropzone:hover{ border-color:var(--accent); }
-.kyd-dropzone:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
-.kyd-dropzone.is-drag{ border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, var(--gray-bg)); }
-.kyd-dropzone .kyd-dz-ico{ font-size:2rem; color:var(--accent); line-height:1; }
+.kyd-dropzone:hover{ border-color:var(--primary); }
+.kyd-dropzone:focus-visible{ outline:2px solid var(--primary); outline-offset:3px; }
+.kyd-dropzone.is-drag{ border-color:var(--primary); background:color-mix(in srgb, var(--primary) 8%, var(--gray-bg)); }
+.kyd-dropzone .kyd-dz-ico{ font-size:2rem; color:var(--primary); line-height:1; }
 .kyd-dz-title{ font-weight:600; margin-top:10px; }
 .kyd-dz-hint{ color:var(--text-muted); font-size:.82rem; margin-top:4px; }
 .kyd-dz-types{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:14px; }
@@ -43,7 +43,7 @@
 }
 .kyd-doc-ico{
   flex:none; width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center;
-  background:var(--gray-bg); color:var(--accent); font-size:1.15rem;
+  background:var(--gray-bg); color:var(--primary); font-size:1.15rem;
 }
 .kyd-doc-main{ flex:1; min-width:0; }
 .kyd-doc-top{ display:flex; align-items:center; gap:10px; justify-content:space-between; flex-wrap:wrap; }
@@ -53,7 +53,7 @@
 
 /* ---- Progress ---- */
 .kyd-progress{ height:6px; border-radius:6px; background:var(--gray-bg); overflow:hidden; margin-top:10px; }
-.kyd-progress > span{ display:block; height:100%; width:0; background:var(--accent); transition:width .25s ease; }
+.kyd-progress > span{ display:block; height:100%; width:0; background:var(--primary); transition:width .25s ease; }
 
 /* ---- Status pill ---- */
 .kyd-status{
@@ -63,7 +63,7 @@
 }
 .kyd-status .dot{ width:7px; height:7px; border-radius:50%; background:currentColor; }
 .kyd-status.is-uploading{ color:var(--text-muted); background:var(--gray-bg); }
-.kyd-status.is-processing{ color:var(--accent);   background:color-mix(in srgb, var(--accent) 14%, transparent); }
+.kyd-status.is-processing{ color:var(--primary);   background:color-mix(in srgb, var(--primary) 14%, transparent); }
 .kyd-status.is-ready{      color:var(--success);  background:color-mix(in srgb, var(--success) 16%, transparent); }
 .kyd-status.is-failed{     color:var(--danger);   background:color-mix(in srgb, var(--danger) 14%, transparent); }
 .kyd-status.is-rejected{   color:var(--warning);  background:color-mix(in srgb, var(--warning) 18%, transparent); }
@@ -108,11 +108,11 @@
   max-width:82%; padding:10px 13px; border-radius:14px; font-size:.9rem; line-height:1.5;
   white-space:pre-wrap; word-wrap:break-word;
 }
-.kyd-msg-user .kyd-bubble{ background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+.kyd-msg-user .kyd-bubble{ background:var(--primary); color:#fff; border-bottom-right-radius:4px; }
 .kyd-msg-assistant .kyd-bubble{ background:var(--gray-bg); color:var(--text-main); border:1px solid var(--border); border-bottom-left-radius:4px; }
 .kyd-route{
   display:inline-block; margin-left:8px; font-family:ui-monospace,Consolas,monospace; font-size:.62rem;
-  font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--accent-deep,var(--accent));
+  font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--primary-dark);
   border:1px solid var(--border); border-radius:999px; padding:1px 7px; vertical-align:middle;
 }
 .kyd-cites{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
@@ -130,7 +130,7 @@
 .kyd-full-toggle{ padding-left:2.4em; }
 .kyd-full-toggle .form-check-label{ font-size:.78rem; font-weight:500; color:var(--text-muted); cursor:pointer; white-space:nowrap; }
 .kyd-full-toggle .form-check-input{ cursor:pointer; }
-.kyd-full-toggle .form-check-input:checked{ background-color:var(--accent); border-color:var(--accent); }
+.kyd-full-toggle .form-check-input:checked{ background-color:var(--primary); border-color:var(--primary); }
 
 @keyframes kyd-blink{ 0%,100%{ opacity:.25; } 50%{ opacity:1; } }
 @keyframes kyd-pulse{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }

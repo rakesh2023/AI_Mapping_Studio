@@ -547,6 +547,7 @@ function buildHeaderHTML(){
       buildClientSwitcherHTML() +
       '<button class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme"><i class="bi ' + (getTheme()==="dark" ? "bi-sun" : "bi-moon-stars") + '"></i></button>' +
       '<button class="icon-btn" id="resetAppBtn" title="Reset application (clear all data)"><i class="bi bi-arrow-counterclockwise"></i></button>' +
+      '<button class="icon-btn" id="feedbackBtn" title="Send feedback / report a bug"><i class="bi bi-chat-square-dots"></i></button>' +
       '<div class="icon-btn" id="notifBtn" title="Notifications (not yet available)"><i class="bi bi-bell"></i></div>' +
       '<div class="user-wrap">' +
         '<div class="user-chip" id="userChip" role="button" tabindex="0">' +
@@ -560,6 +561,7 @@ function buildHeaderHTML(){
         '<div class="user-menu" id="userMenu" style="display:none;">' +
           '<div class="user-menu-head"><div class="user-name">' + escapeHtml(user.name) + '</div>' +
             '<div class="user-email">' + escapeHtml(user.email || "") + '</div></div>' +
+          '<button type="button" class="user-menu-item" id="changePwBtn"><i class="bi bi-shield-lock me-1"></i> Change password</button>' +
           '<button type="button" class="user-menu-item" id="logoutBtn"><i class="bi bi-box-arrow-right me-1"></i> Log out</button>' +
         '</div>' +
       '</div>' +
@@ -697,6 +699,105 @@ function openClientModal(mode){
   setClientForm(null);
   renderClientModalList();
   if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("clientModal")).show(); }
+}
+
+/* ---- Change-password modal (anytime, from the user menu) ---- */
+function injectChangePwModal(){
+  if(document.getElementById("changePwModal")) return;
+  const html =
+    '<div class="modal fade" id="changePwModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-shield-lock me-1"></i> Change password</h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body">' +
+      '<div class="hint-note mb-2" id="cpmErr" style="display:none;background:var(--danger-bg);color:var(--danger);border-color:#f3c9c6;"></div>' +
+      '<div class="form-group"><label>Current password</label><input type="password" class="form-control" id="cpmCurrent" autocomplete="current-password"></div>' +
+      '<div class="form-group"><label>New password</label><input type="password" class="form-control" id="cpmNew" autocomplete="new-password">' +
+        '<div class="text-xs text-muted-2 mt-1">At least 8 characters, different from your current password.</div></div>' +
+      '<div class="form-group"><label>Confirm new password</label><input type="password" class="form-control" id="cpmConfirm" autocomplete="new-password"></div>' +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="cpmSave"><i class="bi bi-check2 me-1"></i> Update password</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.getElementById("cpmSave").addEventListener("click", saveChangePw);
+}
+function _cpmErr(msg){ const e = document.getElementById("cpmErr"); if(!e) return; if(msg){ e.textContent = msg; e.style.display = ""; } else { e.style.display = "none"; } }
+async function saveChangePw(){
+  _cpmErr(null);
+  const cur = document.getElementById("cpmCurrent").value;
+  const nw = document.getElementById("cpmNew").value;
+  const cf = document.getElementById("cpmConfirm").value;
+  if(!cur || !nw){ _cpmErr("Enter your current and new password."); return; }
+  if(nw.length < 8){ _cpmErr("New password must be at least 8 characters."); return; }
+  if(nw !== cf){ _cpmErr("The new passwords do not match."); return; }
+  if(nw === cur){ _cpmErr("The new password must be different from your current password."); return; }
+  const btn = document.getElementById("cpmSave"); btn.disabled = true;
+  try{
+    const res = await fetch("/api/auth/change-password", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({currentPassword: cur, newPassword: nw})});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ _cpmErr((j && j.error) || "Could not change the password."); return; }
+    const m = bootstrap.Modal.getInstance(document.getElementById("changePwModal")); if(m) m.hide();
+    showNotification("Password changed.", "success");
+  }catch(e){ _cpmErr("Cannot reach the server."); }
+  finally{ btn.disabled = false; }
+}
+function openChangePwModal(){
+  injectChangePwModal();
+  _cpmErr(null);
+  ["cpmCurrent", "cpmNew", "cpmConfirm"].forEach(id => { const x = document.getElementById(id); if(x) x.value = ""; });
+  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("changePwModal")).show(); }
+}
+
+/* ---- Feedback modal (raise a suggestion / bug / other, from the header icon) ---- */
+function injectFeedbackModal(){
+  if(document.getElementById("feedbackModal")) return;
+  const html =
+    '<div class="modal fade" id="feedbackModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-chat-square-dots me-1"></i> Send feedback</h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body">' +
+      '<div class="hint-note mb-2" id="fbErr" style="display:none;background:var(--danger-bg);color:var(--danger);border-color:#f3c9c6;"></div>' +
+      '<div class="form-group"><label>Type</label>' +
+        '<select class="form-select" id="fbType"><option value="suggestion">Suggestion</option><option value="bug">Bug</option><option value="other">Other</option></select></div>' +
+      '<div class="form-group"><label>Message</label>' +
+        '<textarea class="form-control" id="fbMessage" rows="4" placeholder="Describe your suggestion or the issue you hit…"></textarea></div>' +
+      '<div class="text-xs text-muted-2">The current page and your browser info are included to help us follow up.</div>' +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="fbSend"><i class="bi bi-send me-1"></i> Send</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.getElementById("fbSend").addEventListener("click", sendFeedback);
+}
+function _fbErr(msg){ const e = document.getElementById("fbErr"); if(!e) return; if(msg){ e.textContent = msg; e.style.display = ""; } else { e.style.display = "none"; } }
+async function sendFeedback(){
+  _fbErr(null);
+  const type = document.getElementById("fbType").value;
+  const message = document.getElementById("fbMessage").value.trim();
+  if(!message){ _fbErr("Please enter a message."); return; }
+  const page = (location.hash || location.pathname || "");
+  const btn = document.getElementById("fbSend"); btn.disabled = true;
+  try{
+    const res = await fetch("/api/feedback", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({type: type, message: message, page: page})});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ _fbErr((j && j.error) || "Could not send feedback."); return; }
+    const m = bootstrap.Modal.getInstance(document.getElementById("feedbackModal")); if(m) m.hide();
+    showNotification("Thanks — your feedback was sent.", "success");
+  }catch(e){ _fbErr("Cannot reach the server."); }
+  finally{ btn.disabled = false; }
+}
+function openFeedbackModal(){
+  injectFeedbackModal();
+  _fbErr(null);
+  const t = document.getElementById("fbType"); if(t) t.value = "suggestion";
+  const msg = document.getElementById("fbMessage"); if(msg) msg.value = "";
+  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("feedbackModal")).show(); }
 }
 
 /* ---- DB connection passwords are NOT persisted (server-side or local). They're
@@ -930,6 +1031,10 @@ function wireShellEvents(){
     userChip.addEventListener("click", (e) => { e.stopPropagation(); userMenu.style.display = (userMenu.style.display === "none" ? "" : "none"); });
     document.addEventListener("click", () => { userMenu.style.display = "none"; });
   }
+  const changePwBtn = document.getElementById("changePwBtn");
+  if(changePwBtn){ changePwBtn.addEventListener("click", openChangePwModal); }
+  const feedbackBtn = document.getElementById("feedbackBtn");
+  if(feedbackBtn){ feedbackBtn.addEventListener("click", openFeedbackModal); }
   const logoutBtn = document.getElementById("logoutBtn");
   if(logoutBtn){
     logoutBtn.addEventListener("click", async () => {

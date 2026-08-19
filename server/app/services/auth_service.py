@@ -72,9 +72,19 @@ def _row_to_user(row: sqlite3.Row) -> Dict[str, Any]:
         "name": row["name"] or "",
         "role": row["role"] or "",
         "isAdmin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
+        "mustChangePassword": bool(row["must_change_password"]) if "must_change_password" in row.keys() else False,
         "createdAt": row["created_at"],
         "lastLoginAt": row["last_login_at"],
     }
+
+
+def validate_password(password: str) -> Optional[str]:
+    """Return an error message if the password is invalid, else None."""
+    if not password or len(password) < _MIN_PASSWORD:
+        return "Password must be at least %d characters." % _MIN_PASSWORD
+    if len(password) > 200:
+        return "Password is too long."
+    return None
 
 
 def validate_signup(email: str, password: str, name: str) -> Optional[str]:
@@ -82,13 +92,44 @@ def validate_signup(email: str, password: str, name: str) -> Optional[str]:
     email = (email or "").strip()
     if not email or len(email) > _MAX_EMAIL or not _EMAIL_RE.match(email):
         return "Enter a valid email address."
-    if not password or len(password) < _MIN_PASSWORD:
-        return "Password must be at least %d characters." % _MIN_PASSWORD
-    if len(password) > 200:
-        return "Password is too long."
+    pw_err = validate_password(password)
+    if pw_err:
+        return pw_err
     if name and len(name) > _MAX_NAME:
         return "Name is too long."
     return None
+
+
+def change_password(uid: int, current: str, new: str) -> Tuple[Dict[str, Any], int]:
+    """Change a logged-in user's password: verify current, validate + set new, and
+    clear the must-change flag. Returns ({ok}|{ok:False,error,reason}, status) with
+    reason in {unauth, bad_current, weak, same}."""
+    if not uid:
+        return {"ok": False, "error": "Not authenticated.", "reason": "unauth"}, 401
+    conn = connect()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "Account not found.", "reason": "unauth"}, 401
+    if not check_password_hash(row["password_hash"], current or ""):
+        return {"ok": False, "error": "Your current password is incorrect.", "reason": "bad_current"}, 400
+    err = validate_password(new)
+    if err:
+        return {"ok": False, "error": err, "reason": "weak"}, 400
+    if check_password_hash(row["password_hash"], new):
+        return {"ok": False, "error": "The new password must be different from your current password.",
+                "reason": "same"}, 400
+    new_hash = generate_password_hash(new)
+    with write_lock():
+        conn = connect()
+        try:
+            conn.execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?", (new_hash, uid))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"ok": True}, 200
 
 
 def signup(email: str, password: str, name: str = "", role: str = "Migration Lead") -> Tuple[Dict[str, Any], int]:

@@ -29,6 +29,12 @@ def onboarding_page():
     return send_from_directory(os.path.join(ROOT, "pages"), "onboarding.html")
 
 
+@bp.route("/change-password")
+def change_password_page():
+    """Clean URL for the forced / voluntary password change (pages/change-password.html)."""
+    return send_from_directory(os.path.join(ROOT, "pages"), "change-password.html")
+
+
 @bp.route("/<path:path>")
 def static_proxy(path):
     full = os.path.join(ROOT, path)

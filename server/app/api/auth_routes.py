@@ -17,6 +17,7 @@ def _set_login(user):
     session["uid"] = user["id"]
     session["name"] = user.get("name") or ""
     session["role"] = user.get("role") or ""
+    session["must_change_password"] = 1 if user.get("mustChangePassword") else 0
     session.pop("cid", None)
 
 
@@ -82,7 +83,8 @@ def login():
     if active:
         session["cid"] = active
     return jsonify({"ok": True, "user": user, "clients": clients,
-                    "activeClientId": active, "needsOnboarding": not clients}), 200
+                    "activeClientId": active, "needsOnboarding": not clients,
+                    "mustChangePassword": bool(user.get("mustChangePassword"))}), 200
 
 
 @bp.route("/logout", methods=["POST"])
@@ -97,6 +99,19 @@ def me():
     if not payload:
         return jsonify({"ok": False, "error": "Not authenticated."}), 401
     return jsonify(payload), 200
+
+
+@bp.route("/change-password", methods=["POST"])
+def change_password():
+    uid = session.get("uid")
+    if not uid:
+        return jsonify({"ok": False, "error": "Not authenticated."}), 401
+    body = request.get_json(silent=True) or {}
+    payload, status = auth_service.change_password(
+        uid, body.get("currentPassword", ""), body.get("newPassword", ""))
+    if status == 200 and payload.get("ok"):
+        session["must_change_password"] = 0   # gate clears immediately
+    return jsonify(payload), status
 
 
 @bp.route("/select-client", methods=["POST"])

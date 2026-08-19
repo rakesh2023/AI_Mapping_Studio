@@ -75,8 +75,8 @@ def create_user(email: str, password: str, name: str = "") -> Tuple[Dict[str, An
         conn = connect()
         try:
             cur = conn.execute(
-                "INSERT INTO users (email, password_hash, name, role, is_admin, created_at) "
-                "VALUES (?,?,?,?,0,?)",
+                "INSERT INTO users (email, password_hash, name, role, is_admin, must_change_password, created_at) "
+                "VALUES (?,?,?,?,0,1,?)",
                 (email, pw_hash, name, "Migration Lead", _now()),
             )
             conn.commit()

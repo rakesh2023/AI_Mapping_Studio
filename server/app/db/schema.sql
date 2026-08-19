@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     name          TEXT,
     role          TEXT DEFAULT 'Migration Lead',
     is_admin      INTEGER NOT NULL DEFAULT 0,    -- 1 = admin (env-seeded); manages users
+    must_change_password INTEGER NOT NULL DEFAULT 0,  -- 1 = force a password change on next login
     created_at    TEXT NOT NULL,
     last_login_at TEXT
 );
@@ -148,3 +149,22 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     CHECK (role IN ('user','assistant'))
 );
 CREATE INDEX IF NOT EXISTS ix_chat_messages_session ON chat_messages(session_id, id);
+
+-- ==========================================================================
+-- Feedback — user-raised suggestions / bug reports (app-wide, admin-reviewed).
+-- NOT tenant-scoped (no client_id); reviewed by admins on the Admin page.
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS feedback (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- keep feedback if the user is deleted
+    type       TEXT NOT NULL,                 -- suggestion | bug | other
+    message    TEXT NOT NULL,
+    page       TEXT,                          -- page/route where it was raised
+    user_agent TEXT,                          -- browser/OS, for bug reproduction
+    status     TEXT NOT NULL DEFAULT 'new',   -- new | accepted | in_development | done | declined
+    created_at TEXT NOT NULL,
+    updated_at TEXT,                          -- last status change
+    CHECK (type IN ('suggestion','bug','other')),
+    CHECK (status IN ('new','accepted','in_development','done','declined'))
+);
+CREATE INDEX IF NOT EXISTS ix_feedback_created ON feedback(created_at);

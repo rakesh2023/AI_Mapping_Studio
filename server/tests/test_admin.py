@@ -90,9 +90,11 @@ def test_delete_user_purges_all_their_data(monkeypatch):
                       json={"email": "victim@example.com", "password": "password123", "name": "V"}).get_json()
     uid = made["user"]["id"]
 
-    # The victim logs in, creates a client, writes a tenant doc; seed a usage-log row.
+    # The victim logs in; admin-created accounts must change their password first
+    # (forced-first-login gate), then they can create a client + write a tenant doc.
     v = _user_client()
     v.post("/api/auth/login", json={"email": "victim@example.com", "password": "password123"})
+    v.post("/api/auth/change-password", json={"currentPassword": "password123", "newPassword": "chosen-pass-1"})
     cid = v.post("/api/clients", json={"name": "Victim WS"}).get_json()["client"]["id"]
     v.put("/api/state/ai_mappings", json={"value": [{"id": "M1"}]})
     ai_usage_logger._insert({

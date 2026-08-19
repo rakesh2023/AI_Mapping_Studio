@@ -26,6 +26,8 @@
         body: JSON.stringify({email, password})});
       const j = await res.json().catch(()=>({}));
       if(!res.ok || !j.ok){ showErr(j.error || "Something went wrong. Please try again."); return; }
+      // First login (admin-created account) -> must set a new password before anything else.
+      if(j.mustChangePassword){ window.location.href = "/change-password"; return; }
       // Admins manage users only (no client / no mapping) -> straight to the Admin page.
       if(j.user && j.user.isAdmin){ window.location.href = "/pages/admin.html"; return; }
       // login -> onboarding if no client yet, else the SPA shell (persistent sidebar).

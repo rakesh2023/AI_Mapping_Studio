@@ -40,6 +40,8 @@ def _ensure_user_columns(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "is_admin" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    if "must_change_password" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
 
 def ensure_app_tables() -> None:

@@ -86,6 +86,11 @@ table.grid-table tbody tr.is-renamed td.mono{text-decoration:line-through;text-d
 .metadata-tree .tree-node.is-changed .tree-name{color:var(--warning);font-weight:600;}
 .metadata-tree .tree-node.is-removed{opacity:.72;}
 .metadata-tree .tree-node.is-removed .tree-name{text-decoration:line-through;text-decoration-color:var(--danger);color:var(--danger);}
+/* when a diff node is ALSO the selected (active) one, the node bg is solid accent —
+   keep the name white and give the badge a white bg so its colored text stays readable */
+.metadata-tree .tree-node.active .tree-name{color:#fff;}
+.metadata-tree .tree-node.active.is-removed .tree-name{color:#fff;text-decoration-color:rgba(255,255,255,.85);}
+.metadata-tree .tree-node.active .diff-badge{background:#fff;}
 /* diff summary panel */
 .diff-panel{border-left:3px solid var(--primary);}
 .diff-panel .diff-details{display:flex;flex-direction:column;gap:8px;}
@@ -93,11 +98,11 @@ table.grid-table tbody tr.is-renamed td.mono{text-decoration:line-through;text-d
 .diff-panel .diff-sec-label{flex:0 0 auto;margin-top:2px;white-space:nowrap;}
 .diff-panel .diff-list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.78rem;}
 .diff-panel .diff-list li{color:var(--text-main);}
-/* the exact changed cell(s), with the old value shown struck-through beneath */
-table.grid-table tbody td.cell-changed{box-shadow:inset 0 0 0 2px var(--warning);border-radius:5px;background:var(--warning-bg);}
-table.grid-table tbody td.cell-changed .was{display:block;font-size:.66rem;line-height:1.3;margin-top:2px;color:var(--danger);text-decoration:line-through;text-decoration-color:var(--danger);}
+/* the exact changed cell(s): an amber OUTLINE marks it (no fill, so text stays
+   high-contrast on the row tint); new value bold, old value muted + struck-through */
+table.grid-table tbody td.cell-changed{box-shadow:inset 0 0 0 2px var(--warning);border-radius:5px;font-weight:600;}
+table.grid-table tbody td.cell-changed .was{display:block;font-weight:400;font-size:.66rem;line-height:1.3;margin-top:2px;color:var(--text-muted);text-decoration:line-through;text-decoration-color:var(--text-muted);}
 body.theme-dark table.grid-table tbody tr.is-new{background:#14301f;}
 body.theme-dark table.grid-table tbody tr.is-changed{background:#332810;}
 body.theme-dark table.grid-table tbody tr.is-renamed{background:#332810;}
 body.theme-dark table.grid-table tbody tr.is-removed{background:#331a18;}
-body.theme-dark table.grid-table tbody td.cell-changed{background:#3a2e12;}

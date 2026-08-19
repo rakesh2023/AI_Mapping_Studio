@@ -45,6 +45,7 @@ def create_app() -> Flask:
     from app.api.ai_usage import bp as ai_usage_bp
     from app.api.admin_routes import bp as admin_bp
     from app.api.kyd_routes import bp as kyd_bp
+    from app.api.feedback_routes import bp as feedback_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(auth_bp)
@@ -56,6 +57,7 @@ def create_app() -> Flask:
     application.register_blueprint(ai_usage_bp)
     application.register_blueprint(admin_bp)
     application.register_blueprint(kyd_bp)
+    application.register_blueprint(feedback_bp)
 
     _register_auth_guard(application)
     _register_csrf(application)
@@ -104,6 +106,15 @@ def _register_auth_guard(application: Flask) -> None:
             if p.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Not authenticated."}), 401
             return redirect("/login")
+        # Forced password change: until the flag clears, allow only the change-password
+        # page itself (its css/js/assets + /api/auth/* are already allowed above); block
+        # every other page (redirect) and API (403).
+        if session.get("must_change_password"):
+            if p == "/change-password":
+                return None
+            if p.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Password change required."}), 403
+            return redirect("/change-password")
         # App pages: admins manage users only. Confine them to the Admin page (which
         # needs no active client / no onboarding); send non-admins away from it. The
         # /api/admin/* endpoints are guarded inside their blueprint (403).
