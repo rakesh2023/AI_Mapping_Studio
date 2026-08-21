@@ -116,6 +116,45 @@ SOURCE_EXTRACT_SCHEMA = {
 }
 
 
+# Lookup-document extraction: pull SOURCE coded column -> TARGET column bindings and
+# their code/description values from an unstructured file (PDF / Word / messy sheet).
+LOOKUP_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "lookupName": {"type": "string"},
+                    "sourceTable": {"type": "string"},
+                    "sourceColumn": {"type": "string"},
+                    "targetTable": {"type": "string"},
+                    "targetColumn": {"type": "string"},
+                    "expectedValues": {"type": "string"},
+                    "values": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "code": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["code"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["sets"],
+    "additionalProperties": False,
+}
+
+
 # Rich file extraction (opt-in "Use AI extraction" on the Target upload): like
 # SOURCE_EXTRACT_SCHEMA but also asks the AI to read a data dictionary's key/flag
 # columns and infer mandatory, primary key, foreign key + the referenced table.column.

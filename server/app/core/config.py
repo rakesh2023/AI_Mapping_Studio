@@ -179,6 +179,16 @@ def signup_enabled() -> bool:
     return os.environ.get("AIMS_SIGNUP_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
+def lookup_mapping_enabled() -> bool:
+    """Whether the lookup / typelist value-mapping feature is active
+    (env AIMS_LOOKUP_MAPPING_ENABLED, default ON).
+
+    Gates the /api/lookups endpoints and the UI feature. Defaults ON so the feature
+    is usable out of the box; set to 0/false to hide it in a deployment.
+    """
+    return os.environ.get("AIMS_LOOKUP_MAPPING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+
+
 def admin_email() -> str:
     """Email of the bootstrap admin, created/promoted on startup (env AIMS_ADMIN_EMAIL)."""
     return (os.environ.get("AIMS_ADMIN_EMAIL") or "").strip().lower()

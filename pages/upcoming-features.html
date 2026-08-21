@@ -1,14 +1,15 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Data Profiling - AI Mapping Studio</title>
+<title>Upcoming Features - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 <link rel="stylesheet" href="../css/common.css?v=20260820o">
 <link rel="stylesheet" href="../css/sidebar.css?v=20260820o">
-<link rel="stylesheet" href="../css/tables.css?v=20260820o">
 <link rel="stylesheet" href="../css/forms.css?v=20260820o">
+<link rel="stylesheet" href="../css/tables.css?v=20260820o">
+<link rel="stylesheet" href="../css/mapping.css?v=20260820o">
 <link rel="stylesheet" href="../css/responsive.css?v=20260820o">
 </head>
 <body>
@@ -18,25 +19,23 @@
     <header id="header-container"></header>
     <main class="content-area">
       <div class="breadcrumb-bar">
-        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Data Profiling</div>
-        <h2>Source Data Profiling</h2></div>
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Help <i class="bi bi-chevron-right"></i> Upcoming Features</div>
+        <h2>Upcoming Features</h2></div>
       </div>
 
-      <div class="card-el mb-3">
-        <div class="form-grid cols-3">
-          <div class="form-group"><label>Source</label>
-            <select class="form-select" id="sourceSelect"></select></div>
-          <div class="form-group"><label>Table</label>
-            <select class="form-select" id="tableSelect"></select></div>
-          <div class="form-group d-flex align-items-end gap-2">
-            <button class="btn btn-primary flex-fill" id="runProfileBtn"><i class="bi bi-bar-chart-line me-1"></i> Run Profiling</button>
-          </div>
+      <div class="card-el">
+        <div class="section-title"><i class="bi bi-rocket-takeoff"></i> Roadmap <span class="text-xs text-muted-2">— features planned for AI Mapping Studio</span></div>
+        <div class="table-responsive-el mt-2">
+          <table class="grid-table">
+            <thead><tr>
+              <th style="width:70px;">Sr#</th>
+              <th style="min-width:220px;">Title</th>
+              <th>Description</th>
+            </tr></thead>
+            <tbody id="upcomingBody"></tbody>
+          </table>
         </div>
-        <div id="profileConsole" class="process-log mt-3" style="display:none;min-height:auto;">Idle.</div>
-        <div id="profileSummary" class="mt-3"></div>
       </div>
-
-      <div id="profileCards" class="row g-4"></div>
     </main>
   </div>
 </div>
@@ -44,13 +43,6 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="../js/common.js?v=20260820o"></script>
 <script src="../js/navigation.js?v=20260820o"></script>
-<script src="../js/profiling.js?v=20260820o"></script>
+<script src="../js/upcoming-features.js?v=20260820o"></script>
 </body>
 </html>
-
-
-
-
-
-
-

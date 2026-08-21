@@ -23,7 +23,7 @@ def create_app() -> Flask:
     application = Flask(__name__, static_folder=None)
 
     # --- Session signing key (required for auth) --- #
-    from app.core.config import secret_key, session_hours, csrf_enabled, signup_enabled
+    from app.core.config import secret_key, session_hours, csrf_enabled, signup_enabled, lookup_mapping_enabled
     sk = secret_key()
     if not sk:
         sk = secrets.token_hex(32)
@@ -34,6 +34,7 @@ def create_app() -> Flask:
     application.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     application.config["CSRF_ENABLED"] = csrf_enabled()
     application.config["SIGNUP_ENABLED"] = signup_enabled()
+    application.config["LOOKUP_MAPPING_ENABLED"] = lookup_mapping_enabled()
 
     from app.api.static_routes import bp as static_bp
     from app.api.auth_routes import bp as auth_bp
@@ -46,6 +47,7 @@ def create_app() -> Flask:
     from app.api.admin_routes import bp as admin_bp
     from app.api.kyd_routes import bp as kyd_bp
     from app.api.feedback_routes import bp as feedback_bp
+    from app.api.lookup_routes import bp as lookup_bp
 
     application.register_blueprint(static_bp)
     application.register_blueprint(auth_bp)
@@ -58,6 +60,7 @@ def create_app() -> Flask:
     application.register_blueprint(admin_bp)
     application.register_blueprint(kyd_bp)
     application.register_blueprint(feedback_bp)
+    application.register_blueprint(lookup_bp)
 
     _register_auth_guard(application)
     _register_csrf(application)

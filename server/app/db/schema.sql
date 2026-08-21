@@ -168,3 +168,92 @@ CREATE TABLE IF NOT EXISTS feedback (
     CHECK (status IN ('new','accepted','in_development','done','declined'))
 );
 CREATE INDEX IF NOT EXISTS ix_feedback_created ON feedback(created_at);
+
+-- ==========================================================================
+-- Lookup / typelist value mapping (separate from structural field mapping).
+-- Tenant-scoped like KYD. A lookup_set is a SOURCE coded column's value set
+-- (code -> description), optionally bound to the TARGET list column it feeds.
+-- Value mappings (source code -> target value) are keyed by (set, source_code)
+-- so a shared lookup is mapped once and reused. No target value dictionary —
+-- the AI infers target values by normalizing the source descriptions.
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS lookup_sets (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id          INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    lookup_name        TEXT NOT NULL,               -- e.g. Claim_status or YES_NO
+    source_table       TEXT,                        -- source coded column this set describes
+    source_column      TEXT,
+    target_table       TEXT,                        -- target list column it feeds (nullable until matched)
+    target_column      TEXT,
+    target_values_spec TEXT,                        -- optional manual notes / override (usually null)
+    source_document    TEXT,                        -- filename it came from, if uploaded
+    version            INTEGER NOT NULL DEFAULT 1,  -- bumped on re-upload
+    value_count        INTEGER NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT,
+    UNIQUE(user_id, client_id, lookup_name)
+);
+CREATE INDEX IF NOT EXISTS ix_lookup_sets_scope ON lookup_sets(user_id, client_id);
+
+-- The source code -> description values within a lookup set.
+CREATE TABLE IF NOT EXISTS lookup_values (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    lookup_set_id  INTEGER NOT NULL REFERENCES lookup_sets(id) ON DELETE CASCADE,
+    user_id        INTEGER NOT NULL,                -- denormalized for scoped queries (KYD pattern)
+    client_id      INTEGER NOT NULL,
+    code           TEXT NOT NULL,
+    description    TEXT,
+    sort_order     INTEGER,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    parent_code    TEXT,
+    effective_from TEXT,
+    effective_to   TEXT,
+    created_at     TEXT NOT NULL,
+    UNIQUE(lookup_set_id, code)
+);
+CREATE INDEX IF NOT EXISTS ix_lookup_values_set   ON lookup_values(lookup_set_id);
+CREATE INDEX IF NOT EXISTS ix_lookup_values_scope ON lookup_values(user_id, client_id);
+
+-- Value-level mappings: source code -> target value (the "expected mapping").
+CREATE TABLE IF NOT EXISTS lookup_value_mappings (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    lookup_set_id      INTEGER NOT NULL REFERENCES lookup_sets(id) ON DELETE CASCADE,
+    user_id            INTEGER NOT NULL,
+    client_id          INTEGER NOT NULL,
+    source_code        TEXT NOT NULL,
+    source_description TEXT,
+    target_code        TEXT,
+    target_description TEXT,
+    confidence         REAL,
+    rationale          TEXT,
+    mapping_type       TEXT NOT NULL DEFAULT 'unmapped',
+    is_reviewed        INTEGER NOT NULL DEFAULT 0,
+    reviewed_by        INTEGER,
+    reviewed_at        TEXT,
+    ai_run_id          INTEGER,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT,
+    UNIQUE(lookup_set_id, source_code),
+    CHECK (mapping_type IN ('exact','semantic','defaulted','unmapped','manual_override','ignored'))
+);
+CREATE INDEX IF NOT EXISTS ix_lvm_set   ON lookup_value_mappings(lookup_set_id);
+CREATE INDEX IF NOT EXISTS ix_lvm_scope ON lookup_value_mappings(user_id, client_id);
+
+-- Per-pass AI run audit (counts/tokens/timing); complements per-call ai_usage_log.
+CREATE TABLE IF NOT EXISTS ai_mapping_runs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    client_id      INTEGER NOT NULL,
+    pass_no        INTEGER NOT NULL,                -- 1 (structural) or 2 (lookup values)
+    prompt_version TEXT,
+    model          TEXT,
+    input_tokens   INTEGER NOT NULL DEFAULT 0,
+    output_tokens  INTEGER NOT NULL DEFAULT 0,
+    duration_ms    INTEGER,
+    counts_json    TEXT,                            -- {mapped, unmapped, lowConfidence, resolvedWithoutLlm, …}
+    status         TEXT NOT NULL DEFAULT 'success',
+    error          TEXT,
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ai_mapping_runs_scope ON ai_mapping_runs(user_id, client_id);

@@ -15,6 +15,13 @@ table.grid-table tbody tr:hover{background:#fdf6f1;}
 table.grid-table tbody tr.row-selected{background:#eef4ff;}
 table.grid-table td.wrap{white-space:normal;min-width:180px;}
 
+/* Inline-editable lookup grid: give the Source/Expected editors room to breathe */
+table.grid-table.lookup-edit-grid tbody td{white-space:normal;vertical-align:top;padding:8px 12px;}
+table.grid-table.lookup-edit-grid td.align-top{vertical-align:top;}
+table.grid-table.lookup-edit-grid input.form-control,
+table.grid-table.lookup-edit-grid textarea.form-control{width:100%;}
+table.grid-table.lookup-edit-grid textarea.form-control{font-size:.8rem;line-height:1.4;}
+
 /* Columns show/hide menu */
 .col-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:50;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:8px;min-width:210px;max-height:340px;overflow-y:auto;}
 .col-menu .col-menu-head{font-size:.66rem;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);font-weight:700;padding:4px 8px 6px;}

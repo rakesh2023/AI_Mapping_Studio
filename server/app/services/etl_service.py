@@ -60,10 +60,73 @@ def _mapping_lines(rows: List[Dict[str, Any]]) -> str:
         if rule:
             extra.append("rule=" + rule)
         if lookup:
-            extra.append("lookupTable=" + lookup)
+            # Pass ONLY the lookup name (text before the ':'), never the "table: pairs"
+            # string — otherwise the model treats the name as a physical table to join.
+            extra.append("lookupName=" + lookup.split(":", 1)[0].strip())
         if dflt:
             extra.append("default=" + dflt)
         lines.append("- " + tgt + "  <=  " + src + "  [" + "; ".join(extra) + "]")
+    return "\n".join(lines)
+
+
+def _lookup_insert_block(rows: List[Dict[str, Any]]) -> str:
+    """Build a COMMENTED-OUT block of INSERT statements seeding the common [LookupData]
+    table from the lookup columns in this procedure. The pairs come from each Lookup
+    row's 'lookupTable' attribute, formatted '<lookupName>: <code>-<value>, ...' (as
+    written by the Lookup-Mapping sync). Returns '' when there are no lookup columns."""
+    order: List[tuple] = []      # (lookupName, code) preserving first-seen order
+    targets: Dict[tuple, str] = {}
+    names_no_values: List[str] = []
+    seen_names = set()
+    for m in rows:
+        if (m.get("mappingType") or "").strip().lower() != "lookup":
+            continue
+        lt = (m.get("lookupTable") or "").strip()
+        if not lt:
+            continue
+        name, _, body = lt.partition(":")
+        name = name.strip()
+        if not name:
+            continue
+        pairs_found = False
+        for pair in body.split(","):
+            code, sep, target = pair.partition("-")
+            code, target = code.strip(), target.strip()
+            if not sep or not code:
+                continue
+            key = (name, code)
+            if key not in targets:
+                order.append(key)
+            targets[key] = target
+            pairs_found = True
+        if not pairs_found and name not in seen_names:
+            names_no_values.append(name)
+        seen_names.add(name)
+
+    if not order and not names_no_values:
+        return ""
+
+    def esc(v: str) -> str:
+        return str(v).replace("'", "''")
+
+    lines = [
+        "",
+        "",
+        "-- =====================================================================",
+        "-- LOOKUP REFERENCE DATA",
+        "-- Please insert these values into the common lookup table [LookupData]",
+        "-- (columns: LookupName, SourceValue, TargetValue). They back the",
+        "-- \"LEFT JOIN LookupData ... AND LookupName = '...'\" joins used above.",
+        "-- Uncomment and run once before executing this procedure.",
+        "-- ---------------------------------------------------------------------",
+    ]
+    for (name, code) in order:
+        lines.append("-- INSERT INTO LookupData (LookupName, SourceValue, TargetValue) VALUES ('"
+                     + esc(name) + "', '" + esc(code) + "', '" + esc(targets[(name, code)]) + "');")
+    for name in names_no_values:
+        lines.append("-- (no expected values captured for '" + esc(name)
+                     + "' - add its SourceValue/TargetValue rows to LookupData manually)")
+    lines.append("-- =====================================================================")
     return "\n".join(lines)
 
 
@@ -175,8 +238,22 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "inline '-- comment' (e.g. 'NULL AS Foo,   -- Not Mapped'). Never place the comma after a "
         "'--' comment — it would be commented out and break the SQL. The last SELECT line has no comma.\n"
         "- Direct -> sourceTable.sourceColumn. Data Type Conversion / Format Conversion -> "
-        "CAST(sourceTable.sourceColumn AS <targetType>). Lookup -> select the looked-up "
-        "column and JOIN its lookup table. Constant/Default -> the literal value (no source).\n"
+        "CAST(sourceTable.sourceColumn AS <targetType>). Lookup -> resolve the source code to the "
+        "target value via the lookup reference table (see LOOKUP JOIN RULE below). "
+        "Constant/Default -> the literal value (no source).\n"
+        "- LOOKUP JOIN RULE (mandatory): all lookup / typelist values live in ONE common reference "
+        "table named [LookupData] with columns (LookupName, SourceValue, TargetValue). For every "
+        "column whose type is 'Lookup', LEFT JOIN [LookupData] with a UNIQUE alias and select "
+        "<alias>.TargetValue AS the target column. The ON clause MUST both (a) match the source "
+        "code column and (b) ALWAYS restrict the rows to THIS lookup by its lookup name — i.e. "
+        "`LEFT JOIN LookupData <alias> ON <alias>.SourceValue = <sourceExpr> "
+        "AND <alias>.LookupName = '<lookupName>'`. The column's 'lookupName=' attribute gives the "
+        "'<lookupName>' value to put in that filter. CRITICAL: 'lookupName' is NOT a table — it is "
+        "only the value of the LookupName column. Never use it (or anything like "
+        "'cs_address_addresstype') as the table you join to; the ONLY lookup table is [LookupData]. "
+        "This lookup-name predicate is REQUIRED on every lookup JOIN: without it, a source code that "
+        "exists in more than one lookup (e.g. Status 1=Open vs AddressType 1=Home) would match the "
+        "wrong rows. Never emit a lookup JOIN without the lookup-name filter.\n"
         "- DEFAULT VALUES: if a column has a 'default=' attribute, USE that default expression "
         "as its SELECT value (emit it verbatim, e.g. '(getdate()) AS src_upd_dt' or '0 AS Flag'). "
         "This takes precedence over NULL and applies EVEN WHEN the type is 'Not Mapped' or there "
@@ -243,6 +320,11 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         other_dialect = bool(re.search(r"oracle|postgre|pl/?sql|mysql|snowflake|bigquery|db2|sqlite|mariadb",
                                        instructions or "", re.IGNORECASE))
         missing = [] if other_dialect else _missing_target_columns(sql, target_cols)
+        # Append a commented-out INSERT block seeding the common [LookupData] table for
+        # any lookup columns in this procedure (based on the mapping's lookupTable pairs).
+        lookup_block = _lookup_insert_block(rows)
+        if lookup_block:
+            sql = sql.rstrip() + "\n" + lookup_block + "\n"
         payload = {"ok": True, "model": model, "targetTable": target_table,
                    "procedure": proc, "sql": sql, "warnings": []}
         if missing:

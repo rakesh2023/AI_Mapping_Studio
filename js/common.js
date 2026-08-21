@@ -37,33 +37,35 @@ const SIDEBAR_SECTIONS = [
   {title:"", items:[
     {label:"Dashboard", icon:"bi-speedometer2", href:"dashboard.html"}
   ]},
-  {title:"Setup", items:[
+  {title:"Setup", icon:"bi-sliders", items:[
     {label:"Know Your Data", icon:"bi-file-earmark-text", href:"know-your-data.html"},
     {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
     {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"}
   ]},
-  {title:"Discover", items:[
+  {title:"Discover", icon:"bi-binoculars", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
     {label:"Data Profiling", icon:"bi-bar-chart-line", href:"data-profiling.html"}
   ]},
-  {title:"Mapping", items:[
+  {title:"Mapping", icon:"bi-arrow-left-right", items:[
     {label:"AI Mapping Generator", icon:"bi-stars", href:"ai-mapping-generator.html"},
-    {label:"Mapping Workspace", icon:"bi-grid-3x3-gap", href:"mapping-workspace.html"},
+    {label:"AI Mapping Workspace", icon:"bi-stars", href:"mapping-workspace.html"},
+    {label:"AI Lookup Mapping", icon:"bi-stars", href:"lookup-mapping.html"},
     {label:"Validation", icon:"bi-shield-check", href:"validation.html"}
   ]},
-  {title:"Build", items:[
+  {title:"Build", icon:"bi-hammer", items:[
     {label:"ETL Code (SQL)", icon:"bi-file-earmark-code", href:"etl-code.html"}
   ]},
-  {title:"Deliver", items:[
+  {title:"Deliver", icon:"bi-send", items:[
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
     {label:"Export", icon:"bi-download", href:"export.html"},
     {label:"Settings", icon:"bi-gear", href:"settings.html"}
   ]},
-  {title:"Reports", items:[
+  {title:"Reports", icon:"bi-clipboard-data", items:[
     {label:"AI Usage Report", icon:"bi-graph-up", href:"ai-usage-report.html"}
   ]},
-  {title:"Help", items:[
-    {label:"Introduction", icon:"bi-info-circle", href:"introduction.html"}
+  {title:"Help", icon:"bi-life-preserver", items:[
+    {label:"Introduction", icon:"bi-info-circle", href:"introduction.html"},
+    {label:"Upcoming Features", icon:"bi-rocket-takeoff", href:"upcoming-features.html"}
   ]}
 ];
 
@@ -518,7 +520,7 @@ function buildSidebarHTML(activeHref){
           '<div class="nav-item"><a class="nav-link ' + ("admin.html" === activeHref ? "active" : "") +
             '" href="admin.html" title="User Admin"><i class="bi bi-shield-lock"></i><span>User Admin</span></a></div>'
         : SIDEBAR_SECTIONS.map(section =>
-            (section.title ? '<div class="nav-section-title">' + section.title + '</div>' : '') +
+            (section.title ? '<div class="nav-section-title">' + (section.icon ? '<i class="bi ' + section.icon + ' me-1"></i>' : '') + section.title + '</div>' : '') +
             section.items.map(item =>
               '<div class="nav-item">' +
                 '<a class="nav-link ' + (item.href === activeHref ? "active" : "") + '" href="' + item.href + '" title="' + item.label + '">' +
