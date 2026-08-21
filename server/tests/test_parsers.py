@@ -109,6 +109,26 @@ def test_parse_xlsx_dictionary_reads_cells():
 
 
 @pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed")
+def test_parse_xlsx_dictionary_product_schema_columns():
+    # Product schema file headers: TableName, Field Name, Data Type, IsNull,
+    # Is Primary Key, Type Key, Foreign Key, Multiple FK Type.
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["TableName", "Field Name", "Data Type", "IsNull", "Is Primary Key", "Type Key", "Foreign Key", "Multiple FK Type"])
+    ws.append(["cc_claim", "ID", "bigint", "No", "Yes", "", "", ""])
+    ws.append(["cc_claim", "LossType", "varchar", "Yes", "No", "LossType", "", ""])
+    ws.append(["cc_claim", "InsuredID", "bigint", "No", "No", "", "Contact", "PolicyContactRole"])
+    buf = io.BytesIO(); wb.save(buf)
+    tables = parse_xlsx_dictionary(buf.getvalue())
+    cols = {c["name"]: c for c in tables[0]["columns"]}
+    assert tables[0]["name"] == "cc_claim"
+    assert cols["ID"]["pk"] is True and cols["ID"]["nullable"] is False and cols["ID"]["mandatory"] is True
+    assert cols["LossType"]["nullable"] is True and cols["LossType"]["typeKey"] == "LossType"
+    assert cols["InsuredID"]["fk"] is True and cols["InsuredID"]["fkReference"] == "Contact"
+    assert cols["InsuredID"]["multipleFkType"] == "PolicyContactRole"
+
+
+@pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed")
 def test_parse_xlsx_dictionary_returns_none_for_raw_data():
     # A sheet with no Table/Column header pair is not a dictionary -> None (AI fallback)
     wb = openpyxl.Workbook()

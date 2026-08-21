@@ -21,6 +21,12 @@ ALLOWED_DOC_KEYS = frozenset({
     "target_schema", "ai_mappings", "ai_joins", "mapping_overrides",
     "mapping_history", "deploy_history", "exports", "business_context",
     "etl_instructions",
+    # Lookup Data Explore diff baseline; Schema File Explore parsed schema + diff baseline.
+    "lookup_baseline", "cmt_schema", "cmt_baseline",
+    # Target System: which columns' pk/fk/list/description were AI/auto-populated (for review highlight).
+    "target_ai_fields",
+    # Guidewire data-dictionary per-column descriptions (source for Target description fill).
+    "dict_descriptions",
 })
 
 _MAX_DOC_CHARS = 6_000_000   # ~6 MB per document (guards against runaway payloads)

@@ -80,6 +80,53 @@ SINGLE_MAPPING_SCHEMA = {
 }
 
 
+MATCH_TABLES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "match": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+                "required": ["target", "match", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["matches"],
+    "additionalProperties": False,
+}
+
+
+INFER_TARGET_META_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "pk": {"type": "boolean"},
+                    "fk": {"type": "boolean"},
+                    "fkReference": {"type": "string"},
+                    "isListTable": {"type": "boolean"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "description"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["columns"],
+    "additionalProperties": False,
+}
+
+
 SOURCE_EXTRACT_SCHEMA = {
     "type": "object",
     "properties": {

@@ -7,6 +7,7 @@ across tenants. Requires both a logged-in user and an active client.
 from flask import Blueprint, request, jsonify, session
 
 from app.services import tenant_store_service as store
+from app.services import client_service
 
 bp = Blueprint("state_api", __name__, url_prefix="/api/state")
 
@@ -33,11 +34,13 @@ def get_bundle():
 
 @bp.route("", methods=["DELETE"])
 def delete_all():
+    """Reset ALL data for the active client (tenant docs + KYD + lookups + chat +
+    mapping runs), keeping the client itself. This is the 'Reset application' action."""
     scope, err = _scope()
     if err:
         return err
     uid, cid = scope
-    payload, status = store.delete_all(uid, cid)
+    payload, status = client_service.reset_client_data(uid, cid)
     return jsonify(payload), status
 
 

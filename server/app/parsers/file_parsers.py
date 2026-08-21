@@ -187,7 +187,17 @@ _XLSX_HDR = {
     "description": ("description", "desc", "comment", "comments", "notes", "definition", "remarks"),
     "businessterm":("businessterm", "business", "glossaryterm", "businessname", "term"),
     "sample":      ("sample", "samplevalue", "example", "examplevalue", "sampledata"),
+    # Product schema dictionary extras (Guidewire-style):
+    "isnull":      ("isnull", "nullable", "isnullable", "allownull", "nulls", "null"),
+    "pk":          ("isprimarykey", "primarykey", "pk", "ispk", "iskey", "primary"),
+    "typekey":     ("typekey", "typelist", "typecode", "typekeyname", "listtable", "listvalue"),
+    "fk":          ("foreignkey", "fk", "isforeignkey", "references", "fkreference", "referencedtable"),
+    "multiplefk":  ("multiplefktype", "multifktype", "multiplefk", "polymorphicfk", "fktypes", "multiplefktypes"),
 }
+
+
+def _truthy(v: Any) -> bool:
+    return str(v or "").strip().lower() in ("yes", "y", "true", "1", "x", "t", "✓")
 
 
 def norm_hdr(h: Any) -> str:
@@ -252,6 +262,13 @@ def parse_xlsx_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
             b["_seen"].add(cname.lower())
             lraw = cell(r, "length")
             length = int(lraw) if lraw.isdigit() else (lraw or None)
+            # IsNull -> nullable/mandatory (None when the column isn't in the sheet).
+            isnull_raw = cell(r, "isnull")
+            nullable = _truthy(isnull_raw) if isnull_raw != "" else None
+            # Foreign Key cell may be a referenced table name or just a Yes/No flag.
+            fk_raw = cell(r, "fk")
+            fk = fk_raw.strip().lower() not in ("", "no", "n", "false", "0")
+            fk_ref = fk_raw if (fk and fk_raw.strip().lower() not in ("yes", "y", "true", "1", "x", "t")) else ""
             b["columns"].append({
                 "name": cname,
                 "dataType": (cell(r, "datatype") or "").lower(),
@@ -259,6 +276,13 @@ def parse_xlsx_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
                 "businessTerm": cell(r, "businessterm"),
                 "description": cell(r, "description"),
                 "sample": cell(r, "sample"),
+                "nullable": nullable,
+                "mandatory": (nullable is False),
+                "pk": _truthy(cell(r, "pk")),
+                "fk": fk,
+                "fkReference": fk_ref,
+                "typeKey": cell(r, "typekey"),
+                "multipleFkType": cell(r, "multiplefk"),
             })
 
     if not recognised_any:

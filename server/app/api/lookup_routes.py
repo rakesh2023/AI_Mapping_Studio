@@ -48,6 +48,16 @@ def create_set():
     return jsonify(payload), status
 
 
+@bp.route("/snapshot", methods=["GET"])
+def snapshot():
+    """All sets + their values in one call (for the Lookup Data System browser)."""
+    uid, cid, err = _scope()
+    if err:
+        return err
+    payload, status = lookup_service.snapshot_all(uid, cid)
+    return jsonify(payload), status
+
+
 @bp.route("", methods=["DELETE"])
 def delete_all_sets():
     """Clear all lookup sets for this tenant (values + value mappings cascade)."""
@@ -69,7 +79,8 @@ def upload_document():
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "No file uploaded."}), 400
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
-    payload, status = lookup_service.import_document(uid, cid, f.filename, f.read(), ext)
+    product = request.form.get("product")   # policy | claim | billing (Guidewire zip only)
+    payload, status = lookup_service.import_document(uid, cid, f.filename, f.read(), ext, product=product)
     return jsonify(payload), status
 
 

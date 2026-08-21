@@ -147,6 +147,33 @@ def save_lookup_set(user_id: int, client_id: int, lookup_name: str, values: List
     return {"ok": True, "set": _row_to_set(row), "valueCount": len(deduped), "duplicatesDropped": dropped}, 200
 
 
+def snapshot_all(user_id: int, client_id: int) -> Result:
+    """All lookup sets WITH their values, in one call — used by the Lookup Data
+    System page for display and 'changes since last import' diffing."""
+    conn = connect()
+    try:
+        sets = conn.execute(
+            "SELECT * FROM lookup_sets WHERE user_id=? AND client_id=? ORDER BY lookup_name",
+            (user_id, client_id),
+        ).fetchall()
+        ids = [r["id"] for r in sets]
+        vals: Dict[int, List[Dict[str, str]]] = {}
+        if ids:
+            q = ("SELECT lookup_set_id, code, description FROM lookup_values "
+                 "WHERE lookup_set_id IN (%s) ORDER BY sort_order, id" % ",".join("?" * len(ids)))
+            for v in conn.execute(q, ids).fetchall():
+                vals.setdefault(v["lookup_set_id"], []).append(
+                    {"code": v["code"], "description": v["description"] or ""})
+    finally:
+        conn.close()
+    out = []
+    for r in sets:
+        d = _row_to_set(r)
+        d["values"] = vals.get(r["id"], [])
+        out.append(d)
+    return {"ok": True, "at": _now(), "sets": out}, 200
+
+
 def list_sets(user_id: int, client_id: int) -> Result:
     conn = connect()
     try:
@@ -325,12 +352,102 @@ def _split_dotted_binding(s: Dict[str, Any]) -> None:
                 s[col_key] = tail
 
 
-def import_document(user_id: int, client_id: int, filename: str, raw: bytes, ext: str) -> Result:
+# Guidewire product -> physical typelist-table prefix.
+_GW_TYPELIST_PREFIX = {"policy": "pctl_", "claim": "cctl_", "billing": "bctl_"}
+
+
+def _store_dict_descriptions(user_id: int, client_id: int, raw: bytes) -> int:
+    """From a Guidewire dictionary zip, build a per-column DESCRIPTION map from the
+    db/ entity pages and store it as the tenant doc 'dict_descriptions'
+    ({ "<physical table>": { "<normcol>": "<description>" } }). Used by Target System
+    'AI fill' to populate column descriptions. Returns the number of tables stored."""
+    from app.parsers.gw_dictionary import iter_zip_html, parse_gw_entity
+    from app.services import tenant_store_service as store
+    try:
+        pages = iter_zip_html(raw)
+    except Exception:  # noqa: BLE001
+        return 0
+    has_db = any("/db/" in p.replace("\\", "/").lower() for p, _ in pages)
+    out: Dict[str, Dict[str, str]] = {}
+    for path, html in pages:
+        pl = path.replace("\\", "/").lower()
+        if "/typelist/" in pl:
+            continue
+        if has_db and "/db/" not in pl:
+            continue
+        ent = parse_gw_entity(html)
+        if not ent or not ent.get("columns"):
+            continue
+        cols: Dict[str, str] = {}
+        for c in ent["columns"]:
+            d = (c.get("description") or "").strip()
+            if not d:
+                continue
+            key = re.sub(r"[^a-z0-9]", "", (c.get("name") or "").lower())
+            if key:
+                cols[key] = d
+        if cols:
+            out[ent.get("physical") or ent.get("name")] = cols
+    if out:
+        store.set_doc(user_id, client_id, "dict_descriptions", out)
+    return len(out)
+
+
+def _import_gw_typelists(user_id: int, client_id: int, filename: str, raw: bytes,
+                         product: Optional[str] = None) -> Result:
+    """Import Guidewire typelist pages (from a zipped HTML dictionary or a single
+    .html page) as lookup sets — one set per typelist, code list -> values. Binding
+    (source/target) is left blank for the user to set on the Lookup Mapping page.
+
+    When `product` is policy/claim/billing, only typelists whose physical table name
+    starts with that product's prefix (pctl_/cctl_/bctl_) are imported."""
+    from app.parsers.gw_dictionary import iter_zip_html, parse_gw_typelist
+    prefix = _GW_TYPELIST_PREFIX.get((product or "").strip().lower())
+    # From the SAME zip, also capture entity-column descriptions for Target 'AI fill'.
+    dict_tables = 0
+    if filename.lower().endswith(".zip"):
+        try:
+            dict_tables = _store_dict_descriptions(user_id, client_id, raw)
+        except Exception:  # noqa: BLE001
+            dict_tables = 0
+    pages = iter_zip_html(raw) if filename.lower().endswith(".zip") else \
+        [(filename, raw.decode("utf-8", errors="ignore"))]
+    created, total, skipped = [], 0, 0
+    for path, html in pages:
+        tl = parse_gw_typelist(html)
+        if not tl or not tl.get("values"):
+            continue
+        name = tl.get("physical") or tl.get("name") or "typelist"
+        if prefix and not name.lower().startswith(prefix):
+            skipped += 1
+            continue                      # not this product's typelist
+        vals = [{"code": v["code"], "description": v.get("description", "")} for v in tl["values"]]
+        p, st = save_lookup_set(user_id, client_id, name, vals, source_document=filename)
+        if st == 200 and p.get("ok"):
+            created.append(p["set"]["lookupName"])
+            total += p.get("valueCount", 0)
+    if not created:
+        if dict_tables:
+            # No typelists for this product, but we still captured entity descriptions.
+            return {"ok": True, "created": 0, "sets": [], "totalValues": 0, "skippedRows": skipped,
+                    "extractedByAI": False, "dictTables": dict_tables}, 200
+        hint = (" for product '" + product + "' (prefix " + prefix + ")") if prefix else ""
+        return {"ok": False, "error": "No Guidewire typelists were found in the upload" + hint + "."}, 400
+    return {"ok": True, "created": len(created), "sets": created, "totalValues": total,
+            "skippedRows": skipped, "extractedByAI": False, "dictTables": dict_tables}, 200
+
+
+def import_document(user_id: int, client_id: int, filename: str, raw: bytes, ext: str,
+                    product: Optional[str] = None) -> Result:
     """Import an uploaded lookup document into lookup sets. Structured files
     (xlsx/csv with the expected columns) use the fast deterministic parser; PDFs,
-    Word docs, or files where those columns aren't found fall back to AI extraction."""
+    Word docs, or files where those columns aren't found fall back to AI extraction.
+    A .zip (or .html) Guidewire dictionary imports its typelists as lookup sets,
+    optionally filtered to a product (policy/claim/billing) by table prefix."""
     from app.parsers.lookup_parsers import parse_lookup_document
     raw = raw or b""
+    if (ext or "").lower() == "zip" or (raw[:64].lstrip().lower().startswith(b"<") and "typelistbody" in raw[:20000].decode("utf-8", errors="ignore").lower()):
+        return _import_gw_typelists(user_id, client_id, filename, raw, product=product)
     parsed = parse_lookup_document(raw, ext)
     sets = parsed.get("sets") if parsed.get("ok") else None
     used_ai = False

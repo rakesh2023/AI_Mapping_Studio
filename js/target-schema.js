@@ -155,7 +155,8 @@ function snapshotEntities(entities){
       if(!f || !f.name) return;
       cols[String(f.name).toLowerCase()] = {
         name: f.name, dataType: f.dataType || "", length: (f.length != null ? f.length : null),
-        mandatory: !!f.mandatory, pk: !!f.pk, fk: !!f.fk, fkReference: f.fkReference || ""
+        mandatory: !!f.mandatory, pk: !!f.pk, fk: !!f.fk, fkReference: f.fkReference || "",
+        typeKey: f.typeKey || "", multipleFkType: f.multipleFkType || ""
       };
     });
     tables[String(tname).toLowerCase()] = { name: tname, cols: cols };
@@ -173,7 +174,7 @@ function computeSchemaDiff(prevSnapshot, currEntities){
   if(!prevSnapshot || !prevSnapshot.tables) return diff;
   const prev = prevSnapshot.tables;
   const curr = snapshotEntities(currEntities).tables;
-  const COMP = ["dataType", "length", "mandatory", "pk", "fk", "fkReference"];
+  const COMP = ["dataType", "length", "mandatory", "pk", "fk", "fkReference", "typeKey", "multipleFkType"];
   const norm = (v) => v == null ? "" : (typeof v === "boolean" ? (v ? "1" : "0") : String(v).trim().toLowerCase());
 
   // Added tables (in current, not in prev). Mark every column of a brand-new table

@@ -39,8 +39,10 @@ const SIDEBAR_SECTIONS = [
   ]},
   {title:"Setup", icon:"bi-sliders", items:[
     {label:"Know Your Data", icon:"bi-file-earmark-text", href:"know-your-data.html"},
-    {label:"Source Systems", icon:"bi-database", href:"source-systems.html"},
-    {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"}
+    {label:"Product Data Dictionary", icon:"bi-card-checklist", href:"lookup-data-system.html"},
+    {label:"Product Schema", icon:"bi-file-earmark-spreadsheet", href:"schema-file-explore.html"},
+    {label:"Target System", icon:"bi-hdd-network", href:"target-system.html"},
+    {label:"Source Systems", icon:"bi-database", href:"source-systems.html"}
   ]},
   {title:"Discover", icon:"bi-binoculars", items:[
     {label:"Metadata Explorer", icon:"bi-diagram-3", href:"metadata-explorer.html"},
@@ -104,7 +106,8 @@ const LS_KEYS = {
    PUT /api/state/<key>. Everything else (device/UI prefs) stays in localStorage. */
 const TENANT_DOC_KEYS = ["db_connections","target_connections",
   "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
-  "mapping_history","deploy_history","exports","business_context","etl_instructions"];
+  "mapping_history","deploy_history","exports","business_context","etl_instructions",
+  "lookup_baseline","cmt_schema","cmt_baseline","target_ai_fields","dict_descriptions"];
 const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
 TENANT_DOC_KEYS.forEach(k => { TENANT_LS["aims_" + k] = k; });
 function isTenantKey(key){ return Object.prototype.hasOwnProperty.call(TENANT_LS, key); }
@@ -213,14 +216,16 @@ async function resetApplication(){
   const who = activeClientName() || "the current client";
   const ok = (typeof confirmDialog === "function")
     ? await confirmDialog("Reset all data for " + who + "? This permanently clears THIS client's "
-        + "source & target connections, uploaded schema, generated mappings, join conditions, history "
-        + "and generated outputs. Your other clients and your device preferences (theme, layout) are "
-        + "NOT affected. This cannot be undone.", "Reset " + who)
+        + "source & target connections, Product Schema & Data Dictionary, Know Your Data documents, "
+        + "lookup/typelist data, generated mappings, join conditions, history and generated outputs. "
+        + "Your other clients and your device preferences (theme, layout) are NOT affected. "
+        + "This cannot be undone.", "Reset " + who)
     : window.confirm("Reset all data for " + who + "? This clears this client's data only and cannot be undone.");
   if(!ok) return;
-  // Server-side clear is scoped to session user_id + active client_id (see /api/state DELETE),
-  // so no other user or client is touched. Re-store the mapping document as explicitly EMPTY ([])
-  // so the workspace/dashboard/history/validation don't fall back to the bundled sample data.
+  // Server-side reset (DELETE /api/state) clears EVERY per-client table for this
+  // user+client (tenant docs, KYD documents, lookups, chat, mapping runs), keeping the
+  // client. Then re-store the mapping document as explicitly EMPTY ([]) so the
+  // workspace/dashboard/history/validation don't fall back to the bundled sample data.
   try{
     await fetch("/api/state", {method:"DELETE"}).catch(()=>{});
     await fetch("/api/state/ai_mappings", {method:"PUT", headers:{"Content-Type":"application/json"},

@@ -16,11 +16,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const lkFile = document.getElementById("lkFile");
   if(addLk && lkFile) addLk.addEventListener("click", () => lkFile.click());
   if(lkFile) lkFile.addEventListener("change", () => {
-    if(lkFile.files && lkFile.files[0]) uploadLookupDoc(lkFile.files[0]);
+    const f = lkFile.files && lkFile.files[0];
     lkFile.value = "";
+    if(!f) return;
+    // A Guidewire dictionary (zip / html) asks which product to import first.
+    if(/\.(zip|html?)$/i.test(f.name)) openLookupProductModal(f);
+    else uploadLookupDoc(f);
   });
-  const fromList = document.getElementById("addFromListBtn");
-  if(fromList) fromList.addEventListener("click", deriveLookupsFromListColumns);
   const clearLk = document.getElementById("clearLookupsBtn");
   if(clearLk) clearLk.addEventListener("click", clearAllLookups);
   const syncBtn = document.getElementById("syncToMappingBtn");
@@ -197,7 +199,7 @@ function renderLookupSets(sets, total){
   if(!sets.length){
     list.innerHTML = total
       ? '<div class="text-xs text-muted-2">No lookup sets match your search / filter.</div>'
-      : '<div class="text-xs text-muted-2">No lookup data yet. Upload a document to capture a source coded column’s values and its target binding, or use <b>From List-Table columns</b>.</div>';
+      : '<div class="text-xs text-muted-2">No lookup data yet. Upload a document (or a Guidewire dictionary .zip) to capture typelist codes and their target binding.</div>';
     return;
   }
   const dash = '<span class="text-muted-2">—</span>';
@@ -301,10 +303,51 @@ async function saveLookupEditModal(){
   finally{ if(btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Save'; } }
 }
 
-async function uploadLookupDoc(file){
+/* ---- Guidewire dictionary: ask the product, then import only its typelists ---- */
+let _pendingLookupFile = null;
+
+function injectLookupProductModal(){
+  if(document.getElementById("lkProductModal")) return;
+  const html =
+    '<div class="modal fade" id="lkProductModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-box-seam me-1"></i> Import Guidewire dictionary</h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body">' +
+      '<p class="text-xs text-muted-2 mb-2">Which product is this dictionary? Only that product’s <b>typelists</b> (code lists) will be imported as lookup sets.</p>' +
+      '<div class="form-group"><label>Product</label>' +
+        '<select class="form-select" id="lkProduct">' +
+          '<option value="claim">ClaimCenter — cctl_* typelists</option>' +
+          '<option value="policy">PolicyCenter — pctl_* typelists</option>' +
+          '<option value="billing">BillingCenter — bctl_* typelists</option>' +
+        '</select></div>' +
+      '<div class="text-xs text-muted-2" id="lkProductFile"></div>' +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="lkProductImport"><i class="bi bi-upload me-1"></i> Import</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.getElementById("lkProductImport").addEventListener("click", () => {
+    const product = (document.getElementById("lkProduct") || {}).value || "claim";
+    const m = bootstrap.Modal.getInstance(document.getElementById("lkProductModal")); if(m) m.hide();
+    if(_pendingLookupFile){ uploadLookupDoc(_pendingLookupFile, product); _pendingLookupFile = null; }
+  });
+}
+
+function openLookupProductModal(file){
+  injectLookupProductModal();
+  _pendingLookupFile = file;
+  const fn = document.getElementById("lkProductFile");
+  if(fn) fn.textContent = "File: " + file.name;
+  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("lkProductModal")).show(); }
+}
+
+async function uploadLookupDoc(file, product){
   const box = document.getElementById("lkUploadResult");
   if(box) box.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-2"></span>Parsing ' + escapeHtml(file.name) + '…</div>';
   const fd = new FormData(); fd.append("file", file);
+  if(product) fd.append("product", product);
   try{
     const res = await fetch("/api/lookups/upload", {method:"POST", body: fd});
     const j = await res.json().catch(() => ({}));

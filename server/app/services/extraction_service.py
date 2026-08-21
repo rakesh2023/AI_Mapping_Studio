@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterator, List, Tuple
 from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET, EXTRACT_MAX_CHUNKS
 from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary
+from app.parsers.gw_dictionary import iter_zip_html, parse_gw_entity
 from app.parsers.sql_ddl_parser import parse_sql_ddl
 from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA, RICH_EXTRACT_SCHEMA
 from app.services.ai_client import (
@@ -48,6 +49,56 @@ def _merge_part_into(part: List[Dict[str, Any]], merged: Dict[str, Any], order: 
             bucket["columns"].append(c)
 
 
+def _gw_entity_to_source(ent: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a parsed Guidewire entity to the source shape (PHYSICAL view): the
+    column name is the physical DB column (falling back to the logical name), and
+    the logical name is kept as businessTerm."""
+    cols = []
+    for c in ent.get("columns", []):
+        phys = c.get("dbColumn") or c.get("name")
+        cols.append({
+            "name": phys, "dataType": c.get("dataType", "") or "", "length": c.get("length"),
+            "businessTerm": c.get("name", ""), "description": c.get("description", "") or "", "sample": "",
+            "mandatory": bool(c.get("mandatory")), "pk": bool(c.get("pk")),
+            "fk": bool(c.get("fk")), "fkReference": c.get("fkReference", "") or "",
+        })
+    return {"name": ent.get("physical") or ent.get("name"), "columns": cols}
+
+
+def _is_db_view_page(path: str) -> bool:
+    return "/db/" in path.replace("\\", "/").lower()
+
+
+def extract_gw_zip(raw: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Parse a zipped Guidewire HTML dictionary into source tables (PHYSICAL db
+    view). Prefers the data/data/db/ pages; typelists are skipped here (they load
+    as lookup sets on the Lookup Mapping page). Returns (tables, stats)."""
+    pages = iter_zip_html(raw)
+    has_db = any(_is_db_view_page(p) for p, _ in pages)
+    merged: Dict[str, Any] = {}
+    order: List[str] = []
+    parsed = 0
+    for path, html in pages:
+        pl = path.replace("\\", "/").lower()
+        if "/typelist/" in pl:
+            continue                     # code lists -> lookups, not tables
+        if has_db and not _is_db_view_page(pl):
+            continue                     # physical view: only the db/ pages
+        ent = parse_gw_entity(html)
+        if not ent or not ent.get("columns"):
+            continue                     # skips index/frame/security/non-entity pages
+        _merge_part_into([_gw_entity_to_source(ent)], merged, order)
+        parsed += 1
+    tables, col_count = [], 0
+    for key in order:
+        b = merged[key]
+        if b["columns"]:
+            tables.append({"name": b["name"], "columns": b["columns"]})
+            col_count += len(b["columns"])
+    return tables, {"pages": len(pages), "entities": parsed,
+                    "tables": len(tables), "columns": col_count}
+
+
 def extract_source(filename: str, raw: bytes, rich: bool = False) -> Result:
     """Read an uploaded file and infer the SOURCE tables & columns.
 
@@ -58,6 +109,20 @@ def extract_source(filename: str, raw: bytes, rich: bool = False) -> Result:
     """
     if not raw:
         return {"ok": False, "error": "The uploaded file is empty."}, 400
+
+    # Fast path #0: a zipped Guidewire HTML dictionary -> parse every db/ entity page
+    # deterministically (no AI). Typelists are skipped here (import as lookup sets).
+    if filename.lower().endswith(".zip"):
+        try:
+            tables, stats = extract_gw_zip(raw)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": "Could not read the zip: " + (str(exc) or exc.__class__.__name__)}, 400
+        if not tables:
+            return {"ok": False, "error": "No Guidewire dictionary tables were found in the zip "
+                    "(looked for entity pages under a db/ folder)."}, 400
+        return {"ok": True, "model": "gw-dictionary-parser", "fileName": filename,
+                "tables": tables, "tableCount": stats["tables"], "columnCount": stats["columns"],
+                "pages": stats["pages"]}, 200
 
     # Fast path #1: a STRUCTURED Excel data dictionary is parsed directly from cells —
     # instant, verbatim, no AI (falls through to AI if the layout isn't recognisable).
@@ -146,6 +211,42 @@ def extract_source_stream(filename: str, raw: bytes, rich: bool = False) -> Iter
 
     if not raw:
         yield ev({"type": "error", "error": "The uploaded file is empty."})
+        return
+
+    # Fast path #0: zipped Guidewire HTML dictionary — deterministic, per-page progress.
+    if filename.lower().endswith(".zip"):
+        try:
+            pages = iter_zip_html(raw)
+        except Exception as exc:  # noqa: BLE001
+            yield ev({"type": "error", "error": "Could not read the zip: " + (str(exc) or exc.__class__.__name__)})
+            return
+        has_db = any(_is_db_view_page(p) for p, _ in pages)
+        yield ev({"type": "start", "chunks": len(pages), "fileName": filename, "unit": "pages"})
+        merged: Dict[str, Any] = {}
+        order: List[str] = []
+        for i, (path, html) in enumerate(pages):
+            pl = path.replace("\\", "/").lower()
+            if "/typelist/" not in pl and not (has_db and not _is_db_view_page(pl)):
+                ent = parse_gw_entity(html)
+                if ent and ent.get("columns"):
+                    _merge_part_into([_gw_entity_to_source(ent)], merged, order)
+            tcount = sum(1 for k in order if merged[k]["columns"])
+            ccount = sum(len(merged[k]["columns"]) for k in order)
+            if (i + 1) % 25 == 0 or i + 1 == len(pages):
+                yield ev({"type": "progress", "done": i + 1, "total": len(pages),
+                          "tables": tcount, "columns": ccount, "label": path.split("/")[-1]})
+        tables, col_count = [], 0
+        for key in order:
+            b = merged[key]
+            if b["columns"]:
+                tables.append({"name": b["name"], "columns": b["columns"]})
+                col_count += len(b["columns"])
+        if not tables:
+            yield ev({"type": "error", "error": "No Guidewire dictionary tables were found in the zip "
+                      "(looked for entity pages under a db/ folder)."})
+            return
+        yield ev({"type": "done", "ok": True, "model": "gw-dictionary-parser", "fileName": filename,
+                  "tables": tables, "tableCount": len(tables), "columnCount": col_count, "chunks": len(pages)})
         return
 
     # Fast path #1: structured Excel dictionary — parsed directly from cells, instant.

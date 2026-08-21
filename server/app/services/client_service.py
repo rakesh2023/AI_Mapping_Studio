@@ -160,3 +160,30 @@ def delete_client(user_id: int, client_id: int) -> Tuple[Dict[str, Any], int]:
         finally:
             conn.close()
     return {"ok": True, "deletedId": client_id}, 200
+
+
+def reset_client_data(user_id: int, client_id: int) -> Tuple[Dict[str, Any], int]:
+    """Clear EVERYTHING under a client but KEEP the client (the 'reset' action):
+    tenant docs, Know-Your-Data documents (+ files/chunks/structured registry and
+    their physical kyd_* tables), chat sessions/messages, lookup sets (+ values and
+    value mappings) and AI mapping runs. FK ON DELETE CASCADE removes the children;
+    the dynamic KYD physical tables aren't in the FK graph, so drop them first."""
+    if not owns_client(user_id, client_id):
+        return {"ok": False, "error": "Client not found."}, 404
+    with write_lock():
+        conn = connect()
+        try:
+            for r in conn.execute(
+                "SELECT physical_table FROM structured_tables WHERE user_id=? AND client_id=?",
+                (user_id, client_id),
+            ).fetchall():
+                pt = r["physical_table"]
+                if pt and _KYD_TABLE_RE.match(pt):
+                    conn.execute(f'DROP TABLE IF EXISTS "{pt}"')
+            # Delete each per-client ROOT table; children cascade (foreign_keys=ON).
+            for tbl in ("tenant_documents", "documents", "chat_sessions", "lookup_sets", "ai_mapping_runs"):
+                conn.execute(f"DELETE FROM {tbl} WHERE user_id=? AND client_id=?", (user_id, client_id))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"ok": True, "reset": client_id}, 200

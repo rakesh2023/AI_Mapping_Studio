@@ -6,7 +6,8 @@ streaming Response (application/x-ndjson), exactly as before.
 """
 from flask import Blueprint, request, jsonify, Response
 
-from app.services import ai_client, mapping_service, extraction_service, etl_service, schema_service
+from app.services import (ai_client, mapping_service, extraction_service, etl_service,
+                          schema_service, target_meta_service)
 
 bp = Blueprint("ai_api", __name__, url_prefix="/api/ai")
 
@@ -36,6 +37,20 @@ def generate_mappings():
 def regenerate_mapping():
     body = request.get_json(force=True) or {}
     payload, status = mapping_service.regenerate_mapping(body)
+    return jsonify(payload), status
+
+
+@bp.route("/infer-target-metadata", methods=["POST"])
+def infer_target_metadata():
+    body = request.get_json(force=True) or {}
+    payload, status = target_meta_service.infer_target_metadata(body)
+    return jsonify(payload), status
+
+
+@bp.route("/match-tables", methods=["POST"])
+def match_tables():
+    body = request.get_json(force=True) or {}
+    payload, status = target_meta_service.match_tables(body)
     return jsonify(payload), status
 
 

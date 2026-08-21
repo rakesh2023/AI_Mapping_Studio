@@ -5,12 +5,12 @@
 <title>Lookup Mapping - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260820o">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260820o">
-<link rel="stylesheet" href="../css/forms.css?v=20260820o">
-<link rel="stylesheet" href="../css/tables.css?v=20260820o">
-<link rel="stylesheet" href="../css/mapping.css?v=20260820o">
-<link rel="stylesheet" href="../css/responsive.css?v=20260820o">
+<link rel="stylesheet" href="../css/common.css?v=20260821n">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260821n">
+<link rel="stylesheet" href="../css/forms.css?v=20260821n">
+<link rel="stylesheet" href="../css/tables.css?v=20260821n">
+<link rel="stylesheet" href="../css/mapping.css?v=20260821n">
+<link rel="stylesheet" href="../css/responsive.css?v=20260821n">
 </head>
 <body>
 <div class="app-shell">
@@ -48,8 +48,7 @@
               </span>
               <div class="d-flex gap-2">
                 <button type="button" class="btn btn-sm btn-outline-primary" id="syncToMappingBtn" style="display:none;" title="Apply these lookup mappings to the AI-generated field mappings (only for target columns that have a lookup set)"><i class="bi bi-arrow-repeat me-1"></i> Sync to AI Mapping</button>
-                <button type="button" class="btn btn-sm btn-outline-soft" id="addFromListBtn" title="Create lookup sets from every target column marked List Value = Yes"><i class="bi bi-magic me-1"></i> From List-Table columns</button>
-                <input type="file" id="lkFile" accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.txt,.json" hidden>
+                <input type="file" id="lkFile" accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.txt,.json,.zip,.html,.htm" hidden>
                 <button type="button" class="btn btn-sm btn-outline-danger" id="clearLookupsBtn" style="display:none;" title="Delete all lookup sets"><i class="bi bi-trash me-1"></i> Clear all</button>
                 <button type="button" class="btn btn-sm btn-primary" id="addLookupBtn"><i class="bi bi-upload me-1"></i> Upload Lookup Data</button>
               </div>
@@ -57,6 +56,7 @@
             <div class="text-xs text-muted-2 mt-1">Excel/CSV with columns
               <b>LookupName</b>, <b>Source Table</b>, <b>Source column</b>, <b>Target table</b>, <b>Target column</b>, <b>Expected value</b> (free text)
               — or <b>Code</b> + <b>Description</b> — is read directly; <b>PDF, Word</b> or unstructured files are read by the <b>AI</b>.
+              A <b>Guidewire HTML dictionary</b> works too: zip the folder and upload the <b>.zip</b> — its <b>typelists</b> import as lookup sets.
               Pick a target table on the left to work on one entity at a time; use <b>Edit</b> on any row to change its Source and Expected mapping.</div>
             <div id="lkUploadResult" class="mt-2"></div>
 
@@ -89,9 +89,9 @@
 </div>
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260820o"></script>
-<script src="../js/navigation.js?v=20260820o"></script>
-<script src="../js/target-schema.js?v=20260820o"></script>
-<script src="../js/lookup-data.js?v=20260820o"></script>
+<script src="../js/common.js?v=20260821n"></script>
+<script src="../js/navigation.js?v=20260821n"></script>
+<script src="../js/target-schema.js?v=20260821n"></script>
+<script src="../js/lookup-data.js?v=20260821n"></script>
 </body>
 </html>

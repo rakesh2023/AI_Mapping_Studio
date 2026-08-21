@@ -211,6 +211,17 @@ def test_target_lookup_name_rule():
     assert L.target_lookup_name(None, None, fallback="Claim_status") == "Claim_status"
 
 
+def test_snapshot_all_returns_sets_with_values():
+    uid, cid = _uc("lksnap@example.com", "LKSNAP")
+    L.save_lookup_set(uid, cid, "A", [{"code": "1", "description": "Open"}, {"code": "2", "description": "Closed"}])
+    L.save_lookup_set(uid, cid, "B", [{"code": "X", "description": "x"}])
+    p, s = L.snapshot_all(uid, cid)
+    assert s == 200 and p["ok"] and p.get("at")
+    by = {x["lookupName"]: x for x in p["sets"]}
+    assert [v["code"] for v in by["A"]["values"]] == ["1", "2"]
+    assert [v["code"] for v in by["B"]["values"]] == ["X"]
+
+
 def test_log_run_inserts():
     uid, cid = _uc("lkr@example.com", "LKR")
     rid = L.log_run(uid, cid, 2, prompt_version="pass2.v1", model="m",

@@ -44,7 +44,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(ecTypeEl) ecTypeEl.addEventListener("change", ecToggleLen);
   const ecFkEl = document.getElementById("ecFk");
   if(ecFkEl) ecFkEl.addEventListener("change", ecToggleFk);
+  const inferBtn = document.getElementById("inferMetaBtn");
+  if(inferBtn) inferBtn.addEventListener("click", runInferSelected);
+  const selAllBtn = document.getElementById("ttSelectAllBtn");
+  if(selAllBtn) selAllBtn.addEventListener("click", toggleSelectAllTables);
+  const clearAiBtn = document.getElementById("clearAiFieldsBtn");
+  if(clearAiBtn) clearAiBtn.addEventListener("click", clearAiFields);
 });
+
+// Which target columns had pk/fk/list/description AI/auto-populated -> highlighted for review.
+// Shape: { "tablelower::collower": {pk:1, fk:1, isListTable:1, description:1} }
+let activeAiFields = {};
+// Entity names ticked in the tree (for "AI fill selected tables").
+let targetSelected = new Set();
 
 function isSqlServer(type){ return (type || "").toLowerCase().indexOf("sql server") !== -1; }
 function isFileSystem(type){ return (type || "").toLowerCase() === "file system"; }
@@ -363,6 +375,11 @@ function renderActiveBrowser(){
   activeDiff = (activeConn && activeConn.prevExtract) ? computeSchemaDiff(activeConn.prevExtract, meta.entities) : null;
   renderDiffPanel(activeDiff);
 
+  // AI-populated highlights (pk/fk/list/description filled from schema file + dictionary).
+  activeAiFields = lsGet("aims_target_ai_fields", {}) || {};
+  const clearAiBtn = document.getElementById("clearAiFieldsBtn");
+  if(clearAiBtn) clearAiBtn.style.display = Object.keys(activeAiFields).length ? "" : "none";
+
   document.getElementById("schemaMeta").innerHTML =
     '<span class="badge-soft badge-high"><i class="bi bi-hdd-network"></i> ' + escapeHtml(meta.application || "Target") + '</span> ' +
     '<span class="badge-soft badge-gray">' + escapeHtml(meta.version || "") + '</span> ' +
@@ -438,7 +455,9 @@ function renderTargetTree(meta){
     const cls = st === "added" ? " is-new" : st === "changed" ? " is-changed" : "";
     const badge = st === "added" ? ' <span class="badge-soft badge-high diff-badge">NEW</span>'
                 : st === "changed" ? ' <span class="badge-soft badge-medium diff-badge">CHANGED</span>' : '';
-    items += '<li><div class="tree-node' + cls + '" data-entity="' + escapeHtml(e.name) + '" title="' + escapeHtml(e.name) + '"><i class="bi ' + icon + '"></i> <span class="tree-name">' + escapeHtml(e.name) + '</span>' + badge + '</div></li>';
+    const chk = '<input type="checkbox" class="tt-check" data-check="' + escapeHtml(e.name) + '"' +
+      (targetSelected.has(e.name) ? " checked" : "") + ' title="Select for AI fill" style="margin-right:6px;vertical-align:middle;">';
+    items += '<li><div class="tree-node' + cls + '" data-entity="' + escapeHtml(e.name) + '" title="' + escapeHtml(e.name) + '">' + chk + '<i class="bi ' + icon + '"></i> <span class="tree-name">' + escapeHtml(e.name) + '</span>' + badge + '</div></li>';
   });
   // Ghost nodes for removed tables (visible even though they're gone from the schema).
   if(diff && diff.tablesRemoved.length){
@@ -451,6 +470,33 @@ function renderTargetTree(meta){
       '<ul class="tree-children">' + items + '</ul>' +
     '</li>';
   document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => selectEntity(n.dataset.entity, n.dataset.ghost === "1")));
+  // Checkboxes: toggle the selection set without triggering the node's select-entity click.
+  tree.querySelectorAll(".tt-check").forEach(cb => {
+    cb.addEventListener("click", e => e.stopPropagation());
+    cb.addEventListener("change", () => {
+      if(cb.checked) targetSelected.add(cb.dataset.check); else targetSelected.delete(cb.dataset.check);
+      updateInferSelectedBtn();
+    });
+  });
+  updateInferSelectedBtn();
+}
+
+/* Reflect the checked-table count on the "AI fill selected" button. */
+function updateInferSelectedBtn(){
+  const btn = document.getElementById("inferMetaBtn");
+  if(!btn) return;
+  const n = targetSelected.size;
+  btn.innerHTML = '<i class="bi bi-stars me-1"></i> AI fill' + (n ? " (" + n + ")" : "");
+}
+
+/* Select-all / clear toggle for the tree checkboxes. */
+function toggleSelectAllTables(){
+  const meta = getTargetSchema();
+  const all = (meta && meta.entities) ? meta.entities.map(e => e.name) : [];
+  const allChecked = all.length && all.every(n => targetSelected.has(n));
+  targetSelected = new Set(allChecked ? [] : all);
+  document.querySelectorAll("#targetTree .tt-check").forEach(cb => { cb.checked = targetSelected.has(cb.dataset.check); });
+  updateInferSelectedBtn();
 }
 
 function selectEntity(name, isGhost){
@@ -513,19 +559,23 @@ function renderTargetFields(){
     const fLen  = (v) => (v == null || v === "") ? "∅" : String(v);
     const fMand = (v) => v ? "Required" : "Optional";
     const fKey  = (v) => v ? "yes" : "no";
-    return '<tr class="' + cls + '" data-col="' + escapeHtml(f.name) + '">' +
+    // AI-populated cells (blue cue) — which attrs were auto-filled for this column.
+    const ai = activeAiFields[tl + "::" + String(f.name).toLowerCase()] || {};
+    const aiCls = (attr) => ai[attr] ? " cell-ai" : "";
+    const aiBadge = Object.keys(ai).length ? ' <span class="badge-soft badge-ai diff-badge" title="Populated from the schema file / data dictionary — review">AI</span>' : '';
+    return '<tr class="' + cls + (Object.keys(ai).length ? " is-ai" : "") + '" data-col="' + escapeHtml(f.name) + '">' +
       '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
-      '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
+      '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + aiBadge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
       '<td class="' + hl("dataType").trim() + '">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +
       '<td class="' + hl("length").trim() + '">' + (f.length ?? "-") + was("length", fLen) + '</td>' +
       '<td class="' + hl("mandatory").trim() + '">' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + was("mandatory", fMand) + '</td>' +
-      '<td class="' + hl("pk").trim() + '">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + was("pk", fKey) + '</td>' +
-      '<td class="' + (hl("fk") || hl("fkReference")).trim() + '">' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + was("fk", fKey) + was("fkReference", fType) + '</td>' +
-      '<td>' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
-      '<td class="wrap">' + escapeHtml(f.description || "") + '</td>' +
+      '<td class="' + (hl("pk").trim() + aiCls("pk")).trim() + '">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + was("pk", fKey) + '</td>' +
+      '<td class="' + ((hl("fk") || hl("fkReference")).trim() + aiCls("fk") + aiCls("fkReference")).trim() + '">' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + was("fk", fKey) + was("fkReference", fType) + '</td>' +
+      '<td class="' + aiCls("isListTable").trim() + '">' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
+      '<td class="wrap' + aiCls("description") + '">' + escapeHtml(f.description || "") + '</td>' +
       '<td>' + escapeHtml(f.businessTerm || "-") + '</td>' +
-      '<td class="wrap">' + escapeHtml(f.accepted || "-") + '</td>' +
+      '<td class="wrap' + aiCls("accepted") + '">' + escapeHtml(f.accepted || "-") + '</td>' +
       '<td>' + escapeHtml(f.default ?? "-") + '</td>' +
     '</tr>';
   }).join("");
@@ -577,6 +627,233 @@ function ghostFieldRow(table, c){
     '<td class="wrap">-</td>' +
     '<td>-</td>' +
   '</tr>';
+}
+
+/* =========================================================================
+   AI: infer target column metadata (PK / FK / List Table / Description) from the
+   uploaded Product schema file (Schema File Explore -> aims_cmt_schema) + data
+   dictionary. Keys/list are COPIED from the schema file (matched by name; AI only
+   reconciles a non-exact name); descriptions come from the dictionary, else AI
+   writes them. FILLS BLANKS ONLY and highlights every populated value for review.
+   ========================================================================= */
+function _aiNote(ok, msg){
+  return '<div class="hint-note" style="background:var(--' + (ok ? "success" : "danger") + '-bg);color:var(--' +
+    (ok ? "success" : "danger") + ');border-color:' + (ok ? "#bfe8cf" : "#f7c9c6") + ';"><i class="bi bi-' +
+    (ok ? "check-circle" : "x-circle") + '"></i> ' + msg + '</div>';
+}
+
+const AI_MATCH_MIN_CONF = 0.9;   // "very high" — only apply a table match at/above this
+
+function _normName(s){ return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+
+// Column-name affixes we strip for tolerant matching (after normalization).
+const _COL_PREFIXES = ["cs", "cc", "pc", "bc", "pmt", "cmt", "ab", "am", "tbl", "t"];
+function _baseName(s){
+  let x = _normName(s);
+  for(const p of _COL_PREFIXES){ if(x.length > p.length + 2 && x.startsWith(p)){ x = x.slice(p.length); break; } }
+  if(x.length > 4 && x.endsWith("id")) x = x.slice(0, -2);   // trailing FK "…ID"
+  return x;
+}
+// Typelist-name affixes (cctl_/pctl_/bctl_ …) stripped so a column's Type Key matches its typelist.
+const _TL_PREFIXES = ["cctl", "pctl", "bctl", "cc", "pc", "bc"];
+function _typelistBase(s){
+  let x = _normName(s);
+  for(const p of _TL_PREFIXES){ if(x.length > p.length + 2 && x.startsWith(p)){ x = x.slice(p.length); break; } }
+  return x;
+}
+/* Build { typelistBase -> values[] } from the /api/lookups/snapshot sets. */
+function _buildTypelistIndex(sets){
+  const idx = {};
+  (sets || []).forEach(s => { const k = _typelistBase(s.lookupName || ""); if(k && (s.values || []).length) idx[k] = s.values; });
+  return idx;
+}
+function _lookupCodes(typelistIndex, typeKey){
+  if(!typelistIndex || !typeKey) return null;
+  return typelistIndex[_typelistBase(typeKey)] || null;
+}
+function _formatAccepted(codes){
+  const parts = codes.slice(0, 15).map(v => v.code + (v.description && v.description !== v.code ? " = " + v.description : ""));
+  return parts.join(", ") + (codes.length > 15 ? ", …(+" + (codes.length - 15) + " more)" : "");
+}
+/* Index a reference/dictionary column collection for exact + prefix/suffix-tolerant lookup. */
+function _colIndex(names){
+  const byNorm = {}, byBase = {};
+  names.forEach(n => { byNorm[_normName(n)] = n; const b = _baseName(n); (byBase[b] = byBase[b] || []).push(n); });
+  return { byNorm, byBase };
+}
+function _matchCol(idx, colName){
+  const n = _normName(colName);
+  if(idx.byNorm[n] !== undefined) return idx.byNorm[n];              // exact normalized
+  const cand = idx.byBase[_baseName(colName)];                       // tolerant, unique only
+  return (cand && cand.length === 1) ? cand[0] : null;
+}
+
+/* Copy pk/fk/list + Type Key + VERBATIM description + Accepted-Values typecodes from a
+   matched schema-file entity onto a target entity (fill blanks only). Column names are
+   matched exact-normalized, else prefix/suffix-tolerant (unique). Returns count filled. */
+function _applyRefEntity(targetEntity, refEntity, aiFields, typelistIndex){
+  const refByName = {};
+  (refEntity.fields || []).forEach(f => { refByName[f.name] = f; });
+  const idx = _colIndex(Object.keys(refByName));
+  let filled = 0;
+  const ekey = (targetEntity.name || targetEntity.table || "").toLowerCase();
+  (targetEntity.fields || []).forEach(f => {
+    const rn = _matchCol(idx, f.name);
+    const r = rn != null ? refByName[rn] : null;
+    if(!r) return;
+    const key = ekey + "::" + String(f.name).toLowerCase();
+    const mark = (attr) => { (aiFields[key] = aiFields[key] || {})[attr] = 1; };
+    const isList = !!r.isListTable || !!((r.typeKey || "").trim());
+    if(!f.pk && r.pk){ f.pk = true; mark("pk"); filled++; }
+    if(!f.fk && r.fk){ f.fk = true; if(!f.fkReference && r.fkReference){ f.fkReference = r.fkReference; mark("fkReference"); } mark("fk"); filled++; }
+    if(!f.isListTable && isList){ f.isListTable = true; mark("isListTable"); filled++; }
+    if(!(f.typeKey || "").trim() && (r.typeKey || "").trim()) f.typeKey = r.typeKey;   // carry typelist name
+    if(!(f.description || "").trim() && (r.description || "").trim()){ f.description = r.description; mark("description"); filled++; }
+    // Accepted Values = the typelist's codes (via Type Key) — for the mapping AI.
+    if(!(f.accepted || "").trim() && isList){
+      const codes = _lookupCodes(typelistIndex, (r.typeKey || "").trim() || (f.typeKey || "").trim());
+      if(codes && codes.length){ f.accepted = _formatAccepted(codes); mark("accepted"); filled++; }
+    }
+  });
+  return filled;
+}
+
+/* Fill blank descriptions VERBATIM from a matched dictionary table
+   (dictCols = { normColName: description }); tolerant column match. Returns count filled. */
+function _applyDictDescriptions(targetEntity, dictCols, aiFields){
+  const idx = _colIndex(Object.keys(dictCols));
+  let filled = 0;
+  const ekey = (targetEntity.name || targetEntity.table || "").toLowerCase();
+  (targetEntity.fields || []).forEach(f => {
+    if((f.description || "").trim()) return;              // don't overwrite
+    const dn = _matchCol(idx, f.name);
+    const d = dn != null ? dictCols[dn] : null;
+    if(d && String(d).trim()){
+      f.description = String(d);
+      (aiFields[ekey + "::" + String(f.name).toLowerCase()] = aiFields[ekey + "::" + String(f.name).toLowerCase()] || {}).description = 1;
+      filled++;
+    }
+  });
+  return filled;
+}
+
+/* Resolve target tables -> candidate tables. Deterministic FIRST: exact-normalized,
+   then unique prefix/suffix base match (cs_activity -> cc_activity). Only the tables
+   that don't resolve deterministically are sent to the AI matcher. */
+async function _resolveTableMatches(targetsSent, candidates){
+  if(!candidates.length) return {};
+  const baseIdx = {};
+  candidates.forEach(c => { const b = _baseName(c); (baseIdx[b] = baseIdx[b] || []).push(c); });
+  const out = {}, needAi = [];
+  targetsSent.forEach(t => {
+    const exact = candidates.find(c => _normName(c) === _normName(t));
+    if(exact){ out[String(t).toLowerCase()] = {match: exact, confidence: 1}; return; }
+    const cand = baseIdx[_baseName(t)];
+    if(cand && cand.length === 1){ out[String(t).toLowerCase()] = {match: cand[0], confidence: 1}; return; }
+    needAi.push(t);
+  });
+  if(needAi.length){
+    try{
+      const ai = await _matchTables(needAi, candidates);
+      Object.keys(ai).forEach(k => { if(out[k] === undefined) out[k] = ai[k]; });
+    }catch(e){ /* AI optional — deterministic matches still apply */ }
+  }
+  return out;
+}
+
+/* AI-match target tables to a candidate list (by meaning). Returns {targetLower -> match}. */
+async function _matchTables(targetsSent, candidates){
+  if(!candidates.length) return {};
+  const res = await fetch("/api/ai/match-tables", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({targets: targetsSent, candidates: candidates})});
+  const j = await res.json().catch(() => ({}));
+  if(!res.ok || !j.ok) throw new Error((j && j.error) || "AI table matching failed.");
+  const by = {}; (j.matches || []).forEach(m => { by[String(m.target).toLowerCase()] = m; });
+  return by;
+}
+
+/* Core: for the given target entities, fill keys/list from the schema file and
+   descriptions VERBATIM from the data dictionary — each matched to the target table
+   by MEANING (high confidence only). Fills blanks only; highlights for review. */
+async function inferFromDictionary(targetEntities, btn, btnLabel){
+  const conn = getTargetConnection(getActiveTargetId());
+  const entities = (conn && conn.entities) ? conn.entities : [];
+  if(!entities.length){ showNotification("Load & activate a target first.", "warning"); return; }
+  const ref = lsGet("aims_cmt_schema", null);                    // schema file -> keys/list (+ any desc)
+  const dict = lsGet("aims_dict_descriptions", null);            // data dictionary -> descriptions
+  const hasRef = !!(ref && ref.entities && ref.entities.length);
+  const hasDict = !!(dict && Object.keys(dict).length);
+  if(!hasRef && !hasDict){
+    showNotification("Upload a schema file and/or a data-dictionary zip on Schema File Explore first.", "warning", 5000); return;
+  }
+  const box = document.getElementById("inferMetaResult");
+  const targetsSent = targetEntities.map(e => e.table || e.name);
+
+  // Candidate name lists for each source.
+  const refByName = {}, refCandidates = [];
+  if(hasRef) ref.entities.forEach(e => { const nm = e.table || e.name || ""; if(nm){ refCandidates.push(nm); refByName[nm.toLowerCase()] = e; } });
+  const dictCandidates = hasDict ? Object.keys(dict) : [];
+  const dictByName = {}; dictCandidates.forEach(nm => { dictByName[nm.toLowerCase()] = nm; });
+
+  if(btn){ btn.disabled = true; btn.dataset._html = btn.innerHTML; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Matching…'; }
+  try{
+    // Typelist codes (for Accepted Values) come from the imported typelists.
+    let typelistIndex = {};
+    try{
+      const sr = await fetch("/api/lookups/snapshot", {headers: {Accept: "application/json"}});
+      if(sr.ok){ const sj = await sr.json().catch(() => ({})); if(sj && sj.ok) typelistIndex = _buildTypelistIndex(sj.sets); }
+    }catch(e){ /* typecodes optional — proceed without */ }
+
+    const [refMatch, dictMatch] = await Promise.all([_resolveTableMatches(targetsSent, refCandidates), _resolveTableMatches(targetsSent, dictCandidates)]);
+    const aiFields = lsGet("aims_target_ai_fields", {}) || {};
+    let matched = 0, filled = 0, descFilled = 0; const skipped = [];
+    targetEntities.forEach(e => {
+      const tk = String(e.table || e.name).toLowerCase();
+      let hit = false;
+      const rm = refMatch[tk];
+      if(rm && rm.match && rm.confidence >= AI_MATCH_MIN_CONF){
+        const refEntity = refByName[String(rm.match).toLowerCase()];
+        if(refEntity){ filled += _applyRefEntity(e, refEntity, aiFields, typelistIndex); hit = true; }
+      }
+      const dm = dictMatch[tk];
+      if(dm && dm.match && dm.confidence >= AI_MATCH_MIN_CONF && dict[dictByName[String(dm.match).toLowerCase()]]){
+        const n = _applyDictDescriptions(e, dict[dictByName[String(dm.match).toLowerCase()]], aiFields);
+        descFilled += n; filled += n; hit = true;
+      }
+      if(hit) matched++; else skipped.push(e.name);
+    });
+
+    upsertTargetConnection(conn); setActiveTarget(conn.id); lsSet("aims_target_ai_fields", aiFields);
+    renderActiveBrowser();
+    const msg = "Matched " + matched + " table" + (matched === 1 ? "" : "s") + ", filled " + filled + " value(s)" +
+      (hasDict ? " (" + descFilled + " description(s) from the dictionary)" : "") + "." +
+      (skipped.length ? " Skipped (low confidence): " + escapeHtml(skipped.join(", ")) + "." : "");
+    if(box) box.innerHTML = _aiNote(matched > 0, msg);
+    if(matched) showNotification("Filled " + filled + " value(s) — review the highlighted columns.", "success", 3500);
+  }catch(e){ if(box) box.innerHTML = _aiNote(false, (e && e.message) || "Cannot reach the server."); }
+  finally{ if(btn){ btn.disabled = false; btn.innerHTML = btn.dataset._html || btnLabel; } }
+}
+
+/* Bar button — run for the TICKED tables only. */
+function runInferSelected(){
+  const conn = getTargetConnection(getActiveTargetId());
+  const entities = (conn && conn.entities) ? conn.entities : [];
+  const chosen = entities.filter(e => targetSelected.has(e.name));
+  if(!chosen.length){ showNotification("Tick one or more tables in the Entities list first.", "warning"); return; }
+  inferFromDictionary(chosen, document.getElementById("inferMetaBtn"));
+}
+
+/* (removed) per-table run — consolidated into the single checkbox-driven "AI fill selected". */
+function _removed_runInferOpenTable(){
+  if(!activeEntity || activeEntity._ghost){ showNotification("Open a table first.", "warning"); return; }
+  inferFromDictionary([activeEntity], document.getElementById("inferTableBtn"));
+}
+
+function clearAiFields(){
+  lsRemove("aims_target_ai_fields");
+  activeAiFields = {};
+  renderActiveBrowser();
+  showNotification("AI highlights cleared.", "primary", 1400);
 }
 
 /* ---- Edit Column modal (all properties; table name stays read-only) ---- */

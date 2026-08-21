@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Product Data Dictionary - AI Mapping Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260821n">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260821n">
+<link rel="stylesheet" href="../css/tables.css?v=20260821n">
+<link rel="stylesheet" href="../css/forms.css?v=20260821n">
+<link rel="stylesheet" href="../css/responsive.css?v=20260821n">
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Setup <i class="bi bi-chevron-right"></i> Product Data Dictionary</div>
+        <h2>Product Data Dictionary</h2></div>
+        <div class="d-flex gap-2">
+          <input type="file" id="ldsFile" accept=".zip,.html,.htm,.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.txt,.json" hidden>
+          <button class="btn btn-primary" id="ldsUploadBtn"><i class="bi bi-upload me-1"></i> Upload Lookup Dictionary</button>
+        </div>
+      </div>
+
+      <div id="ldsUploadResult" class="mb-3"></div>
+      <div class="card-el diff-panel mb-3" id="ldsDiffPanel" style="display:none;"></div>
+
+      <div class="card-el" id="ldsLoading">
+        <div class="text-center text-muted-2 py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading lookup data…</div>
+      </div>
+
+      <div class="row g-4" id="ldsLayout" style="display:none;">
+        <div class="col-lg-3">
+          <div class="card-el">
+            <div class="section-title" id="ldsTreeTitle"><i class="bi bi-diagram-3"></i> Lookup Tables</div>
+            <input type="search" id="ldsTreeSearch" class="form-control form-control-sm mb-2" placeholder="Search tables...">
+            <ul class="metadata-tree" id="ldsTree"></ul>
+          </div>
+        </div>
+        <div class="col-lg-9">
+          <div class="card-el">
+            <div class="table-toolbar">
+              <div>
+                <div class="section-title mb-0" id="ldsTableTitle"><i class="bi bi-card-checklist"></i> Select a table</div>
+                <div class="text-xs text-muted-2" id="ldsTableDesc"></div>
+              </div>
+              <div class="filters">
+                <input type="text" id="ldsCodeSearch" placeholder="Search codes...">
+              </div>
+            </div>
+            <div class="table-responsive-el">
+              <table class="grid-table" id="ldsGrid">
+                <thead><tr><th style="width:60px;">#</th><th style="min-width:160px;">Code</th><th class="wrap">Description</th></tr></thead>
+                <tbody id="ldsGridBody"><tr><td colspan="3"><div class="empty-state"><i class="bi bi-mouse2"></i><h4>Select a table from the left to view its typecodes.</h4></div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-el" id="ldsDisabledCard" style="display:none;">
+        <div class="empty-state"><i class="bi bi-slash-circle"></i>
+          <h4>Lookup data is disabled.</h4>
+          <p class="text-xs text-muted-2">This feature is turned off on the server.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260821n"></script>
+<script src="../js/navigation.js?v=20260821n"></script>
+<script src="../js/lookup-data-system.js?v=20260821n"></script>
+</body>
+</html>
