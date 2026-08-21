@@ -15,6 +15,13 @@ table.grid-table tbody tr:hover{background:#fdf6f1;}
 table.grid-table tbody tr.row-selected{background:#eef4ff;}
 table.grid-table td.wrap{white-space:normal;min-width:180px;}
 
+/* Freeze the first column (e.g. Lookup Name) so it stays put during horizontal scroll. */
+table.grid-table.sticky-first thead th:first-child,
+table.grid-table.sticky-first tbody td:first-child{position:sticky;left:0;z-index:2;}
+table.grid-table.sticky-first thead th:first-child{z-index:4;background:#f8fafc;}
+table.grid-table.sticky-first tbody td:first-child{background:var(--bg-card);box-shadow:1px 0 0 var(--border);}
+body.theme-dark table.grid-table.sticky-first thead th:first-child{background:#262626;}
+
 /* Inline-editable lookup grid: give the Source/Expected editors room to breathe */
 table.grid-table.lookup-edit-grid tbody td{white-space:normal;vertical-align:top;padding:8px 12px;}
 table.grid-table.lookup-edit-grid td.align-top{vertical-align:top;}

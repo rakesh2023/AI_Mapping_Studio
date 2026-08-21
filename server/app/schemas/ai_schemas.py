@@ -80,6 +80,32 @@ SINGLE_MAPPING_SCHEMA = {
 }
 
 
+VALUE_MAPPING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mappings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "sourceCode": {"type": "string"},
+                    "sourceDescription": {"type": "string"},
+                    "targetCode": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "rationale": {"type": "string"},
+                    "mappingType": {"type": "string",
+                                    "enum": ["exact", "semantic", "defaulted", "unmapped"]},
+                },
+                "required": ["sourceCode", "targetCode", "mappingType"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["mappings"],
+    "additionalProperties": False,
+}
+
+
 MATCH_TABLES_SCHEMA = {
     "type": "object",
     "properties": {

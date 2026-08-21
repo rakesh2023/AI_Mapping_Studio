@@ -12,17 +12,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   await initShell("lookup-mapping.html");
   loadLookupSets();
 
-  const addLk = document.getElementById("addLookupBtn");
-  const lkFile = document.getElementById("lkFile");
-  if(addLk && lkFile) addLk.addEventListener("click", () => lkFile.click());
-  if(lkFile) lkFile.addEventListener("change", () => {
-    const f = lkFile.files && lkFile.files[0];
-    lkFile.value = "";
-    if(!f) return;
-    // A Guidewire dictionary (zip / html) asks which product to import first.
-    if(/\.(zip|html?)$/i.test(f.name)) openLookupProductModal(f);
-    else uploadLookupDoc(f);
-  });
   const clearLk = document.getElementById("clearLookupsBtn");
   if(clearLk) clearLk.addEventListener("click", clearAllLookups);
   const syncBtn = document.getElementById("syncToMappingBtn");
@@ -91,11 +80,180 @@ async function loadLookupSets(){
     layout.style.display = "";
     if(disabled) disabled.style.display = "none";
     _allLookupSets = j.sets || [];
+    // Auto-create / backfill a lookup set for every List column of a MAPPED target
+    // table (source pulled from the generated mappings). Re-fetch if anything changed.
+    const added = await ensureListColumnSets(_allLookupSets);
+    if(added){
+      const r2 = await fetch("/api/lookups", {headers:{Accept:"application/json"}});
+      const j2 = await r2.json().catch(() => ({}));
+      if(j2 && j2.ok) _allLookupSets = j2.sets || [];
+    }
+    // Build the dictionary indexes (target Type Key + imported typelist code lists)
+    // used to auto-fill the "Expected Type list value" reference column.
+    await buildDictIndexes();
+    // Change 1: show only tables for which mappings were generated.
+    _allLookupSets = filterToMappedTables(_allLookupSets);
     // Drop the active-table selection if that table no longer has any sets.
     if(_activeTable && !_allLookupSets.some(s => _tableKey(s) === _activeTable)) _activeTable = null;
     renderLookupTableList();
     applyLookupFilters();
   }catch(e){ layout.style.display = ""; list.innerHTML = '<div class="text-xs text-muted-2">Cannot reach the server.</div>'; }
+}
+
+/* Dictionary indexes for the reference column + Generate:
+   _fieldTypeKeyIdx : "<entityOrTable>::<column>" -> target column's Guidewire Type Key
+   _typelistIndex   : normalized typelist base name -> [{code, description}] (from the
+                      imported Guidewire dictionary, via /api/lookups/snapshot). */
+let _typelistIndex = {};
+let _typelistNameByBase = {};
+let _fieldTypeKeyIdx = {};
+
+async function buildDictIndexes(){
+  _fieldTypeKeyIdx = {};
+  const meta = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
+  if(meta && meta.entities) meta.entities.forEach(e => {
+    (e.fields || []).forEach(f => {
+      const col = (f.name || "").toLowerCase();
+      [(e.name || "").toLowerCase(), (e.table || "").toLowerCase()].forEach(t => {
+        if(t) _fieldTypeKeyIdx[t + "::" + col] = (f.typeKey || "");
+      });
+    });
+  });
+  _typelistIndex = {};
+  _typelistNameByBase = {};
+  try{
+    const r = await fetch("/api/lookups/snapshot", {headers:{Accept:"application/json"}});
+    const j = await r.json().catch(() => ({}));
+    if(j && j.ok) (j.sets || []).forEach(x => {
+      if((x.values || []).length){
+        const base = _typelistBaseName(x.lookupName);
+        _typelistIndex[base] = x.values;
+        _typelistNameByBase[base] = x.lookupName;   // e.g. "cctl_checkstatus"
+      }
+    });
+  }catch(e){ /* leave empty — Expected column will show "no typelist" */ }
+}
+
+/* The target column's Guidewire Type Key (from the schema), or "" if none set. */
+function _targetTypeKey(s){
+  const col = (s.targetColumn || "").toLowerCase();
+  return _fieldTypeKeyIdx[_tableKey(s) + "::" + col] ||
+         _fieldTypeKeyIdx[(s.targetTable || "").toLowerCase() + "::" + col] || "";
+}
+
+/* The Guidewire typelist code list for a lookup set's target column, resolved via its
+   Type Key (falls back to the column name). [] when the dictionary has no match. */
+function _expectedValues(s){
+  const base = _typelistBaseName(_targetTypeKey(s) || s.targetColumn);
+  return _typelistIndex[base] || [];
+}
+
+/* What the "Lookup" column shows: the actual Guidewire typelist name being mapped to.
+   Prefer the imported typelist's physical name (cctl_checkstatus), else the column's
+   Type Key (CheckStatus), else fall back to the target column. */
+function _lookupDisplayName(s){
+  const tk = _targetTypeKey(s);
+  const base = _typelistBaseName(tk || s.targetColumn);
+  return _typelistNameByBase[base] || tk || s.targetColumn || s.lookupName || "—";
+}
+
+/* The LookupName value written into the generated ETL (JOIN filter + LookupData seed
+   rows). The Guidewire typelist name so it matches typelist-seeded LookupData across
+   products: the imported typelist's physical name (cctl_addresstype) when known, else
+   the column's Type Key without the "typekey." qualifier, else a safe fallback. */
+function _gwLookupName(s){
+  const tk = _targetTypeKey(s);
+  const base = _typelistBaseName(tk || s.targetColumn);
+  if(_typelistNameByBase[base]) return _typelistNameByBase[base];
+  if(tk) return tk.replace(/^typekey\./i, "");
+  return s.targetColumn || s.lookupName || "";
+}
+
+/* Change 1: keep only sets whose target table has at least one generated mapping.
+   When no mappings exist yet, fall back to showing everything. */
+function filterToMappedTables(sets){
+  const mappings = lsGet("aims_ai_mappings", null);
+  if(!mappings || !mappings.length) return sets;
+  const meta = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
+  const byName = {};
+  if(meta && meta.entities) meta.entities.forEach(e => { byName[(e.name || "").toLowerCase()] = e; });
+  const keys = new Set();
+  mappings.forEach(m => {
+    const en = (m.targetEntity || "").toLowerCase().trim();
+    if(!en) return;
+    keys.add(en);
+    const e = byName[en];
+    if(e && e.table) keys.add((e.table || "").toLowerCase().trim());
+  });
+  return sets.filter(s => keys.has(_tableKey(s)));
+}
+
+/* Auto-populate: ensure a lookup set exists for every List/typelist column of a target
+   table that HAS generated mappings, bound to its source column (table.column) from
+   those mappings. Also backfills the source on an existing set when it's still blank.
+   Idempotent; never clobbers uploaded sets. Returns the number of rows created/updated. */
+async function ensureListColumnSets(existing){
+  const meta = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
+  if(!meta || !meta.entities || !meta.entities.length) return 0;
+
+  // Change 1: only tables that have at least one generated mapping.
+  const mappings = lsGet("aims_ai_mappings", null);
+  if(!mappings || !mappings.length) return 0;
+
+  // Index generated field mappings by target entity::column to find the source column.
+  const mapIdx = {};
+  const mappedEntities = new Set();
+  mappings.forEach(m => {
+    const en = (m.targetEntity || "").toLowerCase().trim();
+    if(en) mappedEntities.add(en);
+    mapIdx[en + "::" + (m.targetColumn || "").toLowerCase()] = m;
+  });
+
+  const have = {};
+  (existing || []).forEach(s => { have[(s.lookupName || "").toLowerCase()] = s; });
+
+  const creates = [], updates = [];
+  meta.entities.forEach(e => {
+    const en = (e.name || "").toLowerCase().trim();
+    if(!mappedEntities.has(en)) return;   // skip tables with no generated mappings
+    (e.fields || []).forEach(f => {
+      if(!(f.isListTable || e.isListTable || (f.typeKey || "").trim())) return;
+      const tt = e.table || e.name || "";
+      const lookupName = (tt ? tt + "_" : "") + f.name;
+      const m = mapIdx[en + "::" + (f.name || "").toLowerCase()];
+      const sc = (m && m.sourceColumn && m.sourceColumn !== "(no source equivalent)") ? m.sourceColumn : "";
+      const st = (m && m.sourceTable) || "";
+      const ex = have[lookupName.toLowerCase()];
+      if(!ex){
+        creates.push({ lookupName, sourceTable: st, sourceColumn: sc, targetTable: tt, targetColumn: f.name });
+        have[lookupName.toLowerCase()] = { id: -1 };   // guard against dup column names in the pass
+      } else if(sc && !((ex.sourceColumn || "").trim())){
+        updates.push({ id: ex.id, sourceTable: st, sourceColumn: sc });   // Change 2: backfill blank source
+      }
+    });
+  });
+  if(!creates.length && !updates.length) return 0;
+
+  let touched = 0;
+  for(const c of creates){
+    try{
+      const res = await fetch("/api/lookups", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ lookupName: c.lookupName, sourceTable: c.sourceTable, sourceColumn: c.sourceColumn,
+                               targetTable: c.targetTable, targetColumn: c.targetColumn, values: [] })});
+      const j = await res.json().catch(() => ({}));
+      if(res.ok && j.ok) touched++;
+    }catch(e){ /* skip this one */ }
+  }
+  for(const u of updates){
+    try{
+      const res = await fetch("/api/lookups/" + encodeURIComponent(u.id), {method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ sourceTable: u.sourceTable, sourceColumn: u.sourceColumn })});
+      const j = await res.json().catch(() => ({}));
+      if(res.ok && j.ok) touched++;
+    }catch(e){ /* skip this one */ }
+  }
+  return touched;
 }
 
 /* The target-table a lookup set belongs to (lowercased key; "" -> no target table). */
@@ -141,7 +299,7 @@ function renderLookupTableList(){
       '</div>' +
     '</div>').join("");
 
-  if(!totalSets){ el.innerHTML = '<div class="text-xs text-muted-2">No lookup data yet.</div>'; return; }
+  if(!totalSets){ el.innerHTML = '<div class="text-xs text-muted-2">No mapped tables with list columns yet.</div>'; return; }
   el.innerHTML = allItem + (visible.length ? items : '<div class="text-xs text-muted-2 mt-1">No tables match.</div>');
   el.querySelectorAll("[data-lk-table]").forEach(it => it.addEventListener("click", () => {
     const k = it.dataset.lkTable;
@@ -199,7 +357,7 @@ function renderLookupSets(sets, total){
   if(!sets.length){
     list.innerHTML = total
       ? '<div class="text-xs text-muted-2">No lookup sets match your search / filter.</div>'
-      : '<div class="text-xs text-muted-2">No lookup data yet. Upload a document (or a Guidewire dictionary .zip) to capture typelist codes and their target binding.</div>';
+      : '<div class="text-xs text-muted-2">No list columns to map yet. They appear here automatically once (1) you have generated mappings (AI Mapping Generator) and (2) the target list / typelist columns are identified — set their <b>Type Key</b> on <b>Target System</b> (via <b>AI fill</b>, which reads the <b>Product Data Dictionary</b> / <b>Product Schema</b>).</div>';
     return;
   }
   const dash = '<span class="text-muted-2">—</span>';
@@ -208,29 +366,106 @@ function renderLookupSets(sets, total){
     return s ? escapeHtml(s.length > 90 ? s.slice(0, 90) + "…" : s) : dash;
   };
   list.innerHTML =
-    '<div class="table-responsive-el"><table class="grid-table"><thead><tr>' +
-      '<th style="min-width:150px;">Lookup</th>' +
-      '<th style="min-width:180px;">Source</th>' +
+    '<div class="table-responsive-el"><table class="grid-table sticky-first"><thead><tr>' +
+      '<th style="min-width:150px;">Lookup Name</th>' +
+      '<th style="min-width:170px;">Source</th>' +
       '<th style="min-width:150px;">Target</th>' +
-      '<th style="min-width:300px;">Expected mapping</th>' +
+      '<th style="min-width:220px;">Legacy value</th>' +
+      '<th style="min-width:240px;">Expected GW Values</th>' +
+      '<th style="min-width:230px;">Generated Mapping (Legacy---&gt;GW)</th>' +
       '<th style="width:1%;"></th></tr></thead><tbody>' +
     sets.map(s => {
       const src = s.sourceColumn ? ((s.sourceTable ? s.sourceTable + "." : "") + s.sourceColumn) : "";
       const tgt = s.targetColumn ? ((s.targetTable ? s.targetTable + "." : "") + s.targetColumn) : "";
+      const noTgt = !(s.targetColumn || "").trim();
+      const exp = _expectedValues(s);
+      const expHtml = exp.length
+        ? '<div class="mono text-xs" style="max-height:96px;overflow:auto;line-height:1.5;">' +
+            exp.map(v => escapeHtml(v.code + (v.description ? " — " + v.description : ""))).join("<br>") +
+          '</div><div class="text-xs text-muted-2 mt-1">' + exp.length + ' value' + (exp.length === 1 ? "" : "s") + ' from dictionary</div>'
+        : '<span class="text-xs text-muted-2">No typelist in the dictionary for this column.</span>';
+      const genMapHtml = (s.targetValuesSpec || "").trim()
+        ? '<div class="mono text-xs" style="max-height:96px;overflow:auto;line-height:1.5;white-space:pre-wrap;">' +
+            escapeHtml(s.targetValuesSpec) + '</div>'
+        : '<span class="text-xs text-muted-2">Not generated yet.</span>';
       return '<tr>' +
-        '<td class="mono">' + escapeHtml(s.lookupName) + '</td>' +
+        '<td class="mono">' + escapeHtml(_lookupDisplayName(s)) + '</td>' +
         '<td class="mono">' + (src ? escapeHtml(src) : dash) + '</td>' +
         '<td class="mono">' + (tgt ? escapeHtml(tgt) : dash) + '</td>' +
-        '<td class="wrap" style="max-width:420px;">' + snippet(s.targetValuesSpec) + '</td>' +
+        '<td><textarea class="form-control form-control-sm mono" rows="2" data-lk-legacy="' + s.id + '" ' +
+          'style="resize:vertical;min-width:220px;" placeholder="e.g. 1 Open, 2 Closed">' +
+          escapeHtml(s.legacyValuesSpec || "") + '</textarea></td>' +
+        '<td class="wrap" style="max-width:360px;">' + expHtml + '</td>' +
+        '<td class="wrap" style="max-width:320px;">' + genMapHtml + '</td>' +
         '<td class="text-end" style="white-space:nowrap;">' +
+          '<button class="btn btn-sm btn-primary me-1" data-lk-gen="' + s.id + '" title="Map the Legacy values → this target typelist"' +
+            (noTgt ? ' disabled' : '') + '><i class="bi bi-stars me-1"></i>Generate</button>' +
           '<button class="btn btn-sm btn-outline-soft me-1" data-lk-edit="' + s.id + '" title="Edit"><i class="bi bi-pencil"></i></button>' +
-          '<button class="btn btn-sm btn-outline-danger" data-lk-del="' + s.id + '" data-lk-name="' + escapeHtml(s.lookupName) + '" title="Delete"><i class="bi bi-trash"></i></button>' +
+          '<button class="btn btn-sm btn-outline-danger" data-lk-del="' + s.id + '" data-lk-name="' + escapeHtml(_lookupDisplayName(s)) + '" title="Delete"><i class="bi bi-trash"></i></button>' +
         '</td>' +
       '</tr>';
     }).join("") +
     '</tbody></table></div>';
   list.querySelectorAll("[data-lk-edit]").forEach(b => b.addEventListener("click", () => openLookupEditModal(b.dataset.lkEdit)));
   list.querySelectorAll("[data-lk-del]").forEach(b => b.addEventListener("click", () => deleteLookupSet(b.dataset.lkDel, b.dataset.lkName)));
+  list.querySelectorAll("[data-lk-gen]").forEach(b => b.addEventListener("click", () => generateValueMapping(b.dataset.lkGen, b)));
+  list.querySelectorAll("[data-lk-legacy]").forEach(t => t.addEventListener("change", () => saveLegacyValues(t.dataset.lkLegacy, t.value)));
+}
+
+/* Persist the inline Legacy value box (fire-and-forget; toast only on failure). */
+async function saveLegacyValues(id, value){
+  const s = (_allLookupSets || []).find(x => String(x.id) === String(id));
+  if(s) s.legacyValuesSpec = value;   // keep local copy in sync for Generate
+  try{
+    const res = await fetch("/api/lookups/" + encodeURIComponent(id), {
+      method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ legacyValuesSpec: value })});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok) showNotification((j && j.error) || "Could not save legacy values.", "warning", 2500);
+  }catch(e){ showNotification("Cannot reach the server — legacy values not saved.", "warning", 2500); }
+}
+
+/* Normalize a typelist / Type-Key name for matching: lowercase, drop Guidewire's
+   qualified prefix (typekey./typelist.), then the cctl_/pctl_/bctl_/cc/pc/bc table
+   prefix, strip non-alphanumerics. So "typekey.AddressType" and "cctl_addresstype"
+   both reduce to "addresstype". */
+function _typelistBaseName(v){
+  let s = (v || "").toString().toLowerCase().trim();
+  s = s.replace(/^(typekey|typelist)[._]?/, "");     // typekey.AddressType -> addresstype
+  s = s.replace(/^(cctl|pctl|bctl|cc|pc|bc)_?/, "");
+  return s.replace(/[^a-z0-9]/g, "");
+}
+
+/* Inline Generate: map this set's Legacy values → its target Guidewire typelist codes. */
+async function generateValueMapping(id, btn){
+  const s = (_allLookupSets || []).find(x => String(x.id) === String(id));
+  if(!s){ showNotification("Lookup set not found — reload the page.", "warning"); return; }
+  // Prefer the (possibly-unsaved) textarea value.
+  const box = document.querySelector('[data-lk-legacy="' + id + '"]');
+  const legacyValues = ((box ? box.value : s.legacyValuesSpec) || "").trim();
+  if(!legacyValues){ showNotification("Enter the legacy values first.", "warning"); return; }
+  if(!(s.targetColumn || "").trim()){ showNotification("This lookup has no target column to map to.", "warning"); return; }
+
+  // Target codes come from the dictionary index already built for the Expected column.
+  const targetCodes = _expectedValues(s).map(v => ({ code: v.code, name: v.description || "" }));
+  if(!targetCodes.length){
+    showNotification("No Guidewire typelist codes found for '" + (s.targetColumn || s.lookupName) +
+      "'. Import its typelist on Product Data Dictionary and set the column's Type Key (Target → AI fill).", "warning", 6000);
+    return;
+  }
+
+  const html = btn ? btn.innerHTML : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…'; }
+  try{
+    const res = await fetch("/api/lookups/" + encodeURIComponent(id) + "/generate-values", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ legacyValues, targetCodes })});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ showNotification((j && j.error) || "Generate failed.", "danger", 5000); return; }
+    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s).", "success", 3000);
+    loadLookupSets();
+  }catch(e){ showNotification("Cannot reach the server.", "danger"); }
+  finally{ if(btn){ btn.disabled = false; btn.innerHTML = html; } }
 }
 
 /* ---- Edit lookup mapping in a modal (Source table.column + Expected mapping) ---- */
@@ -249,18 +484,58 @@ function injectLookupEditModal(){
         '<span class="k">Lookup</span><span class="mono" id="leName">—</span>' +
         '<span class="k">Target</span><span class="mono" id="leTarget">—</span>' +
       '</div>' +
-      '<div class="form-group"><label>Source <span class="text-xs text-muted-2">(table.column)</span></label>' +
+      '<div class="form-group"><label>Source detail <span class="text-xs text-muted-2">(table.column)</span></label>' +
         '<input type="text" class="form-control mono" id="leSource" placeholder="source_table.source_column"></div>' +
-      '<div class="form-group"><label>Expected mapping <span class="text-xs text-muted-2">(free text)</span></label>' +
-        '<textarea class="form-control" id="leSpec" rows="6" style="resize:vertical;white-space:pre-wrap;" placeholder="e.g. 1 then open, 2 then closed"></textarea>' +
-        '<div class="text-xs text-muted-2 mt-1">One value per line or comma-separated, e.g. <span class="mono">1 then open</span>, <span class="mono">2 then closed</span>.</div></div>' +
+      '<div class="form-group"><label>Legacy value <span class="text-xs text-muted-2">(source system, free text)</span></label>' +
+        '<textarea class="form-control mono" id="leLegacy" rows="4" style="resize:vertical;" placeholder="e.g. 1 Open, 2 Closed"></textarea></div>' +
+      '<div class="form-group"><label>Generated Mapping <span class="text-xs text-muted-2">(legacy ---&gt; GW value)</span></label>' +
+        '<textarea class="form-control mono" id="leSpec" rows="6" style="resize:vertical;white-space:pre-wrap;" placeholder="1 ---&gt; home"></textarea>' +
+        '<div class="text-xs text-muted-2 mt-1">One per line, e.g. <span class="mono">1 ---&gt; home</span>. Click <b>Generate</b> on the row to fill this with AI, then adjust here if needed.</div></div>' +
     '</div>' +
     '<div class="modal-footer">' +
+      '<button type="button" class="btn btn-outline-primary btn-sm me-auto" id="leGenerate" title="Map the Legacy values above → this target typelist"><i class="bi bi-stars me-1"></i> Generate</button>' +
       '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
       '<button type="button" class="btn btn-primary btn-sm" id="leSave"><i class="bi bi-check2 me-1"></i> Save</button>' +
     '</div></div></div></div>';
   document.body.insertAdjacentHTML("beforeend", html);
   document.getElementById("leSave").addEventListener("click", saveLookupEditModal);
+  document.getElementById("leGenerate").addEventListener("click", generateInEditModal);
+}
+
+/* Generate the mapping from inside the Edit modal, using the modal's Legacy value box
+   and filling its Generated Mapping box (also updates the row behind the modal). */
+async function generateInEditModal(){
+  const id = _editingLookupId;
+  if(!id) return;
+  const s = (_allLookupSets || []).find(x => String(x.id) === String(id));
+  if(!s){ _leErr("Lookup set not found — reload the page."); return; }
+  _leErr(null);
+  const legacyEl = document.getElementById("leLegacy");
+  const legacy = (legacyEl ? legacyEl.value : "").trim();
+  if(!legacy){ _leErr("Enter the legacy values to map first."); return; }
+  const targetCodes = _expectedValues(s).map(v => ({ code: v.code, name: v.description || "" }));
+  if(!targetCodes.length){
+    _leErr("No Guidewire typelist codes found for '" + (s.targetColumn || s.lookupName) +
+      "'. Import its typelist (Product Data Dictionary) and set the column's Type Key (Target → AI fill).");
+    return;
+  }
+  const btn = document.getElementById("leGenerate");
+  const html = btn ? btn.innerHTML : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Generating…'; }
+  try{
+    const res = await fetch("/api/lookups/" + encodeURIComponent(id) + "/generate-values", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ legacyValues: legacy, targetCodes })});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ _leErr((j && j.error) || "Generate failed."); return; }
+    const specEl = document.getElementById("leSpec");
+    if(specEl) specEl.value = j.spec || "";
+    s.legacyValuesSpec = legacy;             // keep local copy + row behind the modal in sync
+    s.targetValuesSpec = j.spec || "";
+    applyLookupFilters();
+    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s).", "success", 2500);
+  }catch(e){ _leErr("Cannot reach the server."); }
+  finally{ if(btn){ btn.disabled = false; btn.innerHTML = html; } }
 }
 
 function _leErr(msg){ const e = document.getElementById("leErr"); if(!e) return; if(msg){ e.textContent = msg; e.style.display = ""; } else { e.style.display = "none"; } }
@@ -275,6 +550,7 @@ function openLookupEditModal(id){
   document.getElementById("leTarget").textContent =
     s.targetColumn ? ((s.targetTable ? s.targetTable + "." : "") + s.targetColumn) : "—";
   document.getElementById("leSource").value = (s.sourceTable ? s.sourceTable + "." : "") + (s.sourceColumn || "");
+  document.getElementById("leLegacy").value = s.legacyValuesSpec || "";
   document.getElementById("leSpec").value = s.targetValuesSpec || "";
   if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("lookupEditModal")).show(); }
 }
@@ -284,6 +560,7 @@ async function saveLookupEditModal(){
   if(!id) return;
   _leErr(null);
   const raw = (document.getElementById("leSource").value || "").trim();
+  const legacy = document.getElementById("leLegacy").value;
   const spec = document.getElementById("leSpec").value;
   const dot = raw.lastIndexOf(".");
   const sourceTable = dot > 0 ? raw.slice(0, dot).trim() : "";
@@ -293,7 +570,7 @@ async function saveLookupEditModal(){
   try{
     const res = await fetch("/api/lookups/" + encodeURIComponent(id), {
       method:"PUT", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ sourceTable, sourceColumn, targetValuesSpec: spec })});
+      body: JSON.stringify({ sourceTable, sourceColumn, legacyValuesSpec: legacy, targetValuesSpec: spec })});
     const j = await res.json().catch(() => ({}));
     if(!res.ok || !j.ok){ _leErr((j && j.error) || "Save failed."); return; }
     const m = bootstrap.Modal.getInstance(document.getElementById("lookupEditModal")); if(m) m.hide();
@@ -301,61 +578,6 @@ async function saveLookupEditModal(){
     loadLookupSets();
   }catch(e){ _leErr("Cannot reach the server."); }
   finally{ if(btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Save'; } }
-}
-
-/* ---- Guidewire dictionary: ask the product, then import only its typelists ---- */
-let _pendingLookupFile = null;
-
-function injectLookupProductModal(){
-  if(document.getElementById("lkProductModal")) return;
-  const html =
-    '<div class="modal fade" id="lkProductModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
-    '<div class="modal-content"><div class="modal-header">' +
-      '<h5 class="modal-title"><i class="bi bi-box-seam me-1"></i> Import Guidewire dictionary</h5>' +
-      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
-    '<div class="modal-body">' +
-      '<p class="text-xs text-muted-2 mb-2">Which product is this dictionary? Only that product’s <b>typelists</b> (code lists) will be imported as lookup sets.</p>' +
-      '<div class="form-group"><label>Product</label>' +
-        '<select class="form-select" id="lkProduct">' +
-          '<option value="claim">ClaimCenter — cctl_* typelists</option>' +
-          '<option value="policy">PolicyCenter — pctl_* typelists</option>' +
-          '<option value="billing">BillingCenter — bctl_* typelists</option>' +
-        '</select></div>' +
-      '<div class="text-xs text-muted-2" id="lkProductFile"></div>' +
-    '</div>' +
-    '<div class="modal-footer">' +
-      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
-      '<button type="button" class="btn btn-primary btn-sm" id="lkProductImport"><i class="bi bi-upload me-1"></i> Import</button>' +
-    '</div></div></div></div>';
-  document.body.insertAdjacentHTML("beforeend", html);
-  document.getElementById("lkProductImport").addEventListener("click", () => {
-    const product = (document.getElementById("lkProduct") || {}).value || "claim";
-    const m = bootstrap.Modal.getInstance(document.getElementById("lkProductModal")); if(m) m.hide();
-    if(_pendingLookupFile){ uploadLookupDoc(_pendingLookupFile, product); _pendingLookupFile = null; }
-  });
-}
-
-function openLookupProductModal(file){
-  injectLookupProductModal();
-  _pendingLookupFile = file;
-  const fn = document.getElementById("lkProductFile");
-  if(fn) fn.textContent = "File: " + file.name;
-  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("lkProductModal")).show(); }
-}
-
-async function uploadLookupDoc(file, product){
-  const box = document.getElementById("lkUploadResult");
-  if(box) box.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-2"></span>Parsing ' + escapeHtml(file.name) + '…</div>';
-  const fd = new FormData(); fd.append("file", file);
-  if(product) fd.append("product", product);
-  try{
-    const res = await fetch("/api/lookups/upload", {method:"POST", body: fd});
-    const j = await res.json().catch(() => ({}));
-    if(!res.ok || !j.ok){ if(box) box.innerHTML = failNote((j && j.error) || "Upload failed."); return; }
-    if(box) box.innerHTML = okNote("Imported " + j.created + " lookup set" + (j.created === 1 ? "" : "s") +
-      " (" + j.totalValues + " values" + (j.skippedRows ? ", " + j.skippedRows + " row(s) skipped" : "") + ").");
-    loadLookupSets();
-  }catch(e){ if(box) box.innerHTML = failNote("Cannot reach the server."); }
 }
 
 /* No-upload path: derive lookup sets from every target column marked List Value = Yes,
@@ -463,15 +685,19 @@ function applyLookupToMapping(m, s){
     (s.sourceColumn || (m.sourceColumn && m.sourceColumn !== "(no source equivalent)" ? m.sourceColumn : "source"));
   const tgtRef = (s.targetTable ? s.targetTable + "." : "") + (s.targetColumn || m.targetColumn || "");
 
+  // The LookupName used in the ETL JOIN filter + LookupData seed = the Guidewire
+  // typelist name (so it matches typelist-seeded LookupData across products).
+  const lkName = _gwLookupName(s) || s.lookupName;
+
   m.mappingType = "Lookup";
   // Lookup Table in the "Name: code-target, code-target" shape the workspace/ETL parse.
-  m.lookupTable = s.lookupName + (pairs.length ? (": " + pairs.map(p => p.code + "-" + p.target).join(", ")) : "");
+  m.lookupTable = lkName + (pairs.length ? (": " + pairs.map(p => p.code + "-" + p.target).join(", ")) : "");
   m.transformationRule = pairs.length
     ? ("LOOKUP(" + srcRef + "): " + pairs.map(p => p.code + " → " + p.target).join(", "))
-    : (spec ? ("LOOKUP(" + srcRef + "): " + spec.replace(/\s*\n\s*/g, ", ")) : ("Apply lookup '" + s.lookupName + "'"));
+    : (spec ? ("LOOKUP(" + srcRef + "): " + spec.replace(/\s*\n\s*/g, ", ")) : ("Apply lookup '" + lkName + "'"));
   m.businessRule = spec
-    ? ("Reference/lookup mapping " + srcRef + " → " + tgtRef + " via '" + s.lookupName + "': " + spec.replace(/\s*\n\s*/g, "; "))
-    : ("Reference/lookup mapping " + srcRef + " → " + tgtRef + " via '" + s.lookupName + "'.");
+    ? ("Reference/lookup mapping " + srcRef + " → " + tgtRef + " via '" + lkName + "': " + spec.replace(/\s*\n\s*/g, "; "))
+    : ("Reference/lookup mapping " + srcRef + " → " + tgtRef + " via '" + lkName + "'.");
   m.updatedBy = "Lookup Sync";
   m.lastUpdated = new Date().toISOString();
 }

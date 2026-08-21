@@ -19,7 +19,7 @@ from app.db.app_db import connect, write_lock
 from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET
 from app.parsers.file_parsers import extract_file_text
-from app.schemas.ai_schemas import LOOKUP_EXTRACT_SCHEMA
+from app.schemas.ai_schemas import LOOKUP_EXTRACT_SCHEMA, VALUE_MAPPING_SCHEMA
 from app.services.ai_client import anthropic_client, schema_attempts
 from app.services.ai_client_service import call_ai
 
@@ -51,6 +51,7 @@ def _row_to_set(r) -> Dict[str, Any]:
         "sourceTable": r["source_table"] or "", "sourceColumn": r["source_column"] or "",
         "targetTable": r["target_table"] or "", "targetColumn": r["target_column"] or "",
         "targetValuesSpec": r["target_values_spec"] or "",
+        "legacyValuesSpec": (r["legacy_values_spec"] if "legacy_values_spec" in r.keys() else "") or "",
         "sourceDocument": r["source_document"] or "",
         "version": r["version"], "valueCount": r["value_count"],
         "createdAt": r["created_at"], "updatedAt": r["updated_at"],
@@ -218,8 +219,8 @@ def get_values(user_id: int, client_id: int, set_id: int) -> Result:
 def update_set(user_id: int, client_id: int, set_id: int, *,
                source_table: Optional[str] = None, source_column: Optional[str] = None,
                target_table: Optional[str] = None, target_column: Optional[str] = None,
-               target_values_spec: Optional[str] = None) -> Result:
-    """Update a set's source/target binding + optional spec (values untouched)."""
+               target_values_spec: Optional[str] = None, legacy_values_spec: Optional[str] = None) -> Result:
+    """Update a set's source/target binding + optional specs (values untouched)."""
     with write_lock():
         conn = connect()
         try:
@@ -233,8 +234,10 @@ def update_set(user_id: int, client_id: int, set_id: int, *,
                 "UPDATE lookup_sets SET source_table=COALESCE(?,source_table), "
                 "source_column=COALESCE(?,source_column), target_table=COALESCE(?,target_table), "
                 "target_column=COALESCE(?,target_column), target_values_spec=COALESCE(?,target_values_spec), "
+                "legacy_values_spec=COALESCE(?,legacy_values_spec), "
                 "updated_at=? WHERE id=?",
-                (source_table, source_column, target_table, target_column, target_values_spec, _now(), set_id),
+                (source_table, source_column, target_table, target_column, target_values_spec,
+                 legacy_values_spec, _now(), set_id),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM lookup_sets WHERE id=?", (set_id,)).fetchone()
@@ -571,6 +574,104 @@ def set_value_mapping_override(user_id: int, client_id: int, mapping_id: int, ta
         finally:
             conn.close()
     return {"ok": True, "mapping": _row_to_vm(row)}, 200
+
+
+# ------------------------------------------------------ AI value-mapping (pass 2)
+_VALUE_MAP_SYSTEM = (
+    "You map a legacy/source system's coded values to a target Guidewire TYPELIST. "
+    "You are given the LEGACY VALUES (free text the analyst typed — it may be 'code = label', "
+    "'code then label', or a plain list of codes/labels) and the TARGET CODES (the allowed "
+    "Guidewire typecodes, each with a name/description). For EACH distinct legacy value, choose "
+    "the single best target code by MEANING (compare against the target codes' names/descriptions, "
+    "not exact strings). Return: sourceCode (the legacy code exactly as given), sourceDescription "
+    "(its label if present, else \"\"), targetCode (EXACTLY one of the provided target codes, or \"\" "
+    "if none fits), mappingType ('exact' = clearly the same meaning, 'semantic' = inferred match, "
+    "'defaulted' = a fallback/default, 'unmapped' = no target fits), confidence 0-1, and a short "
+    "rationale. Use ONLY the provided target codes — NEVER invent a target code. Return ONLY JSON "
+    "{\"mappings\":[{sourceCode, sourceDescription, targetCode, mappingType, confidence, rationale}]}."
+)
+
+
+def generate_value_mappings(user_id: int, client_id: int, set_id: int,
+                            legacy_values: str, target_codes: Optional[List[Dict[str, Any]]] = None) -> Result:
+    """AI-map a lookup set's LEGACY values (free text) to its target Guidewire typelist
+    codes. Persists the legacy text + a readable summary on the set, upserts one value
+    mapping per legacy code (preserving reviewed/manual overrides), and logs a pass."""
+    owned, st = get_set(user_id, client_id, set_id)
+    if st != 200:
+        return owned, st
+    legacy = (legacy_values or "").strip()
+    if not legacy:
+        return {"ok": False, "error": "Enter the legacy values to map."}, 400
+    codes = [c for c in (target_codes or []) if isinstance(c, dict) and str(c.get("code", "")).strip()]
+    if not codes:
+        return {"ok": False, "error": "No target typelist codes for this column — import its "
+                "Guidewire typelist (Product Data Dictionary) and set the column's Type Key (Target AI fill)."}, 400
+    if anthropic is None:
+        return {"ok": False, "error": "The 'anthropic' SDK is not installed on the server."}, 400
+
+    model = ai_model()
+    user = ("TARGET CODES (Guidewire typelist — the ONLY allowed target values):\n" +
+            json.dumps(codes, ensure_ascii=False) +
+            "\n\nLEGACY VALUES (source system, free text):\n" + legacy)
+    client = anthropic_client()
+    kw = dict(model=model, max_tokens=8000, system=_VALUE_MAP_SYSTEM,
+              messages=[{"role": "user", "content": user}])
+
+    def run(extra):
+        with client.messages.stream(**kw, **extra) as stream:
+            return stream.get_final_message()
+
+    try:
+        resp = call_ai("Lookup Value Mapping", run, schema_attempts(VALUE_MAPPING_SCHEMA))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc) or exc.__class__.__name__}, 400
+    if getattr(resp, "stop_reason", None) == "refusal":
+        return {"ok": False, "error": "The request was declined by safety classifiers."}, 400
+    txt = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+    data = _parse_json_object(txt)
+    rows = data.get("mappings") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+
+    # Clear the previous run's AI rows so a NEW legacy set fully replaces the old one
+    # (otherwise codes from an earlier legacy input linger and pollute the summary).
+    # Manual / reviewed overrides are kept — they represent explicit user decisions.
+    with write_lock():
+        conn = connect()
+        try:
+            conn.execute(
+                "DELETE FROM lookup_value_mappings WHERE lookup_set_id=? AND user_id=? AND client_id=? "
+                "AND is_reviewed=0 AND mapping_type <> 'manual_override'",
+                (set_id, user_id, client_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        sc = str(m.get("sourceCode", "")).strip()
+        if not sc:
+            continue
+        tc = str(m.get("targetCode", "") or "").strip()
+        mt = (m.get("mappingType") or ("unmapped" if not tc else "semantic")).strip().lower()
+        # force=False preserves a reviewed / manual_override row from an earlier pass.
+        upsert_value_mapping(user_id, client_id, set_id, {
+            "sourceCode": sc, "sourceDescription": m.get("sourceDescription", ""),
+            "targetCode": tc, "mappingType": mt,
+            "confidence": m.get("confidence", 0), "rationale": m.get("rationale", ""),
+        }, force=False)
+
+    vms, _ = list_value_mappings(user_id, client_id, set_id)
+    ms = vms.get("mappings", [])
+    # One "legacyCode ---> gwCode" per line (the "--->" arrow is what the Sync parser reads).
+    spec = "\n".join((v.get("sourceCode", "") + " ---> " + (v.get("targetCode") or "(unmapped)")) for v in ms)
+    update_set(user_id, client_id, set_id, target_values_spec=(spec or None), legacy_values_spec=legacy)
+    mapped = sum(1 for v in ms if (v.get("targetCode") or "").strip())
+    log_run(user_id, client_id, 2, prompt_version="value.v1", model=model,
+            counts={"mapped": mapped, "unmapped": len(ms) - mapped, "total": len(ms)})
+    return {"ok": True, "saved": len(ms), "mapped": mapped, "spec": spec, "mappings": ms}, 200
 
 
 # ------------------------------------------------------------------ run audit

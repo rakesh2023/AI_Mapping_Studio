@@ -105,7 +105,19 @@ def update_set(set_id):
     payload, status = lookup_service.update_set(
         uid, cid, set_id, source_table=b.get("sourceTable"), source_column=b.get("sourceColumn"),
         target_table=b.get("targetTable"), target_column=b.get("targetColumn"),
-        target_values_spec=b.get("targetValuesSpec"))
+        target_values_spec=b.get("targetValuesSpec"), legacy_values_spec=b.get("legacyValuesSpec"))
+    return jsonify(payload), status
+
+
+@bp.route("/<int:set_id>/generate-values", methods=["POST"])
+def generate_values(set_id):
+    """AI-map this set's legacy values (free text) to its target Guidewire typelist codes."""
+    uid, cid, err = _scope()
+    if err:
+        return err
+    b = request.get_json(silent=True) or {}
+    payload, status = lookup_service.generate_value_mappings(
+        uid, cid, set_id, b.get("legacyValues", ""), b.get("targetCodes") or [])
     return jsonify(payload), status
 
 

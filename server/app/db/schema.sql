@@ -186,7 +186,8 @@ CREATE TABLE IF NOT EXISTS lookup_sets (
     source_column      TEXT,
     target_table       TEXT,                        -- target list column it feeds (nullable until matched)
     target_column      TEXT,
-    target_values_spec TEXT,                        -- optional manual notes / override (usually null)
+    target_values_spec TEXT,                        -- generated legacy->Guidewire mapping summary ("1 -> open, 2 -> closed")
+    legacy_values_spec TEXT,                        -- user-entered legacy/source coded values (free text)
     source_document    TEXT,                        -- filename it came from, if uploaded
     version            INTEGER NOT NULL DEFAULT 1,  -- bumped on re-upload
     value_count        INTEGER NOT NULL DEFAULT 0,

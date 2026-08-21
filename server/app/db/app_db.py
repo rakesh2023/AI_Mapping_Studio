@@ -44,6 +44,17 @@ def _ensure_user_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
 
+def _ensure_lookup_columns(conn: sqlite3.Connection) -> None:
+    """Add newer columns to a pre-existing lookup_sets table (CREATE TABLE IF NOT
+    EXISTS won't). Idempotent; caller holds _WRITE_LOCK."""
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(lookup_sets)").fetchall()}
+    except Exception:  # noqa: BLE001 — table may not exist yet on a brand-new DB
+        return
+    if cols and "legacy_values_spec" not in cols:
+        conn.execute("ALTER TABLE lookup_sets ADD COLUMN legacy_values_spec TEXT")
+
+
 def ensure_app_tables() -> None:
     """Create the app tables if they don't exist (idempotent).
 
@@ -59,6 +70,7 @@ def ensure_app_tables() -> None:
             try:
                 conn.executescript(script)
                 _ensure_user_columns(conn)
+                _ensure_lookup_columns(conn)
                 conn.commit()
             finally:
                 conn.close()

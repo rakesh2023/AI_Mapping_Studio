@@ -222,6 +222,67 @@ def test_snapshot_all_returns_sets_with_values():
     assert [v["code"] for v in by["B"]["values"]] == ["X"]
 
 
+def test_generate_value_mappings(monkeypatch):
+    uid, cid = _uc("lkgen@example.com", "LKGEN")
+    sid = L.save_lookup_set(uid, cid, "Claim_State", [], source_table="cf", source_column="status",
+                            target_table="cs_claim", target_column="state")[0]["set"]["id"]
+    reply = ('{"mappings":[{"sourceCode":"1","sourceDescription":"Open","targetCode":"open",'
+             '"mappingType":"exact","confidence":0.95,"rationale":"same"},'
+             '{"sourceCode":"2","targetCode":"closed","mappingType":"semantic","confidence":0.8}]}')
+    monkeypatch.setattr(L, "anthropic_client", lambda: _mock_client(reply))
+    codes = [{"code": "open", "name": "Open"}, {"code": "closed", "name": "Closed"}]
+    p, s = L.generate_value_mappings(uid, cid, sid, "1=Open, 2=Closed", codes)
+    assert s == 200 and p["ok"] and p["mapped"] == 2
+    by = {m["sourceCode"]: m for m in L.list_value_mappings(uid, cid, sid)[0]["mappings"]}
+    assert by["1"]["targetCode"] == "open" and by["2"]["targetCode"] == "closed"
+    st = L.get_set(uid, cid, sid)[0]["set"]
+    assert st["legacyValuesSpec"] == "1=Open, 2=Closed" and "1 ---> open" in st["targetValuesSpec"]
+
+
+def test_generate_value_mappings_needs_target_codes():
+    uid, cid = _uc("lkgen2@example.com", "LKGEN2")
+    sid = L.save_lookup_set(uid, cid, "S", [])[0]["set"]["id"]
+    p, s = L.generate_value_mappings(uid, cid, sid, "1=Open", [])
+    assert s == 400 and not p["ok"]
+
+
+def test_regenerate_replaces_previous_ai_rows(monkeypatch):
+    """A NEW legacy set must fully replace the previous run's AI rows (no lingering codes)."""
+    uid, cid = _uc("lkregen@example.com", "LKREGEN")
+    sid = L.save_lookup_set(uid, cid, "S", [], target_table="cs_address", target_column="country")[0]["set"]["id"]
+    codes = [{"code": "US", "name": "United States"}, {"code": "IN", "name": "India"}]
+    monkeypatch.setattr(L, "anthropic_client", lambda: _mock_client(
+        '{"mappings":[{"sourceCode":"AD","targetCode":"AD","mappingType":"exact","confidence":1.0},'
+        '{"sourceCode":"AE","targetCode":"AE","mappingType":"exact","confidence":1.0}]}'))
+    L.generate_value_mappings(uid, cid, sid, "AD, AE", codes)
+    assert len(L.list_value_mappings(uid, cid, sid)[0]["mappings"]) == 2
+
+    monkeypatch.setattr(L, "anthropic_client", lambda: _mock_client(
+        '{"mappings":[{"sourceCode":"usa","targetCode":"US","mappingType":"semantic","confidence":0.9}]}'))
+    L.generate_value_mappings(uid, cid, sid, "usa", codes)
+    ms = L.list_value_mappings(uid, cid, sid)[0]["mappings"]
+    assert [m["sourceCode"] for m in ms] == ["usa"]                       # AD/AE cleared
+    assert "usa ---> US" in L.get_set(uid, cid, sid)[0]["set"]["targetValuesSpec"]
+
+
+def test_regenerate_preserves_reviewed_override(monkeypatch):
+    """A reviewed / manual override survives a regenerate; stale non-reviewed rows do not."""
+    uid, cid = _uc("lkregen2@example.com", "LKREGEN2")
+    sid = L.save_lookup_set(uid, cid, "S", [], target_table="cs", target_column="c")[0]["set"]["id"]
+    codes = [{"code": "US", "name": "United States"}]
+    monkeypatch.setattr(L, "anthropic_client", lambda: _mock_client(
+        '{"mappings":[{"sourceCode":"AD","targetCode":"AD","mappingType":"exact"}]}'))
+    L.generate_value_mappings(uid, cid, sid, "AD", codes)
+    mid = L.list_value_mappings(uid, cid, sid)[0]["mappings"][0]["id"]
+    L.set_value_mapping_override(uid, cid, mid, "US", "United States", reviewed_by=uid)
+
+    monkeypatch.setattr(L, "anthropic_client", lambda: _mock_client(
+        '{"mappings":[{"sourceCode":"usa","targetCode":"US","mappingType":"semantic"}]}'))
+    L.generate_value_mappings(uid, cid, sid, "usa", codes)
+    got = sorted(m["sourceCode"] for m in L.list_value_mappings(uid, cid, sid)[0]["mappings"])
+    assert got == ["AD", "usa"]   # reviewed AD kept, new usa added
+
+
 def test_log_run_inserts():
     uid, cid = _uc("lkr@example.com", "LKR")
     rid = L.log_run(uid, cid, 2, prompt_version="pass2.v1", model="m",

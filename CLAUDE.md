@@ -38,11 +38,19 @@ The frontend links every css/js asset with `?v=YYYYMMDD<letter>` (e.g. `?v=20260
 cache aggressively, so **after editing any `.css` or `.js` you must bump the version across all HTML
 pages**, or changes won't appear. Bump with:
 
+**UTF-8-safe** bump (do NOT use `Get-Content`/`Set-Content` — in Windows PowerShell 5.1 they
+mis-decode UTF-8 and corrupt `—`/`…`/`·` into mojibake like `â€"` on every run):
+
 ```powershell
+$enc = New-Object System.Text.UTF8Encoding($false)   # UTF-8, no BOM
 Get-ChildItem -Path "pages\*.html","index.html" | ForEach-Object {
-  (Get-Content $_.FullName -Raw) -replace '\?v=\d{8}[a-z]', '?v=20260812b' | Set-Content $_.FullName -Encoding utf8
+  $t = [System.IO.File]::ReadAllText($_.FullName)     # ReadAllText auto-detects UTF-8
+  $t = [regex]::Replace($t, '\?v=\d{8}[a-z]', '?v=20260812b')
+  [System.IO.File]::WriteAllText($_.FullName, $t, $enc)
 }
 ```
+
+Or a Python one-liner (also UTF-8-safe): read with `encoding='utf-8-sig'`, write with `encoding='utf-8'`.
 
 Use the next unused letter for today's date. This is easy to forget and is the #1 cause of "my change
 didn't work."
