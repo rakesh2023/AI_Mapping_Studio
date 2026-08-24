@@ -466,12 +466,15 @@ function rowStatusClass(m){
 function rowHTML(m){
   const selected = state.selected.has(m.id) ? "row-selected" : "";
   return '<tr class="' + (rowStatusClass(m) + ' ' + selected).trim() + '" data-id="' + m.id + '">' +
-    '<td class="freeze fz0"><input type="checkbox" class="row-check" data-id="' + m.id + '" ' + (state.selected.has(m.id)?"checked":"") + '></td>' +
+    '<td class="freeze fz0"><div class="d-flex align-items-center gap-1">' +
+      '<input type="checkbox" class="row-check" data-id="' + m.id + '" ' + (state.selected.has(m.id)?"checked":"") + '>' +
+      '<button class="btn btn-sm btn-outline-soft p-1 lh-1" data-edit="' + m.id + '" title="Edit mapping (source table/column + rule)"><i class="bi bi-pencil"></i></button>' +
+    '</div></td>' +
     '<td class="freeze fz1 mono" data-col="id"><a href="#" class="row-open" data-id="' + m.id + '">' + m.id + '</a></td>' +
     '<td class="freeze fz2 mono" data-col="targetTable">' + (m.targetTable||"-") + '</td>' +
     '<td class="freeze fz3 editable-cell" data-col="targetColumn" data-field="targetColumn" data-id="' + m.id + '">' + m.targetColumn + '</td>' +
-    '<td class="mono" data-col="sourceTable">' + (m.sourceTable||"-") + '</td>' +
-    '<td class="mono" data-col="sourceColumn">' + (m.sourceColumn||"-") + '</td>' +
+    '<td class="mono editable-cell" data-col="sourceTable" data-field="sourceTable" data-id="' + m.id + '">' + (m.sourceTable||"-") + '</td>' +
+    '<td class="mono editable-cell" data-col="sourceColumn" data-field="sourceColumn" data-id="' + m.id + '">' + (m.sourceColumn||"-") + '</td>' +
     '<td class="mono" data-col="sampleSourceValue">' + escapeHtml(m.sampleSourceValue||"-") + '</td>' +
     '<td data-col="mappingType"><span class="mapping-type-chip editable-cell" data-field="mappingType" data-id="' + m.id + '">' + m.mappingType + '</span></td>' +
     '<td class="wrap editable-cell" data-col="transformationRule" data-field="transformationRule" data-id="' + m.id + '">' + escapeHtml(m.transformationRule||"None") + '</td>' +
@@ -500,6 +503,7 @@ function wireRowEvents(){
   document.querySelectorAll("[data-approve]").forEach(btn => btn.addEventListener("click", () => approveMapping(btn.dataset.approve)));
   document.querySelectorAll("[data-reject]").forEach(btn => btn.addEventListener("click", () => rejectMapping(btn.dataset.reject)));
   document.querySelectorAll("[data-regen]").forEach(btn => btn.addEventListener("click", () => regenerateMapping(btn.dataset.regen)));
+  document.querySelectorAll("[data-edit]").forEach(btn => btn.addEventListener("click", () => openEditMappingModal(btn.dataset.edit)));
   document.querySelectorAll(".editable-cell").forEach(cell => cell.addEventListener("click", () => makeCellEditable(cell)));
 }
 
@@ -869,6 +873,89 @@ function editMapping(id, field, newValue){
   addHistoryRecord(id, {changeType:"Modified", previousValue:String(oldValue), newValue:String(newValue), reason:"Field '" + field + "' edited inline", user:currentUserName(), source:"User"});
   Object.assign(m, changes);
   showNotification(id + " updated - status set to Modified by User.", "primary");
+  applyPipeline();
+}
+
+/* ---- Manual overwrite of a whole mapping row (pencil button) --------------------
+   Lets the user edit ALL source/rule fields at once — including Source Table and
+   Source Column — and saves them as an override (status -> Modified by User). ---- */
+let _editingMappingId = null;
+
+const EDIT_FIELDS = [
+  {key:"sourceTable",        label:"Source Table",        mono:true},
+  {key:"sourceColumn",       label:"Source Column",       mono:true},
+  {key:"mappingType",        label:"Mapping Type",        select:true},
+  {key:"transformationRule", label:"Transformation Rule", area:true},
+  {key:"businessRule",       label:"Business Rule",       area:true},
+  {key:"defaultValue",       label:"Default Value"},
+  {key:"lookupTable",        label:"Lookup Table",        area:true},
+  {key:"nullHandling",       label:"Null Handling"},
+];
+
+function injectEditMappingModal(){
+  if(document.getElementById("editMapModal")) return;
+  const field = (f) => {
+    if(f.select){
+      const opts = SELECT_FIELDS.mappingType.map(o => '<option value="' + escapeHtml(o) + '">' + escapeHtml(o) + '</option>').join("");
+      return '<div class="form-group"><label>' + f.label + '</label><select class="form-select" id="em_' + f.key + '">' + opts + '</select></div>';
+    }
+    if(f.area){
+      return '<div class="form-group"><label>' + f.label + '</label><textarea class="form-control' + (f.mono?" mono":"") + '" id="em_' + f.key + '" rows="2" style="resize:vertical;"></textarea></div>';
+    }
+    return '<div class="form-group"><label>' + f.label + '</label><input type="text" class="form-control' + (f.mono?" mono":"") + '" id="em_' + f.key + '"></div>';
+  };
+  const html =
+    '<div class="modal fade" id="editMapModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-lg">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-pencil-square me-1"></i> Edit mapping <span id="emId" class="mono text-muted-2"></span></h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body">' +
+      '<div class="kv-list mb-3"><span class="k">Target</span><span class="mono" id="emTarget">—</span></div>' +
+      '<div class="text-xs text-muted-2 mb-2">Manually overwrite the AI mapping. Saving marks this row <b>Modified by User</b>.</div>' +
+      EDIT_FIELDS.map(field).join("") +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" id="emSave"><i class="bi bi-check2 me-1"></i> Save</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.getElementById("emSave").addEventListener("click", saveEditMappingModal);
+}
+
+function openEditMappingModal(id){
+  injectEditMappingModal();
+  const m = findMapping(id);
+  if(!m){ showNotification("Mapping not found — reload the page.", "warning"); return; }
+  _editingMappingId = id;
+  document.getElementById("emId").textContent = id;
+  document.getElementById("emTarget").textContent = (m.targetTable || m.targetEntity || "") + "." + (m.targetColumn || "");
+  EDIT_FIELDS.forEach(f => { const el = document.getElementById("em_" + f.key); if(el) el.value = m[f.key] || ""; });
+  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("editMapModal")).show(); }
+}
+
+function saveEditMappingModal(){
+  const id = _editingMappingId;
+  const m = findMapping(id);
+  if(!m) return;
+  const changes = {}; const changed = [];
+  EDIT_FIELDS.forEach(f => {
+    const el = document.getElementById("em_" + f.key);
+    if(!el) return;
+    const val = el.value;
+    if((m[f.key] || "") !== val){ changes[f.key] = val; changed.push(f.label); }
+  });
+  if(!changed.length){
+    const inst = bootstrap.Modal.getInstance(document.getElementById("editMapModal")); if(inst) inst.hide();
+    return;
+  }
+  Object.assign(changes, {reviewStatus:"Modified by User", updatedBy:currentUserName(), lastUpdated:new Date().toISOString()});
+  saveMappingOverride(id, changes);
+  addHistoryRecord(id, {changeType:"Modified", previousValue:(m.sourceTable||"") + "." + (m.sourceColumn||""),
+                        newValue:(changes.sourceTable!==undefined?changes.sourceTable:m.sourceTable||"") + "." + (changes.sourceColumn!==undefined?changes.sourceColumn:m.sourceColumn||""),
+                        reason:"Manually edited (" + changed.join(", ") + ")", user:currentUserName(), source:"User"});
+  Object.assign(m, changes);
+  const inst = bootstrap.Modal.getInstance(document.getElementById("editMapModal")); if(inst) inst.hide();
+  showNotification(id + " updated (" + changed.length + " field" + (changed.length===1?"":"s") + ") — status set to Modified by User.", "primary");
   applyPipeline();
 }
 

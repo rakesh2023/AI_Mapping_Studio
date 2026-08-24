@@ -21,6 +21,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   migrateLegacyTargetSchema();   // seed a connection from any legacy uploaded schema
   renderConnections();
   renderActiveBrowser();
+  loadTypelistNames();           // for the List-badge "which typelist?" tooltip
 
   document.getElementById("addConnBtn").addEventListener("click", () => openForm(null));
   document.getElementById("cancelConnBtn").addEventListener("click", closeForm);
@@ -387,7 +388,13 @@ function renderActiveBrowser(){
     '<span class="badge-soft badge-gray">' + meta.columnCount + ' columns</span>';
 
   renderTargetTree(meta);
-  if(meta.entities.length) selectEntity(meta.entities[0].name);
+  if(meta.entities.length){
+    // Keep the user on the table they were working in (e.g. after saving a column
+    // edit); only fall back to the first table when there's no valid current one.
+    const cur = (activeEntity && !activeEntity._ghost) ? activeEntity.name : null;
+    const keep = (cur && meta.entities.some(e => e.name === cur)) ? cur : meta.entities[0].name;
+    selectEntity(keep);
+  }
 }
 
 /* ---- "Changes since last extract" panel (Target only) ---- */
@@ -572,7 +579,7 @@ function renderTargetFields(){
       '<td class="' + hl("mandatory").trim() + '">' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + was("mandatory", fMand) + '</td>' +
       '<td class="' + (hl("pk").trim() + aiCls("pk")).trim() + '">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + was("pk", fKey) + '</td>' +
       '<td class="' + ((hl("fk") || hl("fkReference")).trim() + aiCls("fk") + aiCls("fkReference")).trim() + '">' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + was("fk", fKey) + was("fkReference", fType) + '</td>' +
-      '<td class="' + aiCls("isListTable").trim() + '">' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
+      '<td class="' + aiCls("isListTable").trim() + '">' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium" title="' + escapeHtml(_typelistTitle(f)) + '">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
       '<td class="wrap' + aiCls("description") + '">' + escapeHtml(f.description || "") + '</td>' +
       '<td>' + escapeHtml(f.businessTerm || "-") + '</td>' +
       '<td class="wrap' + aiCls("accepted") + '">' + escapeHtml(f.accepted || "-") + '</td>' +
@@ -666,6 +673,32 @@ function _buildTypelistIndex(sets){
   const idx = {};
   (sets || []).forEach(s => { const k = _typelistBase(s.lookupName || ""); if(k && (s.values || []).length) idx[k] = s.values; });
   return idx;
+}
+
+/* Physical typelist name per base (e.g. "activitytype" -> "cctl_activitytype"),
+   loaded once from the imported typelists so the List badge can show it on hover. */
+let _typelistNames = {};
+async function loadTypelistNames(){
+  try{
+    const r = await fetch("/api/lookups/snapshot", {headers: {Accept: "application/json"}});
+    if(!r.ok) return;
+    const j = await r.json().catch(() => ({}));
+    if(!j || !j.ok) return;
+    const idx = {};
+    (j.sets || []).forEach(s => { const nm = s.lookupName || ""; const k = _typelistBase(nm); if(k && (s.values || []).length) idx[k] = nm; });
+    _typelistNames = idx;
+    if(activeEntity) renderTargetFields();   // refresh so the tooltips resolve
+  }catch(e){ /* leave empty — the badge tooltip falls back to the Type Key */ }
+}
+
+/* The typelist a List column points to, for the badge tooltip. Prefers the imported
+   physical name (cctl_activitytype); else the Type Key minus its typekey. qualifier. */
+function _typelistTitle(f){
+  const tk = ((f && f.typeKey) || "").trim();
+  const base = _typelistBase(tk.replace(/^(typekey|typelist)\.?/i, ""));
+  if(base && _typelistNames[base]) return "Typelist: " + _typelistNames[base];
+  if(tk) return "Typelist: " + tk.replace(/^(typekey|typelist)\./i, "");
+  return "List column (no Type Key set)";
 }
 function _lookupCodes(typelistIndex, typeKey){
   if(!typelistIndex || !typeKey) return null;
@@ -931,10 +964,13 @@ function ecSave(){
   };
   const res = persistFieldEdit(ecEditing, patch);
   if(!res.ok){ ecErr(res.error || "Could not save the column."); return; }
+  const y = window.scrollY;
   if(ecModal) ecModal.hide();
   renderActiveBrowser();
   selectEntity(activeEntity.name);
-  flashRow(name);
+  window.scrollTo(0, y);                    // stay put after the re-render
+  preserveScrollOnModalClose(document.getElementById("editColModal"));
+  flashRow(name, {scroll:false});           // highlight the edited row without jumping to it
   showNotification("Column '" + name + "' updated.", "success", 2500);
 }
 
@@ -1219,11 +1255,14 @@ function acSave(){
   const res = persistColumn(activeEntity.name, field, afterCol);
   if(!res.ok){ showNotification(res.error || "Could not save the column.", "danger"); return; }
 
+  const y = window.scrollY;
   if(acModal) acModal.hide();
   // refresh browser + counters, keep the same entity selected
   renderActiveBrowser();
   selectEntity(activeEntity.name);
-  flashRow(field.name);
+  window.scrollTo(0, y);
+  preserveScrollOnModalClose(document.getElementById("addColumnModal"));
+  flashRow(field.name, {scroll:false});
   acLastAdded = {entity: activeEntity.name, column: field.name};
   showColumnAddedToast(field.name, activeEntity.name);
 }
@@ -1267,9 +1306,26 @@ function removeColumn(entityName, colName){
   selectEntity(entityName);
 }
 
-function flashRow(colName){
+function flashRow(colName, opts){
   const row = document.querySelector('#targetFieldsBody tr[data-col="' + (window.CSS && CSS.escape ? CSS.escape(colName) : colName) + '"]');
-  if(row){ row.classList.add("row-flash"); row.scrollIntoView({behavior:"smooth", block:"center"}); setTimeout(() => row.classList.remove("row-flash"), 2200); }
+  if(row){
+    row.classList.add("row-flash");
+    if(!opts || opts.scroll !== false) row.scrollIntoView({behavior:"smooth", block:"center"});
+    setTimeout(() => row.classList.remove("row-flash"), 2200);
+  }
+}
+
+/* Keep the user's scroll position across a Bootstrap modal close + grid re-render.
+   Bootstrap returns focus to the (now re-rendered / detached) trigger on hide, which
+   makes the browser jump to the top; restoring here — including on hidden.bs.modal so
+   it runs AFTER that focus restore — keeps the page where the user was. */
+function preserveScrollOnModalClose(modalEl){
+  const y = window.scrollY;
+  window.scrollTo(0, y);   // undo any reset from the synchronous re-render
+  if(modalEl){
+    const restore = () => { window.scrollTo(0, y); modalEl.removeEventListener("hidden.bs.modal", restore); };
+    modalEl.addEventListener("hidden.bs.modal", restore);
+  }
 }
 
 /* success toast with an Undo action */
@@ -1310,10 +1366,13 @@ function acAddProposed(){
     if(res.ok) added.push(nm); else skipped.push(nm + " — " + (res.error || "not added"));
   });
   if(!added.length){ errBox.innerHTML = failNote("No columns added. " + (skipped.join("; ") || "")); return; }
+  const y = window.scrollY;
   if(acModal) acModal.hide();
   renderActiveBrowser();
   selectEntity(entity);
-  flashRow(added[0]);
+  window.scrollTo(0, y);
+  preserveScrollOnModalClose(document.getElementById("addColumnModal"));
+  flashRow(added[0], {scroll:false});
   acLastAdded = {entity: entity, columns: added.slice()};
   if(added.length === 1) showColumnAddedToast(added[0], entity);
   else showColumnsAddedToast(added, entity);

@@ -15,10 +15,10 @@
 
 /* ===== Frozen (sticky) left columns ===== */
 /* Fixed widths so the cumulative left offsets line up exactly. */
-.mapping-grid-wrap th.fz0, .mapping-grid-wrap td.fz0{width:40px;min-width:40px;left:0;}
-.mapping-grid-wrap th.fz1, .mapping-grid-wrap td.fz1{width:110px;min-width:110px;left:40px;}
-.mapping-grid-wrap th.fz2, .mapping-grid-wrap td.fz2{width:150px;min-width:150px;left:150px;}
-.mapping-grid-wrap th.fz3, .mapping-grid-wrap td.fz3{width:170px;min-width:170px;left:300px;}
+.mapping-grid-wrap th.fz0, .mapping-grid-wrap td.fz0{width:74px;min-width:74px;left:0;}
+.mapping-grid-wrap th.fz1, .mapping-grid-wrap td.fz1{width:110px;min-width:110px;left:74px;}
+.mapping-grid-wrap th.fz2, .mapping-grid-wrap td.fz2{width:150px;min-width:150px;left:184px;}
+.mapping-grid-wrap th.fz3, .mapping-grid-wrap td.fz3{width:170px;min-width:170px;left:334px;}
 
 .mapping-grid-wrap td.freeze, .mapping-grid-wrap th.freeze{
   position:sticky;z-index:3;background:#fff;
