@@ -5,11 +5,11 @@
 <title>AI Mapping Generator - AI Mapping Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260822e">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260822e">
-<link rel="stylesheet" href="../css/forms.css?v=20260822e">
-<link rel="stylesheet" href="../css/mapping.css?v=20260822e">
-<link rel="stylesheet" href="../css/responsive.css?v=20260822e">
+<link rel="stylesheet" href="../css/common.css?v=20260822f">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260822f">
+<link rel="stylesheet" href="../css/forms.css?v=20260822f">
+<link rel="stylesheet" href="../css/mapping.css?v=20260822f">
+<link rel="stylesheet" href="../css/responsive.css?v=20260822f">
 </head>
 <body>
 <div class="app-shell">
@@ -59,19 +59,60 @@
                     <button type="button" class="btn btn-sm btn-outline-soft" id="resetBizCtxBtn" title="Restore the default prompt"><i class="bi bi-arrow-counterclockwise me-1"></i>Default</button>
                     <button type="button" class="btn btn-sm btn-primary" id="saveBizCtxBtn"><i class="bi bi-save me-1"></i>Save Context</button>
                   </div>
-                  <textarea class="form-control" rows="12" id="bizContext" placeholder="Describe the migration, domains, and any priorities for the AI...">DOMAIN: Insurance policy/claims data conversion (Guidewire-style legacy to target).
-Prioritize mandatory (NOT NULL) and key columns. When a match is uncertain, still map the
-best candidate and lower confidence rather than leaving it Not Mapped. Flag datatype /
-length / precision mismatches and truncation risk in businessRule, and give the concrete
-conversion in transformationRule.
+                  <textarea class="form-control" rows="16" id="bizContext" placeholder="Describe the migration, domains, and any priorities for the AI...">DOMAIN: Insurance policy/claims data conversion (Guidewire-style legacy → target).
 
-PAYLOAD GRAIN (edit for this migration): one PMT_PayloadId per ClaimId per extract/batch -
-every target row produced from the same Claim in the same extract shares one value. Replace
-"ClaimId" with the column that defines one payload for this source, or delete this line if
-the target has no grouping/payload id.
+MAPPING PRIORITY
+- Map every source column to a target column if any reasonable candidate exists.
+  Only use "Not Mapped" when truly no source data corresponds — never as a
+  substitute for uncertainty.
+- When a match is uncertain, map the best candidate anyway and reflect the
+  uncertainty as a lower confidence score, with the reasoning in businessRule.
+- Prioritize NOT NULL columns, primary/foreign keys, and columns referenced by
+  other mappings (e.g. ClaimId, PolicyId, LossDate) — these must resolve first
+  and cannot be left ambiguous.
 
-Add any other migration-specific facts below: key business lookups, hardcoded constants for
-this pipeline, or columns that need special handling.</textarea>
+DATA QUALITY FLAGS
+For every mapping, check and call out in businessRule:
+- Datatype mismatches (e.g. source VARCHAR → target DECIMAL)
+- Length/precision mismatches and truncation risk (e.g. source VARCHAR(50) →
+  target VARCHAR(20); source NUMBER(18,2) → target NUMBER(10,2))
+- Nullability conflicts (source nullable → target NOT NULL: state the default
+  or fallback value to use)
+- Encoding/format mismatches (e.g. date as string "MM/DD/YYYY" → target DATE)
+In transformationRule, give the concrete conversion (function, format mask,
+truncation/rounding rule, or default value) — not just a description of the
+problem.
+
+PAYLOAD GRAIN
+Each extract/batch is homogeneous — either a claim extract or a policy
+extract, never mixed. Apply the matching rule below:
+
+- CLAIM EXTRACT: PMT_PayloadId is per Claim. One PMT_PayloadId per ClaimId
+  per extract/batch — every target row produced from the same claim in that
+  batch shares one value.
+
+- POLICY EXTRACT: PMT_PayloadId is per Policy. One PMT_PayloadId per
+  PolicyId per extract/batch — every target row produced from the same
+  policy in that batch shares one value.
+  NOTE: If PolicyId is reused across renewals/versions (i.e. is not unique
+  per term), qualify the grouping key as PolicyId + TermEffectiveDate
+  instead. [Confirm which applies before finalizing mappings — see below.]
+
+Identify which extract type is in scope from the source table/feed name
+before assigning grain, and state the assumption explicitly in the mapping
+output.
+
+MIGRATION-SPECIFIC FACTS (fill in per project)
+- Key business lookups: [e.g. ClaimStatusCode legacy → target enum; LOB code
+  crosswalk; state code table]
+- Hardcoded constants for this pipeline: [e.g. SourceSystemId = 'GW_LEGACY',
+  default CurrencyCode = 'USD' when null]
+- Columns needing special handling: [e.g. composite keys, columns derived
+  from concatenation/splitting, columns requiring a lookup/join to another
+  legacy table, effective-dated/versioned fields]
+- PolicyId uniqueness: [confirm — is PolicyId stable across renewals, or does
+  it need to be paired with TermEffectiveDate for the policy-extract grain
+  above?]</textarea>
                 </details>
               </div>
               <div class="form-group" style="grid-column:1/-1;"><label>Mapping Strategy</label>
@@ -115,10 +156,10 @@ this pipeline, or columns that need special handling.</textarea>
 </div>
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260822e"></script>
-<script src="../js/navigation.js?v=20260822e"></script>
-<script src="../js/target-schema.js?v=20260822e"></script>
-<script src="../js/ai-mapping.js?v=20260822e"></script>
+<script src="../js/common.js?v=20260822f"></script>
+<script src="../js/navigation.js?v=20260822f"></script>
+<script src="../js/target-schema.js?v=20260822f"></script>
+<script src="../js/ai-mapping.js?v=20260822f"></script>
 </body>
 </html>
 

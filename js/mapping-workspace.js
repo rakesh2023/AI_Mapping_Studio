@@ -36,8 +36,16 @@ const FREEZE = {
   targetColumn: "fz3"
 };
 // Columns the user has hidden (persisted). Frozen columns can't be hidden.
-const ALWAYS_ON = ["id","targetTable","targetColumn","actions"];
+// AI Confidence is always-on too — it's a key read-only review signal and must
+// never be hidden (nor does it appear in the show/hide menu).
+const ALWAYS_ON = ["id","targetTable","targetColumn","confidence","actions"];
 let hiddenColumns = new Set(lsGet("aims_ws_hidden_cols", []) || []);
+// Clear any stale persisted entry that would hide an always-on column (e.g. an
+// older session that hid "confidence").
+if(ALWAYS_ON.some(k => hiddenColumns.has(k))){
+  ALWAYS_ON.forEach(k => hiddenColumns.delete(k));
+  lsSet("aims_ws_hidden_cols", Array.from(hiddenColumns));
+}
 
 const LS_WS_SET = "aims_workspace_set";  // remembers the last chosen mapping set (targetSystem key)
 
@@ -330,7 +338,7 @@ function buildHeader(){
 // column key), injected as a single <style> so it survives tbody re-renders.
 function applyColumnVisibility(){
   const sel = [];
-  hiddenColumns.forEach(key => sel.push('#mappingTable [data-col="' + key + '"]'));
+  hiddenColumns.forEach(key => { if(ALWAYS_ON.indexOf(key) === -1) sel.push('#mappingTable [data-col="' + key + '"]'); });
   let styleEl = document.getElementById("colVisStyle");
   if(!styleEl){ styleEl = document.createElement("style"); styleEl.id = "colVisStyle"; document.head.appendChild(styleEl); }
   styleEl.textContent = sel.length ? (sel.join(",") + "{display:none !important;}") : "";

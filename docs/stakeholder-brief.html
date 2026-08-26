@@ -305,12 +305,15 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
           <div class="app-brand"><svg class="m" viewBox="0 0 102 36"><polygon points="0,36 16,20 56,20 40,36"/><polygon points="46,16 62,0 102,0 86,16"/></svg><b>AI Mapping Studio</b></div>
           <div class="app-sec">Setup</div>
           <div class="nav"><i>▦</i> Know Your Data</div>
-          <div class="nav"><i>⌸</i> Source Systems</div>
+          <div class="nav"><i>⌗</i> Product Data Dictionary</div>
+          <div class="nav"><i>⎘</i> Product Schema</div>
           <div class="nav"><i>⛃</i> Target System</div>
           <div class="app-sec">Mapping</div>
           <div class="nav"><i>✦</i> AI Generator</div>
           <div class="nav on"><i>▤</i> Mapping Workspace</div>
+          <div class="nav"><i>⇄</i> Lookup Mapping</div>
           <div class="nav"><i>✓</i> Validation</div>
+          <div class="app-sec">Build</div>
           <div class="nav"><i>⧉</i> ETL &amp; Deploy</div>
         </aside>
         <div class="app-main">
@@ -341,9 +344,9 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
 <!-- ============================ STAT BAND ============================ -->
 <div class="wrap">
   <div class="band reveal">
-    <div class="cell"><div class="n">13</div><span class="l">AI-assisted operations</span></div>
+    <div class="cell"><div class="n">16</div><span class="l">AI-assisted operations</span></div>
     <div class="cell"><div class="n">Multi</div><span class="l">Tenant &amp; data-isolated</span></div>
-    <div class="cell"><div class="n">38</div><span class="l">API endpoints</span></div>
+    <div class="cell"><div class="n">66</div><span class="l">API endpoints</span></div>
     <div class="cell"><div class="n">Chat</div><span class="l">Ask your own documents</span></div>
     <div class="cell"><div class="n">0</div><span class="l">Build steps to run</span></div>
   </div>
@@ -368,7 +371,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   <div class="wrap">
     <div class="eyebrow">Product tour</div>
     <h2>See it working.</h2>
-    <p class="intro">Three of the screens that carry the workflow, from asking questions of your own documents to generating deployable code.</p>
+    <p class="intro">Four of the screens that carry the workflow, from asking questions of your own documents to mapping legacy codes and generating deployable code.</p>
 
     <div class="tour">
       <!-- Know Your Data -->
@@ -443,6 +446,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
           <ul class="tlist">
             <li>Live metadata read, or AI-extracted from an uploaded file</li>
             <li>Add, edit and delete tables &amp; columns inline</li>
+            <li>AI-fill descriptions, keys &amp; typelists from the Product Data Dictionary / Schema</li>
             <li>Schema defaults flow straight into generated DDL</li>
           </ul>
         </div>
@@ -478,6 +482,40 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
           </div>
         </div>
       </div>
+
+      <!-- AI Lookup Mapping -->
+      <div class="tour-row rev">
+        <div class="tour-txt">
+          <div class="k">AI Lookup Mapping</div>
+          <h3>Map legacy codes to Guidewire typelists.</h3>
+          <p>List / typelist columns surface automatically from the mapped target tables. Enter the legacy values, click <b>Generate</b>, and Claude maps each to an allowed Guidewire typecode — collected into one reusable <span class="mono">LookupData</span> reference table and wired into the ETL as filtered LEFT JOINs.</p>
+          <ul class="tlist">
+            <li>Allowed codes pulled from the imported Guidewire typelists</li>
+            <li>Every lookup JOIN is filtered by lookup name — shared codes never collide</li>
+            <li>Syncs into the AI mappings so the generated ETL picks it up</li>
+          </ul>
+        </div>
+        <div>
+          <div class="shot" role="img" aria-label="AI Lookup Mapping: legacy source codes mapped to Guidewire typelist codes.">
+            <div class="shot-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="u mono">AI Lookup Mapping · Lookup Data</span></div>
+            <div class="app" style="grid-template-columns:1fr">
+              <div class="app-main">
+                <div class="app-top"><div class="t">Lookup Data</div><div class="r"><span class="pillx">cs_address</span></div></div>
+                <div class="app-body">
+                  <table class="mg">
+                    <thead><tr><th>Lookup Name</th><th>Legacy value</th><th>Generated (Legacy→GW)</th></tr></thead>
+                    <tbody>
+                      <tr class="r-ok"><td class="cmono">cctl_addresstype</td><td class="cmono">b, h, O</td><td class="cmono">b → business, h → home, O → other</td></tr>
+                      <tr class="r-ok"><td class="cmono">cctl_state</td><td class="cmono">NJ</td><td class="cmono">NJ → NJ</td></tr>
+                      <tr class="r-rev"><td class="cmono">cctl_country</td><td class="cmono">usa</td><td class="cmono">usa → US</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -487,12 +525,16 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
   <div class="wrap">
     <div class="eyebrow">How AI is used</div>
     <h2>Claude, applied narrowly and safely.</h2>
-    <p class="intro">Thirteen bounded operations — each returns structured data, SQL, or a grounded answer that the application parses and a person reviews. The model never acts on its own.</p>
+    <p class="intro">Sixteen bounded operations — each returns structured data, SQL, or a grounded answer that the application parses and a person reviews. The model never acts on its own.</p>
     <ul class="ai-features">
       <li><span class="dot"></span><span><b>Mapping generation</b> — per target table</span></li>
       <li><span class="dot"></span><span><b>Single-field regeneration</b> — grounded on the real source</span></li>
       <li><span class="dot"></span><span><b>Schema extraction</b> — from uploaded files</span></li>
       <li><span class="dot"></span><span><b>Rich extraction</b> — infers keys &amp; nullability</span></li>
+      <li><span class="dot"></span><span><b>Lookup value mapping</b> — legacy codes → Guidewire typelist</span></li>
+      <li><span class="dot"></span><span><b>Lookup / typelist extraction</b> — from uploaded dictionaries</span></li>
+      <li><span class="dot"></span><span><b>Table-name matching</b> — aligns schema to target by meaning</span></li>
+      <li><span class="dot"></span><span><b>Target metadata inference</b> — descriptions, keys &amp; typelists</span></li>
       <li><span class="dot"></span><span><b>ETL stored-procedure</b> generation</span></li>
       <li><span class="dot"></span><span><b>CREATE TABLE DDL</b> generation</span></li>
       <li><span class="dot"></span><span><b>Add column / entity</b> from plain language</span></li>
@@ -517,10 +559,10 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
       <div class="flowdown">↓</div>
       <div class="layer"><div class="role">Gateway</div><div class="nodes"><div class="node accent">Flask app<span>Auth guard → CSRF guard → API blueprints</span></div></div></div>
       <div class="flowdown">↓</div>
-      <div class="layer"><div class="role">Logic</div><div class="nodes"><div class="node">Services<span>Mapping · Extraction · ETL · Deploy · Auth · Tenant store · Document Q&amp;A</span></div></div></div>
+      <div class="layer"><div class="role">Logic</div><div class="nodes"><div class="node">Services<span>Mapping · Extraction · ETL · Deploy · Auth · Tenant store · Lookup/typelist · Document Q&amp;A</span></div></div></div>
       <div class="flowdown">↓</div>
       <div class="layer"><div class="role">Data &amp; AI</div><div class="nodes">
-        <div class="node store">SQLite<span>Users, clients, per-tenant docs, uploads &amp; vectors</span></div>
+        <div class="node store">SQLite<span>Users, clients, per-tenant docs, lookups, uploads &amp; vectors</span></div>
         <div class="node store">SQL Server<span>Live source / target</span></div>
         <div class="node accent">Claude<span>via corporate gateway</span></div>
       </div></div>
@@ -567,7 +609,7 @@ footer code{background:var(--sunk); border:1px solid var(--line); border-radius:
     <h2>Working software, documented.</h2>
     <div class="status-row">
       <span class="spill g"><span class="k"></span> Core workflow functional</span>
-      <span class="spill g"><span class="k"></span> Backend test suite (32 files)</span>
+      <span class="spill g"><span class="k"></span> Backend test suite (39 files)</span>
       <span class="spill i"><span class="k"></span> Full technical docs in <code class="mono" style="font-size:12px">docs/</code></span>
       <span class="spill w"><span class="k"></span> Not yet production-hardened</span>
     </div>
