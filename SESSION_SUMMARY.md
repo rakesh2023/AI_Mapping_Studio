@@ -10,6 +10,30 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **New Data Validation page — two-panel, AI-assisted, SQL-generating** (uncommitted).
+  Added a new **Validate ▸ Data Validation** sidebar section (after Build) — a data-quality tool over
+  the active **target** schema, distinct from the mapping-`validation.js` (which checks the mapping doc).
+  New page `pages/data-validation.html` + controller `js/data-validation.js` (+ `LS_KEYS.dataValidationCfg`
+  and the nav entry in `js/common.js`). **Two-panel master–detail:** left = searchable, multi-select
+  table list with "select all"; right = per-column grid with **editable checkboxes** for **PK** (=uniqueness
+  key), **Mandatory**, **TypeList**, **FK** (FK cell shows the parsed `table.column` reference). Four checks:
+  duplicates (`GROUP BY key HAVING COUNT(*)>1`), mandatory NULLs, typelist membership (`NOT IN` domain),
+  FK orphans (anti-join). Three actions:
+  **AI Suggest Checks** (`POST /api/ai/validation-suggest`) pre-ticks the boxes from each column's
+  description/datatype/typelist; **Generate SQL** (`POST /api/ai/validation-sql`) returns one combined,
+  grounded T-SQL script (copy + download `.sql`) the user runs on SQL Server themselves; **Run Validation**
+  (`POST /api/db/validate`, kept from the first cut) executes live and fills the KPI cards + issues grid —
+  enabled only for a live SQL Server target. Backend: new `services/validation_ai_service.py`
+  (`suggest_checks` uses `VALIDATION_SUGGEST_SCHEMA` structured output; `generate_validation_sql` returns
+  raw SQL, strictly grounded — never invents names/values), two thin routes in `ai_routes.py`, plus the
+  earlier `db_service.validate_table` + `/api/db/validate`. Typelist allowed values resolve via `typeKey`
+  against `/api/lookups/snapshot`, falling back to the column `accepted` string, and are embedded into the
+  generated `NOT IN (…)`. **Provenance coloring:** each grid check cell is tinted by origin — neutral for
+  schema defaults, **blue** for AI-suggested (`origin-ai`), **green** for a user's manual toggle
+  (`origin-user`), tracked in a `dvOrigin` map and persisted with the config; a small legend explains it.
+  Selections persist to device-local `aims_data_validation_cfg`. No other feature touched. Cache-bust
+  bumped to `20260822j`.
+
 - **Admin-managed users; self-signup disabled** (uncommitted).
   The tool is now closed: `POST /api/auth/signup` returns 403 unless `AIMS_SIGNUP_ENABLED`
   is set (default OFF; the login page no longer offers signup). Added an `is_admin` column

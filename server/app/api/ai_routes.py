@@ -7,7 +7,7 @@ streaming Response (application/x-ndjson), exactly as before.
 from flask import Blueprint, request, jsonify, Response
 
 from app.services import (ai_client, mapping_service, extraction_service, etl_service,
-                          schema_service, target_meta_service)
+                          schema_service, target_meta_service, validation_ai_service)
 
 bp = Blueprint("ai_api", __name__, url_prefix="/api/ai")
 
@@ -58,6 +58,20 @@ def match_tables():
 def generate_etl():
     body = request.get_json(force=True) or {}
     payload, status = etl_service.generate_etl(body)
+    return jsonify(payload), status
+
+
+@bp.route("/validation-suggest", methods=["POST"])
+def validation_suggest():
+    body = request.get_json(force=True) or {}
+    payload, status = validation_ai_service.suggest_checks(body)
+    return jsonify(payload), status
+
+
+@bp.route("/validation-sql", methods=["POST"])
+def validation_sql():
+    body = request.get_json(force=True) or {}
+    payload, status = validation_ai_service.generate_validation_sql(body)
     return jsonify(payload), status
 
 

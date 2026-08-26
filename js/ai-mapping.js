@@ -28,6 +28,7 @@ function seedStrategyFromSettings(){
 const LS_AI_MAPPINGS = "aims_ai_mappings";   // generated mappings live here for the workspace
 const LS_BIZ_CONTEXT = "aims_business_context";   // user-saved Business Context prompt
 const LS_GEN_SYS_PROMPT = "aims_gen_system_prompt";  // user-edited AI system prompt (device pref)
+const LS_ADDL_INSTR = "aims_addl_instructions";   // extra, run-specific instructions (top of the form)
 
 // The prompt shipped in the HTML is the DEFAULT; captured on load so "Default" can
 // restore it. A user-saved value (localStorage) overrides it until reset.
@@ -136,6 +137,16 @@ function initBizContext(){
   });
 }
 
+/* Top-of-form "Additional Instructions" box: persisted in this browser, combined
+   with the Business Context and sent to the AI on Generate. */
+function initAddlInstructions(){
+  const ta = document.getElementById("addlInstructions");
+  if(!ta) return;
+  const saved = lsGet(LS_ADDL_INSTR, null);
+  if(saved !== null && saved !== undefined) ta.value = saved;
+  ta.addEventListener("input", () => lsSet(LS_ADDL_INSTR, ta.value));
+}
+
 function bizCtxState(state){
   const el = document.getElementById("bizCtxState");
   if(!el) return;
@@ -208,6 +219,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadGeneratedCols();   // lock+check columns already mapped
   seedStrategyFromSettings();  // apply the Settings "Default Mapping Strategy" (user can still change it)
   initBizContext();      // restore a saved Business Context (falls back to the default)
+  initAddlInstructions();  // restore the top-of-form Additional Instructions box
   initSystemPrompt();    // load the editable AI system prompt (default from backend)
   buildSourceOptions();
   buildTargetSummary();
@@ -535,7 +547,12 @@ async function generateMappings(){
     return {name: e.name, table: e.table, fields: fields, totalFields: (e.fields||[]).length};
   });
   const commonSource = {connection: src.connection, schema: src.schema, tables: src.tables};
-  const businessContext = document.getElementById("bizContext").value;
+  const bizCtx = document.getElementById("bizContext").value;
+  const addl = ((document.getElementById("addlInstructions") || {}).value || "").trim();
+  // Additional Instructions (top of form) ride on top of the Business Context.
+  const businessContext = addl
+    ? (bizCtx + "\n\nADDITIONAL INSTRUCTIONS (this run):\n" + addl)
+    : bizCtx;
   const strategy = document.getElementById("mappingStrategy").value;
   // Send the edited system prompt only when it differs from the current default, so an
   // untouched box lets the backend interpolate the chosen strategy itself.

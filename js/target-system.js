@@ -51,11 +51,29 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(selAllBtn) selAllBtn.addEventListener("click", toggleSelectAllTables);
   const clearAiBtn = document.getElementById("clearAiFieldsBtn");
   if(clearAiBtn) clearAiBtn.addEventListener("click", clearAiFields);
+  const hidePanel = document.getElementById("tsHidePanelBtn");
+  if(hidePanel) hidePanel.addEventListener("click", () => toggleEntityPanel(false));
+  const showPanel = document.getElementById("tsShowPanelBtn");
+  if(showPanel) showPanel.addEventListener("click", () => toggleEntityPanel(true));
+  if(lsGet("aims_ts_panel_hidden", false)) toggleEntityPanel(false);   // restore preference
 });
+
+/* Collapse / expand the left Entities panel to give the field grid full width. */
+function toggleEntityPanel(show){
+  const panel = document.getElementById("tsEntityCol");
+  const fields = document.getElementById("tsFieldsCol");
+  const showBtn = document.getElementById("tsShowPanelBtn");
+  if(!panel || !fields) return;
+  panel.style.display = show ? "" : "none";
+  fields.className = show ? "col-lg-9" : "col-12";
+  if(showBtn) showBtn.style.display = show ? "none" : "";
+  try{ lsSet("aims_ts_panel_hidden", !show); }catch(e){}
+}
 
 // Which target columns had pk/fk/list/description AI/auto-populated -> highlighted for review.
 // Shape: { "tablelower::collower": {pk:1, fk:1, isListTable:1, description:1} }
 let activeAiFields = {};
+let activeUserFields = {};   // per-column attrs the USER edited (green cue) — { "table::col": {attr:1} }
 // Entity names ticked in the tree (for "AI fill selected tables").
 let targetSelected = new Set();
 
@@ -378,8 +396,9 @@ function renderActiveBrowser(){
 
   // AI-populated highlights (pk/fk/list/description filled from schema file + dictionary).
   activeAiFields = lsGet("aims_target_ai_fields", {}) || {};
+  activeUserFields = lsGet("aims_target_user_fields", {}) || {};
   const clearAiBtn = document.getElementById("clearAiFieldsBtn");
-  if(clearAiBtn) clearAiBtn.style.display = Object.keys(activeAiFields).length ? "" : "none";
+  if(clearAiBtn) clearAiBtn.style.display = (Object.keys(activeAiFields).length || Object.keys(activeUserFields).length) ? "" : "none";
 
   document.getElementById("schemaMeta").innerHTML =
     '<span class="badge-soft badge-high"><i class="bi bi-hdd-network"></i> ' + escapeHtml(meta.application || "Target") + '</span> ' +
@@ -549,6 +568,17 @@ function renderTargetFields(){
     body.innerHTML = '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
     return;
   }
+  // Availability check: a FK is "resolvable" only if its referenced table exists in
+  // THIS schema. Unresolved (entity.X), cross-table, or free-text refs -> shown red.
+  const _schemaEnts = ((getTargetSchema() || {}).entities) || [];
+  const _schemaNames = new Set(_schemaEnts.map(e => _normName(e.table || e.name)));
+  const _schemaBases = new Set(_schemaEnts.map(e => _baseName(e.table || e.name)));
+  const _fkAvailable = (ref) => {
+    const t = String(ref || "").trim().replace(/^entity\./i, "").split(".")[0].trim();
+    if(!t) return false;
+    return _schemaNames.has(_normName(t)) || _schemaBases.has(_baseName(t));
+  };
+
   // Read-only display; a pencil (first column) opens the Edit Column modal to change
   // any property (the TABLE name stays fixed). NEW/CHANGED badges come from the diff.
   let rows = fields.map(f => {
@@ -566,37 +596,145 @@ function renderTargetFields(){
     const fLen  = (v) => (v == null || v === "") ? "∅" : String(v);
     const fMand = (v) => v ? "Required" : "Optional";
     const fKey  = (v) => v ? "yes" : "no";
-    // AI-populated cells (blue cue) — which attrs were auto-filled for this column.
+    // Origin cue per attribute: GREEN if the user edited it, else BLUE if AI-filled,
+    // else the amber schema-diff highlight. User (green) always wins over AI (blue).
     const ai = activeAiFields[tl + "::" + String(f.name).toLowerCase()] || {};
-    const aiCls = (attr) => ai[attr] ? " cell-ai" : "";
-    const aiBadge = Object.keys(ai).length ? ' <span class="badge-soft badge-ai diff-badge" title="Populated from the schema file / data dictionary — review">AI</span>' : '';
-    return '<tr class="' + cls + (Object.keys(ai).length ? " is-ai" : "") + '" data-col="' + escapeHtml(f.name) + '">' +
+    const uf = activeUserFields[tl + "::" + String(f.name).toLowerCase()] || {};
+    const cellCls = (attr) => uf[attr] ? " cell-user" : (ai[attr] ? " cell-ai" : hl(attr));
+    const cellCls2 = (a, b) => (uf[a] || uf[b]) ? " cell-user" : ((ai[a] || ai[b]) ? " cell-ai" : (hl(a) || hl(b)));
+    const anyUser = Object.keys(uf).length, anyAi = Object.keys(ai).length;
+    const originBadge = anyUser ? ' <span class="badge-soft badge-user diff-badge" title="Updated by you">Edited</span>'
+                      : anyAi ? ' <span class="badge-soft badge-ai diff-badge" title="Populated from the schema file / data dictionary — review">AI</span>' : '';
+    return '<tr class="' + cls + (anyUser ? "" : (anyAi ? " is-ai" : "")) + '" data-col="' + escapeHtml(f.name) + '">' +
       '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
       '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
-      '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + aiBadge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
-      '<td class="' + hl("dataType").trim() + '">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +
-      '<td class="' + hl("length").trim() + '">' + (f.length ?? "-") + was("length", fLen) + '</td>' +
-      '<td class="' + hl("mandatory").trim() + '">' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + was("mandatory", fMand) + '</td>' +
-      '<td class="' + (hl("pk").trim() + aiCls("pk")).trim() + '">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : "") + was("pk", fKey) + '</td>' +
-      '<td class="' + ((hl("fk") || hl("fkReference")).trim() + aiCls("fk") + aiCls("fkReference")).trim() + '">' + (f.fk ? '<i class="bi bi-link-45deg text-primary" title="Foreign Key"></i>' + (f.fkReference ? ' <span class="text-xs mono">' + escapeHtml(f.fkReference) + '</span>' : "") : "") + was("fk", fKey) + was("fkReference", fType) + '</td>' +
-      '<td class="' + aiCls("isListTable").trim() + '">' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium" title="' + escapeHtml(_typelistTitle(f)) + '">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
-      '<td class="wrap' + aiCls("description") + '">' + escapeHtml(f.description || "") + '</td>' +
+      '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + originBadge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
+      '<td class="ts-edit' + cellCls("dataType") + '" data-tsfield="dataType" data-tscol="' + escapeHtml(f.name) + '" title="Click to edit type">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +
+      '<td class="ts-edit' + cellCls("length") + '" data-tsfield="length" data-tscol="' + escapeHtml(f.name) + '" title="Click to edit length">' + (f.length ?? "-") + was("length", fLen) + '</td>' +
+      '<td class="ts-edit' + cellCls("mandatory") + '" data-tsfield="mandatory" data-tscol="' + escapeHtml(f.name) + '" title="Click to change">' + (f.mandatory ? '<span class="badge-soft badge-low">Required</span>' : '<span class="badge-soft badge-gray">Optional</span>') + was("mandatory", fMand) + '</td>' +
+      '<td class="ts-edit' + cellCls("pk") + '" data-tsfield="pk" data-tscol="' + escapeHtml(f.name) + '" title="Click to toggle Primary Key">' + (f.pk ? '<i class="bi bi-key-fill text-warning" title="Primary Key"></i>' : '<span class="text-muted-2">-</span>') + was("pk", fKey) + '</td>' +
+      '<td class="ts-edit' + cellCls2("fk", "fkReference") + '" data-tsfield="fk" data-tscol="' + escapeHtml(f.name) + '" title="Click to set FK (table.column; blank = none)">' + (f.fk ? '<i class="bi bi-link-45deg text-primary"></i>' + (f.fkReference ? ' <span class="text-xs mono' + (_fkAvailable(f.fkReference) ? '' : ' fk-missing') + '">' + escapeHtml(f.fkReference) + '</span>' : "") : '<span class="text-muted-2">-</span>') + was("fk", fKey) + was("fkReference", fType) + '</td>' +
+      '<td class="' + cellCls("isListTable").trim() + '">' + (f.isListTable || activeEntity.isListTable ? '<span class="badge-soft badge-medium" title="' + escapeHtml(_typelistTitle(f)) + '">List</span>' : '<span class="text-muted-2">-</span>') + '</td>' +
+      '<td class="wrap' + cellCls("description") + '">' + escapeHtml(f.description || "") + '</td>' +
       '<td>' + escapeHtml(f.businessTerm || "-") + '</td>' +
-      '<td class="wrap' + aiCls("accepted") + '">' + escapeHtml(f.accepted || "-") + '</td>' +
+      '<td class="wrap' + cellCls("accepted") + '">' + escapeHtml(f.accepted || "-") + '</td>' +
       '<td>' + escapeHtml(f.default ?? "-") + '</td>' +
     '</tr>';
   }).join("");
   // Ghost rows for columns removed since the last extract.
   rows += removedCols.map(c => ghostFieldRow(activeEntity.table || activeEntity.name, c)).join("");
   body.innerHTML = rows;
-  // Wire the pencil buttons once (event delegation).
+  // Wire the pencil + inline editors once (event delegation).
   if(!body._editWired){
     body.addEventListener("click", (e) => {
       const btn = e.target.closest(".ec-edit");
-      if(btn) openEditColModal(btn.dataset.edit);
+      if(btn){ openEditColModal(btn.dataset.edit); return; }
+      const cell = e.target.closest("td.ts-edit");
+      if(cell && !cell.querySelector("input,select")) tsMakeCellEditable(cell);
     });
     body._editWired = true;
   }
+}
+
+/* Inline edit for Type / Length / Mandatory / PK / FK in the field grid. Builds the
+   right editor in-cell, commits a partial patch, and marks the cell as user-edited. */
+function tsMakeCellEditable(cell){
+  const fieldAttr = cell.dataset.tsfield;
+  const colName = cell.dataset.tscol;
+  const f = (activeEntity.fields || []).find(x => x.name === colName);
+  if(!f) return;
+
+  const done = (patch) => tsInlineCommit(colName, patch);
+  const cancel = () => renderTargetFields();
+
+  if(fieldAttr === "dataType"){
+    const sel = document.createElement("select"); sel.className = "form-select form-select-sm";
+    sel.innerHTML = AC_TYPES.map(t => '<option ' + (t === (f.dataType || "").toLowerCase() ? "selected" : "") + '>' + t + '</option>').join("");
+    cell.innerHTML = ""; cell.appendChild(sel); sel.focus();
+    sel.addEventListener("change", () => {
+      const type = sel.value, patch = {dataType: type};
+      if(AC_LENGTH_TYPES.indexOf(type) === -1) patch.length = null;   // non-length types drop length
+      done(patch);
+    });
+    sel.addEventListener("blur", cancel);
+  } else if(fieldAttr === "length"){
+    const inp = document.createElement("input"); inp.type = "text"; inp.inputMode = "numeric";
+    inp.maxLength = 9; inp.className = "form-control form-control-sm"; inp.style.minWidth = "72px";
+    inp.value = (f.length != null ? f.length : "");
+    cell.innerHTML = ""; cell.appendChild(inp); inp.focus();
+    // digits only
+    inp.addEventListener("input", () => { inp.value = inp.value.replace(/[^0-9]/g, ""); });
+    inp.addEventListener("blur", () => { const v = inp.value.replace(/[^0-9]/g, ""); done({length: v ? parseInt(v, 10) : null}); });
+    inp.addEventListener("keydown", (e) => { if(e.key === "Enter") inp.blur(); if(e.key === "Escape") cancel(); });
+  } else if(fieldAttr === "mandatory"){
+    const sel = document.createElement("select"); sel.className = "form-select form-select-sm";
+    sel.innerHTML = '<option value="true"' + (f.mandatory ? " selected" : "") + '>Required</option>' +
+                    '<option value="false"' + (!f.mandatory ? " selected" : "") + '>Optional</option>';
+    cell.innerHTML = ""; cell.appendChild(sel); sel.focus();
+    sel.addEventListener("change", () => done({mandatory: sel.value === "true"}));
+    sel.addEventListener("blur", cancel);
+  } else if(fieldAttr === "pk"){
+    const sel = document.createElement("select"); sel.className = "form-select form-select-sm";
+    sel.innerHTML = '<option value="true"' + (f.pk ? " selected" : "") + '>PK</option>' +
+                    '<option value="false"' + (!f.pk ? " selected" : "") + '>—</option>';
+    cell.innerHTML = ""; cell.appendChild(sel); sel.focus();
+    sel.addEventListener("change", () => done({pk: sel.value === "true"}));
+    sel.addEventListener("blur", cancel);
+  } else if(fieldAttr === "fk"){
+    const inp = document.createElement("input"); inp.type = "text"; inp.className = "form-control form-control-sm mono";
+    inp.placeholder = "table.column (blank = no FK)"; inp.value = f.fkReference || "";
+    inp.setAttribute("list", _ensureFkRefDatalist());   // table / table.column suggestions
+    inp.setAttribute("autocomplete", "off");
+    cell.innerHTML = ""; cell.appendChild(inp); inp.focus();
+    inp.addEventListener("blur", () => { const v = inp.value.trim(); done({fk: !!v, fkReference: v}); });
+    inp.addEventListener("keydown", (e) => { if(e.key === "Enter") inp.blur(); if(e.key === "Escape") cancel(); });
+  }
+}
+
+/* Build (once per edit) a datalist of FK suggestions from the active target schema:
+   each table, its table.<key>, and every table.column. Returns the datalist id. */
+function _ensureFkRefDatalist(){
+  let dl = document.getElementById("tsFkRefList");
+  if(!dl){ dl = document.createElement("datalist"); dl.id = "tsFkRefList"; document.body.appendChild(dl); }
+  const meta = getTargetSchema() || {};
+  const opts = [];
+  (meta.entities || []).forEach(e => {
+    const t = e.table || e.name; if(!t) return;
+    const fields = e.fields || [];
+    const key = (fields.find(f => (f.name || "").toLowerCase() === "publicid") || fields.find(f => f.pk) ||
+                 fields.find(f => (f.name || "").toLowerCase() === "id") || {}).name;
+    opts.push(t);                          // bare table name
+    if(key) opts.push(t + "." + key);      // recommended FK target (table.key)
+    fields.forEach(fl => opts.push(t + "." + fl.name));   // any column
+  });
+  const seen = {}, uniq = [];
+  opts.forEach(o => { if(!seen[o]){ seen[o] = 1; uniq.push(o); } });
+  dl.innerHTML = uniq.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
+  return "tsFkRefList";
+}
+
+/* Persist a single inline field change, mark it as user-edited (green), keep scroll. */
+function tsInlineCommit(colName, patch){
+  const field = (activeEntity.fields || []).find(f => f.name === colName);
+  if(!field) return;
+  const oldSnap = Object.assign({}, field);
+  const norm = (v) => (v == null ? "" : (typeof v === "boolean" ? (v ? "1" : "0") : String(v)));
+  // No-op if nothing actually changed.
+  if(Object.keys(patch).every(a => norm(patch[a]) === norm(oldSnap[a]))){ renderTargetFields(); return; }
+  const res = persistFieldEdit(colName, patch);
+  if(!res.ok){ showNotification(res.error || "Could not save the change.", "danger"); return; }
+  const ekey = (activeEntity.name || activeEntity.table || "").toLowerCase();
+  const key = ekey + "::" + String(colName).toLowerCase();
+  const uf = lsGet("aims_target_user_fields", {}) || {};
+  const af = lsGet("aims_target_ai_fields", {}) || {};
+  const entry = uf[key] || {};
+  Object.keys(patch).forEach(a => { if(norm(patch[a]) !== norm(oldSnap[a])){ entry[a] = 1; if(af[key]) delete af[key][a]; } });
+  if(Object.keys(entry).length) uf[key] = entry;
+  if(af[key] && !Object.keys(af[key]).length) delete af[key];
+  lsSet("aims_target_user_fields", uf); lsSet("aims_target_ai_fields", af);
+  const y = window.scrollY;
+  renderActiveBrowser(); selectEntity(activeEntity.name); window.scrollTo(0, y);
+  flashRow(colName, {scroll:false});
 }
 
 /* Map of {attr -> {attr, from, to}} for a modified column, to highlight the exact cells. */
@@ -805,6 +943,112 @@ async function _matchTables(targetsSent, candidates){
   return by;
 }
 
+/* Resolve abstract Guidewire FK references (fkReference = "entity.<Name>", e.g.
+   entity.User / entity.Claim) to the REAL target table in the loaded schema.
+   Deterministic name match first (User -> cs_user), AI fallback for the rest;
+   only a UNIQUE, high-confidence match is applied — fkReference is set to the table
+   NAME (option b). Uncertain / unmatched refs are left as the original entity.X.
+   Fills blanks/refs on the given targetEntities; candidates = ALL schema tables. */
+async function _resolveFkReferences(targetEntities, allEntities, aiFields){
+  const candidates = (allEntities || []).map(e => e.table || e.name).filter(Boolean);
+  if(!candidates.length) return 0;
+  const baseIdx = {};
+  candidates.forEach(c => { const b = _baseName(c); (baseIdx[b] = baseIdx[b] || []).push(c); });
+
+  // Referenced-table -> its key column (prefer publicid, then the PK, then id) so a
+  // resolved FK reads as "cs_claim.publicid".
+  const entByName = {};
+  (allEntities || []).forEach(e => { const nm = e.table || e.name; if(nm) entByName[nm.toLowerCase()] = e; });
+  const _keyColOf = (tableName) => {
+    const e = entByName[String(tableName).toLowerCase()];
+    const fields = (e && e.fields) || [];
+    const byName = (n) => (fields.find(f => (f.name || "").toLowerCase() === n) || {}).name;
+    return byName("publicid") || (fields.find(f => f.pk) || {}).name || byName("id") || null;
+  };
+
+  const refRe = /^\s*entity\.(.+?)\s*$/i;
+  const fieldRefs = [];      // {ekey, f, refName}
+  const need = new Set();
+  (targetEntities || []).forEach(e => {
+    const ekey = (e.name || e.table || "").toLowerCase();
+    (e.fields || []).forEach(f => {
+      const m = refRe.exec(f.fkReference || "");
+      if(m){ const rn = m[1].trim(); if(rn){ fieldRefs.push({ekey, f, rn}); need.add(rn); } }
+    });
+  });
+  if(!fieldRefs.length) return 0;
+
+  const resolved = {};       // refName(lower) -> target table name
+  const needAi = [];
+  need.forEach(rn => {
+    const exact = candidates.find(c => _normName(c) === _normName(rn));
+    if(exact){ resolved[rn.toLowerCase()] = exact; return; }
+    const cand = baseIdx[_baseName(rn)];
+    if(cand && cand.length === 1){ resolved[rn.toLowerCase()] = cand[0]; return; }
+    needAi.push(rn);
+  });
+  if(needAi.length){
+    try{
+      const ai = await _matchTables(needAi, candidates);   // {refLower -> {match, confidence}}
+      Object.keys(ai).forEach(k => {
+        const m = ai[k];
+        if(m && m.match && m.confidence >= AI_MATCH_MIN_CONF && resolved[k] === undefined) resolved[k] = m.match;
+      });
+    }catch(e){ /* AI optional — deterministic matches still apply */ }
+  }
+
+  let filled = 0;
+  fieldRefs.forEach(({ekey, f, rn}) => {
+    const t = resolved[rn.toLowerCase()];
+    if(!t) return;                                  // unresolved -> leave entity.X as-is
+    const kc = _keyColOf(t);
+    f.fkReference = kc ? (t + "." + kc) : t;        // e.g. cs_claim.publicid (table.column)
+    (aiFields[ekey + "::" + String(f.name).toLowerCase()] = aiFields[ekey + "::" + String(f.name).toLowerCase()] || {}).fkReference = 1;
+    filled++;
+  });
+  return filled;
+}
+
+/* Infer FKs the Product Schema didn't declare, from the column-naming convention:
+   a "<stem>id" column whose stem UNIQUELY matches a target table becomes an FK to
+   that table's key (claimcontactid -> cs_claimcontact.publicid, claimid -> cs_claim.publicid).
+   Only fills columns that have NO FK yet; unique matches only; never self-references. */
+function _inferFkByConvention(targetEntities, allEntities, aiFields){
+  const candidates = (allEntities || []).map(e => e.table || e.name).filter(Boolean);
+  if(!candidates.length) return 0;
+  const baseIdx = {}, normIdx = {}, entByName = {};
+  candidates.forEach(c => { const b = _baseName(c); (baseIdx[b] = baseIdx[b] || []).push(c); normIdx[_normName(c)] = c; });
+  (allEntities || []).forEach(e => { const nm = e.table || e.name; if(nm) entByName[nm.toLowerCase()] = e; });
+  const keyColOf = (t) => {
+    const fields = (entByName[String(t).toLowerCase()] || {}).fields || [];
+    const byName = (n) => (fields.find(f => (f.name || "").toLowerCase() === n) || {}).name;
+    return byName("publicid") || (fields.find(f => f.pk) || {}).name || byName("id") || null;
+  };
+  let filled = 0;
+  (targetEntities || []).forEach(e => {
+    const ekey = (e.name || e.table || "").toLowerCase();
+    const selfNorm = _normName(e.table || e.name);
+    (e.fields || []).forEach(f => {
+      const low = (f.name || "").toLowerCase();
+      if(f.fk || (f.fkReference || "").trim()) return;    // already an FK
+      if(!/id$/.test(low) || low === "id" || low === "publicid") return;
+      const stem = (f.name || "").slice(0, -2);           // drop trailing "id"
+      if(stem.length < 3) return;
+      let t = normIdx[_normName(stem)];
+      if(!t){ const cand = baseIdx[_baseName(stem)]; if(cand && cand.length === 1) t = cand[0]; }
+      if(!t || _normName(t) === selfNorm) return;         // no unique match / self-ref
+      const kc = keyColOf(t);
+      f.fk = true;
+      f.fkReference = kc ? (t + "." + kc) : t;
+      const k = ekey + "::" + low;
+      (aiFields[k] = aiFields[k] || {}).fk = 1;
+      aiFields[k].fkReference = 1;
+      filled++;
+    });
+  });
+  return filled;
+}
+
 /* Core: for the given target entities, fill keys/list from the schema file and
    descriptions VERBATIM from the data dictionary — each matched to the target table
    by MEANING (high confidence only). Fills blanks only; highlights for review. */
@@ -856,6 +1100,13 @@ async function inferFromDictionary(targetEntities, btn, btnLabel){
       if(hit) matched++; else skipped.push(e.name);
     });
 
+    // Resolve abstract Guidewire FK refs (entity.User -> cs_user) to the real target
+    // table, matched within the loaded schema. Fills the FK reference with the table name.
+    filled += await _resolveFkReferences(targetEntities, entities, aiFields);
+    // Infer FKs the schema didn't declare, by naming convention: a "<stem>id" column
+    // whose stem uniquely matches a target table (claimcontactid -> cs_claimcontact).
+    filled += _inferFkByConvention(targetEntities, entities, aiFields);
+
     upsertTargetConnection(conn); setActiveTarget(conn.id); lsSet("aims_target_ai_fields", aiFields);
     renderActiveBrowser();
     const msg = "Matched " + matched + " table" + (matched === 1 ? "" : "s") + ", filled " + filled + " value(s)" +
@@ -884,9 +1135,10 @@ function _removed_runInferOpenTable(){
 
 function clearAiFields(){
   lsRemove("aims_target_ai_fields");
-  activeAiFields = {};
+  lsRemove("aims_target_user_fields");
+  activeAiFields = {}; activeUserFields = {};
   renderActiveBrowser();
-  showNotification("AI highlights cleared.", "primary", 1400);
+  showNotification("Highlights cleared.", "primary", 1400);
 }
 
 /* ---- Edit Column modal (all properties; table name stays read-only) ---- */
@@ -931,6 +1183,34 @@ function openEditColModal(name){
   setTimeout(() => document.getElementById("ecName").focus(), 200);
 }
 
+/* Record which attributes the user changed on a column (vs the pre-edit snapshot),
+   so those cells get the green "user-updated" cue. A user edit also clears the blue
+   AI cue for that attribute (the user's value now wins). Persisted per client. */
+function _recordUserEdits(oldName, newName, patch, oldSnap){
+  const ekey = (activeEntity.name || activeEntity.table || "").toLowerCase();
+  const key = ekey + "::" + String(newName).toLowerCase();
+  const attrs = ["name", "dataType", "length", "mandatory", "pk", "fk", "fkReference",
+                 "isListTable", "description", "businessTerm", "accepted", "default"];
+  const norm = (v) => (v == null ? "" : (typeof v === "boolean" ? (v ? "1" : "0") : String(v)));
+  const uf = lsGet("aims_target_user_fields", {}) || {};
+  const af = lsGet("aims_target_ai_fields", {}) || {};
+  if(oldName && String(oldName).toLowerCase() !== String(newName).toLowerCase()){
+    const ok = ekey + "::" + String(oldName).toLowerCase();   // column renamed -> migrate markers
+    delete uf[ok]; delete af[ok];
+  }
+  const entry = uf[key] || {};
+  attrs.forEach(a => {
+    if(norm(patch[a]) !== norm(oldSnap[a])){
+      entry[a] = 1;
+      if(af[key]) delete af[key][a];
+    }
+  });
+  if(Object.keys(entry).length) uf[key] = entry;
+  if(af[key] && !Object.keys(af[key]).length) delete af[key];
+  lsSet("aims_target_user_fields", uf);
+  lsSet("aims_target_ai_fields", af);
+}
+
 function ecSave(){
   ecErr(null);
   const name = (document.getElementById("ecName").value || "").trim();
@@ -962,8 +1242,10 @@ function ecSave(){
     accepted: (document.getElementById("ecAcc").value || "").trim() || null,
     default: (document.getElementById("ecDef").value || "").trim() || null
   };
+  const _oldSnap = Object.assign({}, (activeEntity.fields || []).find(f => f.name === ecEditing) || {});
   const res = persistFieldEdit(ecEditing, patch);
   if(!res.ok){ ecErr(res.error || "Could not save the column."); return; }
+  _recordUserEdits(ecEditing, name, patch, _oldSnap);   // green cue on the cells the user changed
   const y = window.scrollY;
   if(ecModal) ecModal.hide();
   renderActiveBrowser();

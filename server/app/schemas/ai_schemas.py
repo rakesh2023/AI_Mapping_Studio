@@ -359,6 +359,34 @@ COLUMNS_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Data Validation — per-column check suggestion (validation_ai_service.suggest_checks).
+# For each supplied column the model decides which data-quality checks apply:
+# pk (uniqueness key), mandatory (not-null), typelist (coded-domain membership), fk.
+VALIDATION_SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string"},
+                    "name": {"type": "string"},
+                    "pk": {"type": "boolean"},
+                    "mandatory": {"type": "boolean"},
+                    "typelist": {"type": "boolean"},
+                    "fk": {"type": "boolean"},
+                },
+                "required": ["table", "name", "pk", "mandatory", "typelist", "fk"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["columns"],
+    "additionalProperties": False,
+}
+
+
 # Know Your Data — insurance domain classifier (kyd_domain_service).
 DOMAIN_CHECK_SCHEMA = {
     "type": "object",

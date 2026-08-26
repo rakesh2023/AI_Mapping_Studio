@@ -55,3 +55,13 @@ def profile_table():
     cfg = request.get_json(force=True) or {}
     payload, status = db_service.profile_table(cfg)
     return jsonify(payload), status
+
+
+@bp.route("/validate", methods=["POST"])
+def validate_table():
+    blocked = _throttle()
+    if blocked:
+        return blocked
+    cfg = request.get_json(force=True) or {}
+    payload, status = db_service.validate_table(cfg)
+    return jsonify(payload), status

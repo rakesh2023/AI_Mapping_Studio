@@ -285,3 +285,154 @@ def profile_table(cfg: Dict[str, Any]) -> Result:
         return {"ok": True, "schema": schema, "table": table, "rowCount": row_count, "columns": columns}, 200
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}, 400
+
+
+# Cap on the number of allowed values in a typelist NOT IN (...) check — SQL Server's
+# hard parameter ceiling is ~2100; stay well under it and skip oversized domains.
+VALIDATE_MAX_DOMAIN = 1000
+
+
+def validate_table(cfg: Dict[str, Any]) -> Result:
+    """Data-quality validation of ONE target table live. Body: connection cfg +
+    {schema, table, keyColumns[], mandatoryColumns[], typelistChecks[], fkChecks[], sampleLimit}.
+
+    Runs, each guarded independently so one failing check never aborts the rest:
+      - duplicates   : GROUP BY keyColumns HAVING COUNT(*) > 1
+      - mandatory    : NULL count per column
+      - typelist     : values NOT IN the allowed domain
+      - foreignKeys  : orphan FK values (anti-join to the parent table)
+    Returns {ok, schema, table, rowCount, checks:[...]} where each check carries a
+    type, the columns involved, an offending count, and a few samples.
+    """
+    schema = cfg.get("schema") or "dbo"
+    table = cfg.get("table")
+    sample_limit = int(cfg.get("sampleLimit", 10))
+    if not table:
+        return {"ok": False, "error": "No table specified."}, 400
+
+    key_columns = [c for c in (cfg.get("keyColumns") or []) if c]
+    mandatory_columns = [c for c in (cfg.get("mandatoryColumns") or []) if c]
+    typelist_checks = cfg.get("typelistChecks") or []
+    fk_checks = cfg.get("fkChecks") or []
+
+    try:
+        conn = open_connection(cfg)
+        cur = conn.cursor()
+        fq = f"{_quote(schema)}.{_quote(table)}"
+
+        # total rows
+        cur.execute(f"SELECT COUNT(*) FROM {fq}")
+        row_count = int(cur.fetchone()[0])
+
+        checks: List[Dict[str, Any]] = []
+
+        # --- duplicates on the uniqueness key ---
+        if key_columns:
+            try:
+                cols_sql = ", ".join(_quote(c) for c in key_columns)
+                cur.execute(
+                    f"SELECT {cols_sql}, COUNT(*) AS c FROM {fq} "
+                    f"GROUP BY {cols_sql} HAVING COUNT(*) > 1 ORDER BY c DESC"
+                )
+                rows = cur.fetchall()
+                dup_groups = len(rows)
+                dup_rows = sum(int(r[-1]) for r in rows)
+                samples = []
+                for r in rows[:sample_limit]:
+                    key_vals = ", ".join("-" if v is None else str(v)[:60] for v in r[:-1])
+                    samples.append({"key": key_vals, "count": int(r[-1])})
+                checks.append({
+                    "type": "duplicate",
+                    "columns": key_columns,
+                    "groupCount": dup_groups,
+                    "count": dup_rows,           # total offending rows
+                    "samples": samples,
+                })
+            except Exception as exc:  # noqa: BLE001 - keep running the other checks
+                checks.append({"type": "duplicate", "columns": key_columns, "error": str(exc)})
+
+        # --- mandatory (not-null) ---
+        for col in mandatory_columns:
+            try:
+                qc = _quote(col)
+                cur.execute(f"SELECT COUNT(*) - COUNT({qc}) FROM {fq}")
+                nulls = int(cur.fetchone()[0] or 0)
+                if nulls > 0:
+                    checks.append({"type": "mandatory", "columns": [col], "count": nulls})
+            except Exception as exc:  # noqa: BLE001
+                checks.append({"type": "mandatory", "columns": [col], "error": str(exc)})
+
+        # --- typelist membership ---
+        for chk in typelist_checks:
+            col = chk.get("column")
+            allowed = [v for v in (chk.get("allowedValues") or []) if v is not None]
+            if not col or not allowed or len(allowed) > VALIDATE_MAX_DOMAIN:
+                continue
+            try:
+                qc = _quote(col)
+                placeholders = ", ".join("?" for _ in allowed)
+                params = [str(v) for v in allowed]
+                # total offending rows
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {fq} WHERE {qc} IS NOT NULL AND {qc} NOT IN ({placeholders})",
+                    *params,
+                )
+                bad = int(cur.fetchone()[0] or 0)
+                samples = []
+                if bad > 0:
+                    cur.execute(
+                        f"SELECT TOP {sample_limit} {qc} AS v, COUNT(*) AS c FROM {fq} "
+                        f"WHERE {qc} IS NOT NULL AND {qc} NOT IN ({placeholders}) "
+                        f"GROUP BY {qc} ORDER BY c DESC",
+                        *params,
+                    )
+                    for v, c in cur.fetchall():
+                        samples.append({"value": str(v)[:60], "count": int(c)})
+                if bad > 0:
+                    checks.append({"type": "typelist", "columns": [col], "count": bad, "samples": samples})
+            except Exception as exc:  # noqa: BLE001
+                checks.append({"type": "typelist", "columns": [col], "error": str(exc)})
+
+        # --- foreign keys (orphan anti-join) ---
+        for chk in fk_checks:
+            col = chk.get("column")
+            parent_table = chk.get("parentTable")
+            parent_col = chk.get("parentColumn")
+            parent_schema = chk.get("parentSchema") or schema
+            if not col or not parent_table or not parent_col:
+                continue
+            try:
+                qc = _quote(col)
+                pfq = f"{_quote(parent_schema)}.{_quote(parent_table)}"
+                qpc = _quote(parent_col)
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {fq} c "
+                    f"LEFT JOIN {pfq} p ON c.{qc} = p.{qpc} "
+                    f"WHERE c.{qc} IS NOT NULL AND p.{qpc} IS NULL"
+                )
+                orphans = int(cur.fetchone()[0] or 0)
+                samples = []
+                if orphans > 0:
+                    cur.execute(
+                        f"SELECT TOP {sample_limit} c.{qc} AS v, COUNT(*) AS n FROM {fq} c "
+                        f"LEFT JOIN {pfq} p ON c.{qc} = p.{qpc} "
+                        f"WHERE c.{qc} IS NOT NULL AND p.{qpc} IS NULL "
+                        f"GROUP BY c.{qc} ORDER BY n DESC"
+                    )
+                    for v, n in cur.fetchall():
+                        samples.append({"value": str(v)[:60], "count": int(n)})
+                if orphans > 0:
+                    checks.append({
+                        "type": "foreignKey",
+                        "columns": [col],
+                        "reference": f"{parent_table}.{parent_col}",
+                        "count": orphans,
+                        "samples": samples,
+                    })
+            except Exception as exc:  # noqa: BLE001
+                checks.append({"type": "foreignKey", "columns": [col], "error": str(exc)})
+
+        conn.close()
+        return {"ok": True, "schema": schema, "table": table, "rowCount": row_count, "checks": checks}, 200
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}, 400

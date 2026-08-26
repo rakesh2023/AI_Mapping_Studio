@@ -327,7 +327,9 @@ function buildHeader(){
   });
   row.innerHTML = ths;
   document.getElementById("selAllRows").addEventListener("change", (e) => {
-    getPageRows().map(r => r.id).forEach(id => e.target.checked ? state.selected.add(id) : state.selected.delete(id));
+    // Select/clear ALL rows in the current table's filtered set (every page), not
+    // just the visible page.
+    (state.filtered || []).map(r => r.id).forEach(id => e.target.checked ? state.selected.add(id) : state.selected.delete(id));
     renderTable();
   });
   row.querySelectorAll("th[data-key]").forEach(th => th.addEventListener("click", () => sortMappings(th.dataset.key)));
@@ -443,8 +445,11 @@ function getPageRows(){
   return state.filtered.slice(start, start + state.pageSize);
 }
 
+let _wsOverrides = {};   // {mappingId: {field: value}} — user edits, for the green cue
+
 function renderTable(){
   const body = document.getElementById("mappingBody");
+  _wsOverrides = (typeof getMappingOverrides === "function") ? (getMappingOverrides() || {}) : {};
   const rows = getPageRows();
   if(!rows.length){
     body.innerHTML = '<tr><td colspan="' + (COLUMNS.length+1) + '"><div class="empty-state"><i class="bi bi-inbox"></i>' +
@@ -473,6 +478,11 @@ function rowStatusClass(m){
 
 function rowHTML(m){
   const selected = state.selected.has(m.id) ? "row-selected" : "";
+  // Origin cue on the mapping-output cells: GREEN TEXT only where the user edited that
+  // field (present in the override). No blue AI cue here — everything is AI-generated,
+  // so blue-on-every-cell is just noise.
+  const ovf = _wsOverrides[m.id] || {};
+  const oc = (field) => Object.prototype.hasOwnProperty.call(ovf, field) ? " cell-user-text" : "";
   return '<tr class="' + (rowStatusClass(m) + ' ' + selected).trim() + '" data-id="' + m.id + '">' +
     '<td class="freeze fz0"><div class="d-flex align-items-center gap-1">' +
       '<input type="checkbox" class="row-check" data-id="' + m.id + '" ' + (state.selected.has(m.id)?"checked":"") + '>' +
@@ -481,15 +491,15 @@ function rowHTML(m){
     '<td class="freeze fz1 mono" data-col="id"><a href="#" class="row-open" data-id="' + m.id + '">' + m.id + '</a></td>' +
     '<td class="freeze fz2 mono" data-col="targetTable">' + (m.targetTable||"-") + '</td>' +
     '<td class="freeze fz3 editable-cell" data-col="targetColumn" data-field="targetColumn" data-id="' + m.id + '">' + m.targetColumn + '</td>' +
-    '<td class="mono editable-cell" data-col="sourceTable" data-field="sourceTable" data-id="' + m.id + '">' + (m.sourceTable||"-") + '</td>' +
-    '<td class="mono editable-cell" data-col="sourceColumn" data-field="sourceColumn" data-id="' + m.id + '">' + (m.sourceColumn||"-") + '</td>' +
+    '<td class="mono editable-cell' + oc("sourceTable") + '" data-col="sourceTable" data-field="sourceTable" data-id="' + m.id + '">' + (m.sourceTable||"-") + '</td>' +
+    '<td class="mono editable-cell' + oc("sourceColumn") + '" data-col="sourceColumn" data-field="sourceColumn" data-id="' + m.id + '">' + (m.sourceColumn||"-") + '</td>' +
     '<td class="mono" data-col="sampleSourceValue">' + escapeHtml(m.sampleSourceValue||"-") + '</td>' +
-    '<td data-col="mappingType"><span class="mapping-type-chip editable-cell" data-field="mappingType" data-id="' + m.id + '">' + m.mappingType + '</span></td>' +
-    '<td class="wrap editable-cell" data-col="transformationRule" data-field="transformationRule" data-id="' + m.id + '">' + escapeHtml(m.transformationRule||"None") + '</td>' +
-    '<td class="wrap editable-cell" data-col="businessRule" data-field="businessRule" data-id="' + m.id + '">' + escapeHtml(m.businessRule||"-") + '</td>' +
-    '<td class="editable-cell" data-col="defaultValue" data-field="defaultValue" data-id="' + m.id + '">' + escapeHtml(m.defaultValue||"-") + '</td>' +
-    '<td class="wrap editable-cell" data-col="lookupTable" data-field="lookupTable" data-id="' + m.id + '">' + escapeHtml(m.lookupTable||"-") + '</td>' +
-    '<td class="wrap editable-cell" data-col="nullHandling" data-field="nullHandling" data-id="' + m.id + '">' + escapeHtml(m.nullHandling||"-") + '</td>' +
+    '<td class="' + oc("mappingType").trim() + '" data-col="mappingType"><span class="mapping-type-chip editable-cell" data-field="mappingType" data-id="' + m.id + '">' + m.mappingType + '</span></td>' +
+    '<td class="wrap editable-cell' + oc("transformationRule") + '" data-col="transformationRule" data-field="transformationRule" data-id="' + m.id + '">' + escapeHtml(m.transformationRule||"None") + '</td>' +
+    '<td class="wrap editable-cell' + oc("businessRule") + '" data-col="businessRule" data-field="businessRule" data-id="' + m.id + '">' + escapeHtml(m.businessRule||"-") + '</td>' +
+    '<td class="editable-cell' + oc("defaultValue") + '" data-col="defaultValue" data-field="defaultValue" data-id="' + m.id + '">' + escapeHtml(m.defaultValue||"-") + '</td>' +
+    '<td class="wrap editable-cell' + oc("lookupTable") + '" data-col="lookupTable" data-field="lookupTable" data-id="' + m.id + '">' + escapeHtml(m.lookupTable||"-") + '</td>' +
+    '<td class="wrap editable-cell' + oc("nullHandling") + '" data-col="nullHandling" data-field="nullHandling" data-id="' + m.id + '">' + escapeHtml(m.nullHandling||"-") + '</td>' +
     '<td data-col="confidence">' + confidenceBar(m.confidence) + '</td>' +
     '<td data-col="aiExplanation"><button class="why-btn" data-why="' + m.id + '"><i class="bi bi-question-circle"></i> Why?</button></td>' +
     '<td data-col="validationStatus">' + (function(){ const vs = displayValidationStatus(m); return statusBadge(vs === "Passed" ? "Approved" : vs); })() + '</td>' +
@@ -856,6 +866,32 @@ async function regenerateMapping(id, silent, extraInstructions){
 }
 
 const SELECT_FIELDS = {mappingType: COLUMNS.find(c=>c.key==="mappingType").options};
+
+/* Build a datalist of source-schema suggestions for inline / modal editing.
+   sourceTable -> distinct tables; sourceColumn -> columns of the row's source table
+   (falls back to all columns). Uses knownSourceColumns() (live schema or the mappings). */
+function _ensureSourceDatalist(field, m){
+  const cols = (typeof knownSourceColumns === "function") ? knownSourceColumns() : [];
+  if(!cols.length) return "";
+  let values;
+  if(field === "sourceTable"){
+    // Offer bare table names AND table.column combos (picking a combo sets both).
+    const tables = Array.from(new Set(cols.map(c => c.table).filter(Boolean)));
+    const combos = Array.from(new Set(cols.filter(c => c.table && c.column).map(c => c.table + "." + c.column)));
+    values = tables.concat(combos);
+  } else {
+    // sourceColumn: STRICTLY the columns of this row's selected source table (no fallback).
+    const st = ((m && m.sourceTable) || "").toLowerCase();
+    values = st ? Array.from(new Set(cols.filter(c => (c.table || "").toLowerCase() === st).map(c => c.column).filter(Boolean))) : [];
+  }
+  if(!values.length) return "";
+  const id = field === "sourceTable" ? "wsSrcTableList" : "wsSrcColList";
+  let dl = document.getElementById(id);
+  if(!dl){ dl = document.createElement("datalist"); dl.id = id; document.body.appendChild(dl); }
+  dl.innerHTML = values.map(v => '<option value="' + escapeHtml(v) + '"></option>').join("");
+  return id;
+}
+
 function makeCellEditable(cell){
   if(cell.querySelector("input,select")) return;
   const id = cell.dataset.id, field = cell.dataset.field;
@@ -865,11 +901,44 @@ function makeCellEditable(cell){
   if(SELECT_FIELDS[field]){
     input = document.createElement("select");
     input.innerHTML = SELECT_FIELDS[field].map(o => '<option ' + (o===currentVal?"selected":"") + '>' + o + '</option>').join("");
-  } else { input = document.createElement("input"); input.value = currentVal; }
+  } else {
+    input = document.createElement("input"); input.value = currentVal;
+    if(field === "sourceTable" || field === "sourceColumn"){   // autocomplete from the source schema
+      const listId = _ensureSourceDatalist(field, m);
+      if(listId){ input.setAttribute("list", listId); input.setAttribute("autocomplete", "off"); }
+    }
+  }
   cell.innerHTML = ""; cell.appendChild(input); input.focus();
-  const commit = () => editMapping(id, field, input.value);
+  const commit = () => {
+    const v = input.value;
+    // Picking a "table.column" in the Source Table cell sets BOTH source table & column.
+    if(field === "sourceTable" && v.indexOf(".") !== -1){
+      const dot = v.indexOf(".");
+      editMappingFields(id, {sourceTable: v.slice(0, dot).trim(), sourceColumn: v.slice(dot + 1).trim()});
+    } else {
+      editMapping(id, field, v);
+    }
+  };
   input.addEventListener("blur", commit);
   input.addEventListener("keydown", (e) => { if(e.key === "Enter") input.blur(); });
+}
+
+/* Apply several field changes to one mapping at once (used when a "table.column" pick
+   sets both source table and column). Mirrors editMapping's override + history + render. */
+function editMappingFields(id, fieldValues){
+  const m = findMapping(id);
+  if(!m) return;
+  const changes = {reviewStatus:"Modified by User", updatedBy:currentUserName(), lastUpdated:new Date().toISOString()};
+  let any = false;
+  Object.keys(fieldValues).forEach(f => { if((m[f] || "") !== (fieldValues[f] || "")){ changes[f] = fieldValues[f]; any = true; } });
+  if(!any){ applyPipeline(); return; }
+  saveMappingOverride(id, changes);
+  addHistoryRecord(id, {changeType:"Modified", previousValue:(m.sourceTable||"") + "." + (m.sourceColumn||""),
+                        newValue:((fieldValues.sourceTable ?? m.sourceTable) || "") + "." + ((fieldValues.sourceColumn ?? m.sourceColumn) || ""),
+                        reason:"Source table/column set inline", user:currentUserName(), source:"User"});
+  Object.assign(m, changes);
+  showNotification(id + " updated - status set to Modified by User.", "primary");
+  applyPipeline();
 }
 function editMapping(id, field, newValue){
   const m = findMapping(id);
@@ -928,6 +997,16 @@ function injectEditMappingModal(){
     '</div></div></div></div>';
   document.body.insertAdjacentHTML("beforeend", html);
   document.getElementById("emSave").addEventListener("click", saveEditMappingModal);
+  // Picking a "table.column" suggestion in Source Table splits into table + column.
+  const stEl = document.getElementById("em_sourceTable");
+  if(stEl) stEl.addEventListener("change", () => {
+    const v = stEl.value, dot = v.indexOf(".");
+    if(dot !== -1){
+      stEl.value = v.slice(0, dot).trim();
+      const scEl = document.getElementById("em_sourceColumn");
+      if(scEl) scEl.value = v.slice(dot + 1).trim();
+    }
+  });
 }
 
 function openEditMappingModal(id){
@@ -938,6 +1017,13 @@ function openEditMappingModal(id){
   document.getElementById("emId").textContent = id;
   document.getElementById("emTarget").textContent = (m.targetTable || m.targetEntity || "") + "." + (m.targetColumn || "");
   EDIT_FIELDS.forEach(f => { const el = document.getElementById("em_" + f.key); if(el) el.value = m[f.key] || ""; });
+  // Source table / column autocomplete from the source schema.
+  [["sourceTable", "em_sourceTable"], ["sourceColumn", "em_sourceColumn"]].forEach(([fld, elId]) => {
+    const el = document.getElementById(elId);
+    if(!el) return;
+    const listId = _ensureSourceDatalist(fld, m);
+    if(listId){ el.setAttribute("list", listId); el.setAttribute("autocomplete", "off"); }
+  });
   if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("editMapModal")).show(); }
 }
 
@@ -945,6 +1031,14 @@ function saveEditMappingModal(){
   const id = _editingMappingId;
   const m = findMapping(id);
   if(!m) return;
+  // Defensive: if Source Table still holds "table.column", split it across both fields.
+  const stEl = document.getElementById("em_sourceTable");
+  const scEl = document.getElementById("em_sourceColumn");
+  if(stEl && stEl.value.indexOf(".") !== -1){
+    const v = stEl.value, dot = v.indexOf(".");
+    stEl.value = v.slice(0, dot).trim();
+    if(scEl) scEl.value = v.slice(dot + 1).trim();
+  }
   const changes = {}; const changed = [];
   EDIT_FIELDS.forEach(f => {
     const el = document.getElementById("em_" + f.key);

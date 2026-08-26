@@ -57,6 +57,9 @@ const SIDEBAR_SECTIONS = [
   {title:"Build", icon:"bi-hammer", items:[
     {label:"ETL Code (SQL)", icon:"bi-file-earmark-code", href:"etl-code.html"}
   ]},
+  {title:"Validate", icon:"bi-clipboard-check", items:[
+    {label:"Data Validation", icon:"bi-clipboard-check", href:"data-validation.html"}
+  ]},
   {title:"Deliver", icon:"bi-send", items:[
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
     {label:"Export", icon:"bi-download", href:"export.html"},
@@ -96,7 +99,8 @@ const LS_KEYS = {
   settings: "aims_settings",
   filters: "aims_filter_prefs",
   scope: "aims_mapping_scope",
-  history: "aims_mapping_history"
+  history: "aims_mapping_history",
+  dataValidationCfg: "aims_data_validation_cfg"   // device-local: remembered per-table validation selections
 };
 
 /* ---- Per-client data now lives server-side (multi-tenant), scoped by the
