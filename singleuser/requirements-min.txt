@@ -1,0 +1,14 @@
+# Base dependencies for the single-user package — the minimum to import & run the app + AI.
+#   Flask       -> web server + static serving (brings werkzeug)
+#   anthropic   -> Claude API client. Pinned <1 on purpose: some corporate PyPI mirrors
+#                  serve a patched 'anthropic 1.x' that uses an 'httpx2' fork, which is
+#                  INCOMPATIBLE with the app's standard httpx client code. <1 gets the
+#                  standard SDK (uses httpx) so setup + runtime both work.
+#   httpx       -> HTTP transport the anthropic SDK uses (+ the CA-bundle client for gateways)
+#   numpy       -> required at import time by the Know Your Data vector store / embedder
+# Optional features (Excel/PDF/Word, profiling, live SQL) are installed on demand from
+# the first-run setup wizard.
+Flask>=3.0
+anthropic>=0.40,<1
+httpx>=0.25,<1
+numpy>=1.24

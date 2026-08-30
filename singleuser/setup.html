@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Set up · AI Data Conversion Studio</title>
+<style>
+  :root{ --bg:#0f1115; --card:#1a1d24; --border:#2b2f3a; --text:#e7e9ee; --muted:#9aa1ad;
+         --accent:#e8602c; --accent2:#f2f2f2; --ok:#22a06b; --warn:#b45309; --bad:#dc2626; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+  .wrap{max-width:720px;margin:5vh auto;padding:0 18px;}
+  .brand{font-weight:700;font-size:1.35rem;letter-spacing:.2px;}
+  .brand small{display:block;color:var(--muted);font-weight:400;font-size:.8rem;margin-top:2px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:18px;}
+  h2{font-size:1.05rem;margin:0 0 4px;}
+  .hint{color:var(--muted);font-size:.85rem;margin:0 0 14px;}
+  label{display:block;font-size:.8rem;color:var(--muted);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.04em;}
+  input,select{width:100%;padding:10px 12px;background:#12151b;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95rem;}
+  input:focus,select:focus{outline:none;border-color:var(--accent);}
+  .row{display:flex;gap:12px;}.row>div{flex:1;}
+  button{cursor:pointer;border:none;border-radius:8px;padding:10px 16px;font-weight:600;font-size:.9rem;}
+  .btn{background:var(--accent);color:#fff;}
+  .btn:disabled{opacity:.55;cursor:not-allowed;}
+  .btn-soft{background:#23262f;color:var(--text);border:1px solid var(--border);}
+  .msg{margin-top:12px;font-size:.88rem;padding:10px 12px;border-radius:8px;display:none;}
+  .msg.show{display:block;}
+  .msg.ok{background:rgba(34,160,107,.14);color:#4ade80;border:1px solid rgba(34,160,107,.4);}
+  .msg.err{background:rgba(220,38,38,.14);color:#f87171;border:1px solid rgba(220,38,38,.4);white-space:pre-wrap;}
+  .req{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border);}
+  .req:first-child{border-top:none;}
+  .req .name{flex:1;}
+  .req .st{font-size:.8rem;padding:2px 9px;border-radius:20px;font-weight:600;}
+  .st.on{background:rgba(34,160,107,.16);color:#4ade80;} .st.off{background:rgba(180,83,9,.18);color:#fbbf24;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff5;border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px;}
+  @keyframes s{to{transform:rotate(360deg);}}
+  a{color:var(--accent);}
+  code{background:#12151b;border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:.85em;}
+  .log{margin-top:8px;max-height:150px;overflow:auto;background:#0b0d11;border:1px solid var(--border);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,Consolas,monospace;color:var(--muted);white-space:pre-wrap;display:none;}
+  .log.show{display:block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">AI Data Conversion Studio <small>First-run setup · single-user</small></div>
+
+  <div class="card">
+    <h2>1 · Connect Claude</h2>
+    <p class="hint">Runs entirely on your machine; credentials are stored locally in <code>singleuser/.env</code> and used only to call Claude from this app.</p>
+
+    <div style="display:flex;gap:18px;margin:6px 0 2px;">
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;color:var(--text);margin:0;cursor:pointer;">
+        <input type="radio" name="mode" value="public" checked> Personal API key</label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;color:var(--text);margin:0;cursor:pointer;">
+        <input type="radio" name="mode" value="gateway"> Corporate gateway</label>
+    </div>
+
+    <div id="publicFields">
+      <label for="key">Anthropic API key</label>
+      <input id="key" type="password" placeholder="sk-ant-..." autocomplete="off">
+      <div class="hint" style="margin-top:4px;">Create one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (needs billing/credit).</div>
+    </div>
+
+    <div id="gatewayFields" style="display:none;">
+      <label for="baseUrl">Gateway base URL</label>
+      <input id="baseUrl" type="text" placeholder="https://your-gateway.example.com" autocomplete="off">
+      <label for="authToken">Auth token</label>
+      <input id="authToken" type="password" placeholder="gateway token" autocomplete="off">
+      <label for="caBundle">CA bundle file <span style="text-transform:none;letter-spacing:0;">(optional — only if the gateway is behind a TLS-intercepting proxy)</span></label>
+      <input id="caBundle" type="text" placeholder="C:\path\to\ca-bundle.pem" autocomplete="off">
+    </div>
+
+    <label for="model">Model</label>
+    <input id="model" type="text" list="modelList" value="claude-sonnet-5" autocomplete="off">
+    <datalist id="modelList">
+      <option value="claude-sonnet-5">claude-sonnet-5 · public, balanced</option>
+      <option value="claude-opus-5">claude-opus-5 · public, most capable</option>
+      <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 · public, fastest</option>
+      <option value="bedrock.anthropic.claude-opus-4-8">bedrock.anthropic.claude-opus-4-8 · gateway</option>
+      <option value="bedrock.anthropic.claude-sonnet-4-5">bedrock.anthropic.claude-sonnet-4-5 · gateway</option>
+    </datalist>
+
+    <div style="margin-top:14px;"><button class="btn" id="saveKey">Validate &amp; save</button></div>
+    <div class="msg" id="keyMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Optional features</h2>
+    <p class="hint">The core app works without these. Install the ones you need — packages install into this app's local environment, then it restarts automatically.</p>
+    <div id="reqs"><div class="hint"><span class="spin"></span>Checking…</div></div>
+    <div class="req" id="odbcRow" style="display:none;">
+      <div class="name"><strong>SQL Server ODBC Driver</strong><div class="hint" id="odbcHint" style="margin:2px 0 0;"></div></div>
+      <span class="st off" id="odbcSt">not detected</span>
+    </div>
+    <div class="log" id="installLog"></div>
+  </div>
+
+  <div class="card" id="doneCard" style="display:none;">
+    <h2>✓ Ready</h2>
+    <p class="hint">Your key is saved. You can install optional features now or later (Settings → this page).</p>
+    <button class="btn" onclick="location.href='/'">Open the app →</button>
+  </div>
+</div>
+
+<script>
+function cookie(name){ const m=document.cookie.match('(^|;)\\s*'+name+'\\s*=\\s*([^;]+)'); return m?m.pop():''; }
+async function api(path, method, body){
+  const h={'Accept':'application/json'};
+  if(body){ h['Content-Type']='application/json'; }
+  const tok=cookie('csrf_token'); if(tok) h['X-CSRF-Token']=tok;   // match the app's CSRF guard
+  const r=await fetch(path,{method:method||'GET',headers:h,body:body?JSON.stringify(body):undefined});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  return {status:r.status, ...j};
+}
+function show(el,kind,text){ el.className='msg show '+kind; el.textContent=text; }
+
+function currentMode(){ const r=document.querySelector('input[name=mode]:checked'); return r?r.value:'public'; }
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => {
+  const gw = currentMode()==='gateway';
+  document.getElementById('gatewayFields').style.display = gw ? '' : 'none';
+  document.getElementById('publicFields').style.display = gw ? 'none' : '';
+}));
+document.getElementById('saveKey').addEventListener('click', async () => {
+  const btn=document.getElementById('saveKey'), msg=document.getElementById('keyMsg');
+  const model=document.getElementById('model').value.trim();
+  let payload;
+  if(currentMode()==='gateway'){
+    const baseUrl=document.getElementById('baseUrl').value.trim();
+    const authToken=document.getElementById('authToken').value.trim();
+    const caBundle=document.getElementById('caBundle').value.trim();
+    if(!baseUrl || !authToken){ show(msg,'err','Enter the gateway base URL and auth token.'); return; }
+    payload={baseUrl, authToken, caBundle, model};
+  } else {
+    const apiKey=document.getElementById('key').value.trim();
+    if(!apiKey){ show(msg,'err','Enter your Claude API key.'); return; }
+    payload={apiKey, model};
+  }
+  const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spin"></span>Validating…';
+  const res=await api('/api/setup/api-key','POST',payload);
+  btn.disabled=false; btn.innerHTML=orig;
+  if(res.ok){ show(msg,'ok','Validated and saved. You can open the app now.'); document.getElementById('doneCard').style.display=''; }
+  else{ show(msg,'err',res.error||'Could not validate.'); }
+});
+
+async function loadReqs(){
+  const s=await api('/api/setup/status');
+  if(!s.ok) return;
+  document.getElementById('model').value = s.model || 'claude-sonnet-5';
+  const caps=s.capabilities||{}, groups=s.groups||{}, box=document.getElementById('reqs');
+  box.innerHTML='';
+  Object.keys(groups).forEach(gk => {
+    const g=groups[gk], have=(g.caps||[]).every(c => caps[c]);
+    const row=document.createElement('div'); row.className='req';
+    row.innerHTML='<div class="name">'+g.label+'</div>';
+    const st=document.createElement('span');
+    if(have){ st.className='st on'; st.textContent='installed'; row.appendChild(st); }
+    else{
+      st.className='st off'; st.textContent='not installed'; row.appendChild(st);
+      const b=document.createElement('button'); b.className='btn-soft'; b.style.marginLeft='10px'; b.textContent='Install';
+      b.addEventListener('click', () => install(gk, b));
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+  });
+  const drivers=s.odbcDrivers||[]; const odbcRow=document.getElementById('odbcRow');
+  odbcRow.style.display='';
+  const sqlServer=drivers.filter(d => /SQL Server/i.test(d));
+  const st=document.getElementById('odbcSt'), hint=document.getElementById('odbcHint');
+  if(sqlServer.length){ st.className='st on'; st.textContent='installed'; hint.textContent=sqlServer.join(', '); }
+  else{ st.className='st off'; st.textContent='not detected';
+    hint.innerHTML='Needed only for <b>live SQL Server</b>. It is an OS driver (not a Python package) — install the free '
+      +'<a href="https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server" target="_blank" rel="noopener">Microsoft ODBC Driver 18 for SQL Server</a>, then reopen this page.'; }
+}
+async function install(group, btn){
+  const log=document.getElementById('installLog'); const orig=btn.textContent;
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span>Installing…';
+  log.className='log show'; log.textContent='Installing '+group+'…';
+  const res=await api('/api/setup/install','POST',{group});
+  log.textContent=(res.log||res.error||'').trim()||'(no output)';
+  if(res.ok && res.restartRequired){
+    log.textContent+='\n\nRestarting the app to load the new packages…';
+    await api('/api/setup/restart','POST',{});
+    setTimeout(()=>location.reload(), 3500);   // wait for the re-exec, then refresh
+  } else {
+    btn.disabled=false; btn.textContent=orig;
+  }
+}
+loadReqs();
+</script>
+</body>
+</html>
