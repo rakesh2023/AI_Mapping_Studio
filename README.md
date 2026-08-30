@@ -1,4 +1,4 @@
-# AI Mapping Studio
+# AI Data Conversion Studio
 
 A PwC‑themed, AI‑assisted **source‑to‑target data‑migration mapping** tool (insurance / Guidewire‑inspired). A static HTML/CSS/vanilla‑JS frontend is served by a single Python/Flask service that talks to live **Microsoft SQL Server** (via `pyodbc`) and **Anthropic Claude** (via a corporate gateway), and persists per‑tenant working data in **SQLite**.
 

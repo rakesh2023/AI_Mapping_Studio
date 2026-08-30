@@ -1,4 +1,4 @@
-"""Entry point for the AI Mapping Studio backend.
+"""Entry point for the AI Data Conversion Studio backend.
 
 Run from the server/ directory:
     python main.py

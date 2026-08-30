@@ -7,6 +7,7 @@ shapes and status codes are unchanged from the original monolith.
 
 Connections are short-lived (opened per request, never persisted).
 """
+import re
 from typing import Any, Dict, List, Tuple
 
 from app.core.capabilities import pyodbc
@@ -14,6 +15,36 @@ from app.services.connection_guard import GENERIC_CONNECTION_ERROR
 
 Payload = Dict[str, Any]
 Result = Tuple[Payload, int]
+
+# Custom-rule predicates are AI-authored T-SQL boolean expressions embedded in a WHERE clause.
+# They are reviewed by the user before saving, but we still refuse anything that could stack a
+# statement, comment-inject, or run DML/DDL — only a read-only boolean expression is allowed.
+_UNSAFE_PREDICATE = re.compile(
+    r"(;|--|/\*|\*/|\bxp_|\bsp_)|"
+    r"\b(insert|update|delete|drop|alter|create|truncate|merge|exec|execute|grant|revoke|"
+    r"backup|restore|shutdown|waitfor|openrowset|openquery|openxml|into)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_safe_predicate(pred: str) -> bool:
+    """True only for a bounded read-only boolean expression (no statement terminators,
+    comments, DML/DDL, or time-based/OPENROWSET tricks)."""
+    p = (pred or "").strip()
+    if not p or len(p) > 2000:
+        return False
+    return _UNSAFE_PREDICATE.search(p) is None
+
+
+def _is_safe_query(q: str) -> bool:
+    """True only for a single read-only SELECT/CTE query (no terminators, comments, DML/DDL,
+    SELECT INTO, etc.). Used for AI-authored, user-reviewed custom-rule queries."""
+    s = (q or "").strip()
+    if not s or len(s) > 4000:
+        return False
+    if _UNSAFE_PREDICATE.search(s) is not None:
+        return False
+    return re.match(r"^\s*(select|with)\b", s, re.IGNORECASE) is not None
 
 
 class ConnectionAttemptError(Exception):
@@ -314,9 +345,14 @@ def validate_table(cfg: Dict[str, Any]) -> Result:
     mandatory_columns = [c for c in (cfg.get("mandatoryColumns") or []) if c]
     typelist_checks = cfg.get("typelistChecks") or []
     fk_checks = cfg.get("fkChecks") or []
+    custom_checks = cfg.get("customChecks") or []
 
     try:
         conn = open_connection(cfg)
+        try:
+            conn.timeout = int(cfg.get("queryTimeout", 30))  # bound each query (seconds)
+        except Exception:  # noqa: BLE001
+            pass
         cur = conn.cursor()
         fq = f"{_quote(schema)}.{_quote(table)}"
 
@@ -432,7 +468,52 @@ def validate_table(cfg: Dict[str, Any]) -> Result:
             except Exception as exc:  # noqa: BLE001
                 checks.append({"type": "foreignKey", "columns": [col], "error": str(exc)})
 
+        # --- custom rules (AI-authored, user-reviewed boolean predicate) ---
+        for chk in custom_checks:
+            name = chk.get("name") or "Custom rule"
+            pred = (chk.get("predicate") or "").strip()
+            if not pred:
+                continue
+            if not _is_safe_predicate(pred):
+                checks.append({"type": "custom", "name": name, "columns": [],
+                               "error": "Rule rejected by the safety filter (must be a read-only boolean expression)."})
+                continue
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {fq} WHERE ({pred})")
+                bad = int(cur.fetchone()[0] or 0)
+                if bad > 0:
+                    checks.append({"type": "custom", "name": name, "columns": [], "count": bad})
+            except Exception as exc:  # noqa: BLE001
+                checks.append({"type": "custom", "name": name, "columns": [], "error": str(exc)})
+
         conn.close()
         return {"ok": True, "schema": schema, "table": table, "rowCount": row_count, "checks": checks}, 200
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}, 400
+
+
+def run_custom_query(cfg: Dict[str, Any]) -> Result:
+    """Count the offending rows for a custom-rule query (may span multiple tables).
+
+    Body: connection cfg + {query, queryTimeout?}. The query is an AI-authored, user-reviewed
+    SELECT that returns the violating rows; we count them read-only as COUNT(*) over a derived
+    table. Guarded by _is_safe_query.
+    """
+    query = (cfg.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "No query provided."}, 400
+    if not _is_safe_query(query):
+        return {"ok": False, "error": "Query rejected by the safety filter (a single read-only SELECT only)."}, 400
+    try:
+        conn = open_connection(cfg)
+        try:
+            conn.timeout = int(cfg.get("queryTimeout", 30))
+        except Exception:  # noqa: BLE001
+            pass
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM ({query}) AS _vr")
+        count = int(cur.fetchone()[0] or 0)
+        conn.close()
+        return {"ok": True, "count": count}, 200
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}, 400

@@ -2,7 +2,7 @@
 
 ## Overview
 
-AI Mapping Studio is a **single‑origin** app: one Flask process serves both the static frontend and the `/api/*` endpoints, so the browser calls the API with no CORS. The frontend holds no long‑lived secrets; all privileged work (DB access, LLM calls, persistence) happens server‑side.
+AI Data Conversion Studio is a **single‑origin** app: one Flask process serves both the static frontend and the `/api/*` endpoints, so the browser calls the API with no CORS. The frontend holds no long‑lived secrets; all privileged work (DB access, LLM calls, persistence) happens server‑side.
 
 Three external/data systems are involved:
 - **SQLite** (two files) — the application's own persistence: identity + per‑tenant working documents (`aims_app.db`) and AI usage telemetry (`aims_usage.db`).

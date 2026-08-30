@@ -2,11 +2,11 @@
 
 ## Purpose
 
-**AI Mapping Studio** helps data‑migration teams build, review, and export **column‑level source‑to‑target mappings** for enterprise data migrations (the sample domain is insurance / Guidewire‑style claims). It uses a large language model (Anthropic Claude) to propose how each target column should be populated from a legacy source schema, then gives analysts a workspace to review, correct, validate, and turn those mappings into runnable SQL Server ETL code.
+**AI Data Conversion Studio** helps data‑migration teams build, review, and export **column‑level source‑to‑target mappings** for enterprise data migrations (the sample domain is insurance / Guidewire‑style claims). It uses a large language model (Anthropic Claude) to propose how each target column should be populated from a legacy source schema, then gives analysts a workspace to review, correct, validate, and turn those mappings into runnable SQL Server ETL code.
 
 ## Business problem it solves
 
-Data migrations require a **Source‑to‑Target Mapping (STTM)**: for every target column, which source column(s) feed it, what transformation applies, and how keys/joins line up. Doing this by hand across hundreds of tables is slow and error‑prone. AI Mapping Studio:
+Data migrations require a **Source‑to‑Target Mapping (STTM)**: for every target column, which source column(s) feed it, what transformation applies, and how keys/joins line up. Doing this by hand across hundreds of tables is slow and error‑prone. AI Data Conversion Studio:
 
 - Ingests **source** and **target** schemas (from a live SQL Server or from uploaded data dictionaries / DDL / spreadsheets).
 - Uses Claude to **generate candidate mappings** (mapping type, transformation rule, business rule, null handling, confidence, and the SQL JOIN that assembles each target entity).

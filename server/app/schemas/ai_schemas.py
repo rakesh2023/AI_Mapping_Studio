@@ -387,6 +387,23 @@ VALIDATION_SUGGEST_SCHEMA = {
 }
 
 
+# Data Validation — author a custom rule from a natural-language prompt over one OR MORE
+# tables. The model returns a full T-SQL SELECT that RETURNS the violating rows, grounded
+# strictly on the supplied tables/columns. confidence 0 => could not express it.
+CUSTOM_RULE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "interpretation": {"type": "string"},
+        "violationQuery": {"type": "string"},
+        "confidence": {"type": "integer"},
+        "note": {"type": "string"},
+    },
+    "required": ["title", "interpretation", "violationQuery", "confidence"],
+    "additionalProperties": False,
+}
+
+
 # Know Your Data — insurance domain classifier (kyd_domain_service).
 DOMAIN_CHECK_SCHEMA = {
     "type": "object",

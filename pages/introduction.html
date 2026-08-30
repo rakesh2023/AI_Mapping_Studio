@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Introduction - AI Mapping Studio</title>
+<title>Introduction - AI Data Conversion Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260822w">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260822w">
-<link rel="stylesheet" href="../css/forms.css?v=20260822w">
-<link rel="stylesheet" href="../css/tables.css?v=20260822w">
-<link rel="stylesheet" href="../css/responsive.css?v=20260822w">
+<link rel="stylesheet" href="../css/common.css?v=20260827m">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260827m">
+<link rel="stylesheet" href="../css/forms.css?v=20260827m">
+<link rel="stylesheet" href="../css/tables.css?v=20260827m">
+<link rel="stylesheet" href="../css/responsive.css?v=20260827m">
 <style>
   .intro-hero{background:linear-gradient(135deg, var(--primary-soft), var(--bg-card));border:1px solid var(--border);border-radius:14px;padding:24px 28px;}
   .intro-hero h1{font-size:1.6rem;margin-bottom:6px;}
@@ -76,14 +76,14 @@
     <header id="header-container"></header>
     <main class="content-area">
       <div class="breadcrumb-bar">
-        <div><div class="crumb">AI Mapping Studio <i class="bi bi-chevron-right"></i> Introduction</div>
+        <div><div class="crumb">AI Data Conversion Studio <i class="bi bi-chevron-right"></i> Introduction</div>
         <h2>Introduction</h2></div>
       </div>
 
       <!-- Hero / overview -->
       <div class="intro-hero mb-4">
-        <h1><i class="bi bi-diagram-3-fill text-primary me-2"></i>AI Mapping Studio</h1>
-        <p class="mb-2">AI Mapping Studio is an AI-assisted tool designed to streamline source-to-target data conversion mapping for Guidewire implementations.</p>
+        <h1><i class="bi bi-diagram-3-fill text-primary me-2"></i>AI Data Conversion Studio</h1>
+        <p class="mb-2">AI Data Conversion Studio is an AI-assisted tool designed to streamline source-to-target data conversion mapping for Guidewire implementations.</p>
         <p class="mb-0">Users bring in a legacy source system and a target schema (<span class="term" tabindex="0" role="note" data-tip="ClaimCenter Mapping Template — Represents the target data schema and structure used for mapping legacy claims data into Guidewire ClaimCenter." aria-label="CMT: ClaimCenter Mapping Template — the target data schema and structure used for mapping legacy claims data into Guidewire ClaimCenter.">CMT</span>/<span class="term" tabindex="0" role="note" data-tip="PolicyCenter Mapping Template — Represents the target data schema and structure used for mapping legacy policy data into Guidewire PolicyCenter." aria-label="PMT: PolicyCenter Mapping Template — the target data schema and structure used for mapping legacy policy data into Guidewire PolicyCenter.">PMT</span>), and the platform leverages AI to:</p>
         <ul>
           <li>Propose field-level mappings and transformation rules</li>
@@ -96,7 +96,7 @@
       <!-- Guidewire data-conversion process -->
       <div class="card-el mb-4">
         <div class="section-title"><i class="bi bi-diagram-2"></i> Guidewire Data Conversion Process</div>
-        <p class="text-muted-2 text-xs mb-3">How legacy source data is staged and converted into Guidewire on the cloud &mdash; ClaimCenter (claims) and ContactManager (contacts). This is the target migration architecture AI Mapping Studio helps you build the mappings and ETL for.</p>
+        <p class="text-muted-2 text-xs mb-3">How legacy source data is staged and converted into Guidewire on the cloud &mdash; ClaimCenter (claims) and ContactManager (contacts). This is the target migration architecture AI Data Conversion Studio helps you build the mappings and ETL for.</p>
 
         <div class="gw-diagram">
           <div class="gw-lanes">
@@ -148,7 +148,7 @@
         <!-- the three move steps -->
         <div class="row g-3 mt-1">
           <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">1</span>
-            <p><strong>Legacy &rarr; Pre-Staging</strong> &mdash; extract data from the client's legacy source systems into the <strong>Pre-Staging Area</strong>. AI Mapping Studio helps identify the tables and fields relevant to the migration, while a standard <strong>ETL tool</strong> &mdash; such as Azure Data Factory (ADF), SSIS, Informatica or Talend &mdash; handles the physical movement of data from the legacy systems into the Pre-Staging database.</p></div></div>
+            <p><strong>Legacy &rarr; Pre-Staging</strong> &mdash; extract data from the client's legacy source systems into the <strong>Pre-Staging Area</strong>. AI Data Conversion Studio helps identify the tables and fields relevant to the migration, while a standard <strong>ETL tool</strong> &mdash; such as Azure Data Factory (ADF), SSIS, Informatica or Talend &mdash; handles the physical movement of data from the legacy systems into the Pre-Staging database.</p></div></div>
           <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">2</span>
             <p><strong>Pre-Staging &rarr; Common Stage</strong> &mdash; using the pre-staged tables as the source, populate the <strong>Common Stage</strong>. The Common Stage is a curated data model designed by experienced business analysts and developers to abstract away the complexity of the Guidewire structures (<strong>CMT/PMT</strong>), providing a stable, simplified foundation for conversion.</p></div></div>
           <div class="col-md-4"><div class="gw-stepcard"><span class="gw-step">3</span>
@@ -165,7 +165,7 @@
           <strong>ClaimCenter</strong> and <strong>ContactManager</strong>; <strong>CDA</strong> (Claims Data Access) and
           <strong>Update Claim Number</strong> finalise the migrated claims, while <strong>CMT_OUT</strong>,
           <strong>Audit&nbsp;&amp;&nbsp;Balancing Control</strong> and <strong>Payload Reconciliation</strong> verify that
-          counts and values match end-to-end. <strong>AI Mapping Studio</strong> is where you define the
+          counts and values match end-to-end. <strong>AI Data Conversion Studio</strong> is where you define the
           source&rarr;staging&rarr;target field mappings and generate the ETL that powers steps&nbsp;2 and&nbsp;3.
         </div>
       </div>
@@ -269,9 +269,9 @@
 
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260822w"></script>
-<script src="../js/navigation.js?v=20260822w"></script>
-<script src="../js/introduction.js?v=20260822w"></script>
+<script src="../js/common.js?v=20260827m"></script>
+<script src="../js/navigation.js?v=20260827m"></script>
+<script src="../js/introduction.js?v=20260827m"></script>
 </body>
 </html>
 

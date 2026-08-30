@@ -55,6 +55,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(hidePanel) hidePanel.addEventListener("click", () => toggleEntityPanel(false));
   const showPanel = document.getElementById("tsShowPanelBtn");
   if(showPanel) showPanel.addEventListener("click", () => toggleEntityPanel(true));
+  const entSearch = document.getElementById("tsEntitySearch");
+  if(entSearch) entSearch.addEventListener("input", filterEntityTree);
   if(lsGet("aims_ts_panel_hidden", false)) toggleEntityPanel(false);   // restore preference
 });
 
@@ -505,6 +507,36 @@ function renderTargetTree(meta){
     });
   });
   updateInferSelectedBtn();
+  filterEntityTree();   // keep the active table-search filter applied after a re-render
+}
+
+/* Filter the Entities tree by the table-search box (client-side; preserves checkboxes). */
+function filterEntityTree(){
+  const el = document.getElementById("tsEntitySearch");
+  const tree = document.getElementById("targetTree");
+  if(!tree) return;
+  const q = (el && el.value ? el.value : "").toLowerCase().trim();
+  let shown = 0;
+  tree.querySelectorAll(".tree-children > li").forEach(li => {
+    const node = li.querySelector(".tree-node[data-entity]");
+    const name = node ? (node.dataset.entity || "").toLowerCase() : "";
+    const match = !q || name.indexOf(q) !== -1;
+    li.style.display = match ? "" : "none";
+    if(match) shown++;
+  });
+  // "No tables match" hint (a transient <li> at the end of the children list).
+  const kids = tree.querySelector(".tree-children");
+  let hint = tree.querySelector("#tsEntityNoMatch");
+  if(kids && q && shown === 0){
+    if(!hint){
+      hint = document.createElement("li");
+      hint.id = "tsEntityNoMatch";
+      hint.className = "text-xs text-muted-2 mt-1";
+      hint.textContent = "No tables match.";
+      kids.appendChild(hint);
+    }
+    hint.style.display = "";
+  } else if(hint){ hint.style.display = "none"; }
 }
 
 /* Reflect the checked-table count on the "AI fill selected" button. */
@@ -574,9 +606,14 @@ function renderTargetFields(){
   const _schemaNames = new Set(_schemaEnts.map(e => _normName(e.table || e.name)));
   const _schemaBases = new Set(_schemaEnts.map(e => _baseName(e.table || e.name)));
   const _fkAvailable = (ref) => {
-    const t = String(ref || "").trim().replace(/^entity\./i, "").split(".")[0].trim();
-    if(!t) return false;
-    return _schemaNames.has(_normName(t)) || _schemaBases.has(_baseName(t));
+    // Column is the LAST segment; the referenced table is everything before it. Entities here are
+    // schema-qualified (e.g. "claim.cs_catastrophe"), so match the full "schema.table" first; also
+    // try the bare table segment for schemas whose entities aren't schema-qualified.
+    // ref forms: "table", "table.column", "schema.table.column".
+    const parts = String(ref || "").trim().replace(/^entity\./i, "").split(".").map(s => s.trim()).filter(Boolean);
+    if(!parts.length) return false;
+    const cands = parts.length >= 2 ? [parts.slice(0, -1).join("."), parts[parts.length - 2]] : [parts[0]];
+    return cands.some(t => _schemaNames.has(_normName(t)) || _schemaBases.has(_baseName(t)));
   };
 
   // Read-only display; a pencil (first column) opens the Edit Column modal to change
@@ -591,7 +628,9 @@ function renderTargetFields(){
     // Per-attribute changes → highlight the exact cell(s) and show "was <old>".
     const ch = (st === "changed") ? changeMap(diff, tl, f.name) : {};
     const hl = (attr) => ch[attr] ? ' cell-changed' : '';
-    const was = (attr, fmt) => ch[attr] ? '<span class="was">was ' + escapeHtml(fmt(ch[attr].from)) + '</span>' : '';
+    // Show "was <old>" only for schema re-extract diffs — NOT for a user's own inline edit
+    // (uf[attr]). A user edit just shows the new value in green (cell-user + "Edited" badge).
+    const was = (attr, fmt) => (ch[attr] && !(uf && uf[attr])) ? '<span class="was">was ' + escapeHtml(fmt(ch[attr].from)) + '</span>' : '';
     const fType = (v) => v || "∅";
     const fLen  = (v) => (v == null || v === "") ? "∅" : String(v);
     const fMand = (v) => v ? "Required" : "Optional";

@@ -1,4 +1,4 @@
-"""AI Mapping Studio backend package.
+"""AI Data Conversion Studio backend package.
 
 Layered architecture:
     core/       env & path config, optional-import capability guards

@@ -16,6 +16,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(clearLk) clearLk.addEventListener("click", clearAllLookups);
   const syncBtn = document.getElementById("syncToMappingBtn");
   if(syncBtn) syncBtn.addEventListener("click", syncLookupsToMappings);
+  const delTableBtn = document.getElementById("deleteTableBtn");
+  if(delTableBtn) delTableBtn.addEventListener("click", deleteSelectedTable);
   const lkSearch = document.getElementById("lkSearch");
   if(lkSearch) lkSearch.addEventListener("input", applyLookupFilters);
   const lkStatus = document.getElementById("lkStatusFilter");
@@ -63,20 +65,47 @@ let _allLookupSets = [];
 function okNote(msg){ return '<div class="hint-note" style="background:var(--success-bg);color:var(--success);border-color:#bfe8cf;"><i class="bi bi-check-circle"></i> ' + msg + '</div>'; }
 function failNote(msg){ return '<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;"><i class="bi bi-x-circle"></i> ' + escapeHtml(msg) + '</div>'; }
 
+/* ---- sync state ----
+   Which lookup sets' Generated Mapping has been pushed to the AI field mappings via
+   "Sync to AI Mapping". Kept per browser, keyed by set id -> the targetValuesSpec at
+   last sync. A row is "not synced" when it has a Generated Mapping that differs from
+   (or was never recorded in) this map — so a fresh Generate, or a later edit, re-flags it. */
+const LS_LK_SYNCED = "aims_lookup_synced";
+function getSyncedMap(){ return lsGet(LS_LK_SYNCED, {}) || {}; }
+function setSyncedMap(m){ try{ lsSet(LS_LK_SYNCED, m); }catch(e){ /* quota — non-fatal */ } }
+function isUnsynced(s, map){
+  const spec = (s.targetValuesSpec || "").trim();
+  if(!spec) return false;                          // nothing generated -> nothing to sync
+  const m = map || getSyncedMap();
+  return (m[s.id] || "") !== spec;
+}
+function unsyncedCount(){
+  const map = getSyncedMap();
+  return (_allLookupSets || []).filter(s => isUnsynced(s, map)).length;
+}
+
 async function loadLookupSets(){
   const layout = document.getElementById("lookupLayout");
   const disabled = document.getElementById("lookupDisabledCard");
   const list = document.getElementById("lookupList");
+  const loading = document.getElementById("lkLoading");
   if(!layout || !list) return;
+  const hideLoading = () => { if(loading) loading.style.display = "none"; };
+  // Page loader: show while we fetch sets, auto-create list columns, and build indexes.
+  if(loading) loading.style.display = "";
+  layout.style.display = "none";
+  if(disabled) disabled.style.display = "none";
   try{
     const res = await fetch("/api/lookups", {headers:{Accept:"application/json"}});
-    if(res.status === 404){ layout.style.display = "none"; if(disabled) disabled.style.display = ""; return; }  // feature disabled
+    if(res.status === 404){ hideLoading(); layout.style.display = "none"; if(disabled) disabled.style.display = ""; return; }  // feature disabled
     const j = await res.json().catch(() => ({}));
     if(!res.ok || !j.ok){
+      hideLoading();
       layout.style.display = "";
       list.innerHTML = '<div class="text-xs text-danger">' + escapeHtml(j.error || "Could not load lookup sets.") + '</div>';
       return;
     }
+    hideLoading();
     layout.style.display = "";
     if(disabled) disabled.style.display = "none";
     _allLookupSets = j.sets || [];
@@ -97,7 +126,7 @@ async function loadLookupSets(){
     if(_activeTable && !_allLookupSets.some(s => _tableKey(s) === _activeTable)) _activeTable = null;
     renderLookupTableList();
     applyLookupFilters();
-  }catch(e){ layout.style.display = ""; list.innerHTML = '<div class="text-xs text-muted-2">Cannot reach the server.</div>'; }
+  }catch(e){ hideLoading(); layout.style.display = ""; list.innerHTML = '<div class="text-xs text-muted-2">Cannot reach the server.</div>'; }
 }
 
 /* Dictionary indexes for the reference column + Generate:
@@ -324,7 +353,11 @@ function applyLookupFilters(){
   const syncBtn = document.getElementById("syncToMappingBtn");
   if(toolbar) toolbar.style.display = total ? "" : "none";
   if(clearBtn) clearBtn.style.display = total ? "" : "none";
-  if(syncBtn) syncBtn.style.display = total ? "" : "none";
+  if(syncBtn){
+    syncBtn.style.display = total ? "" : "none";
+    const un = unsyncedCount();
+    syncBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Sync to AI Mapping' + (un ? ' (' + un + ')' : '');
+  }
 
   const searchEl = document.getElementById("lkSearch");
   const statusEl = document.getElementById("lkStatusFilter");
@@ -337,6 +370,9 @@ function applyLookupFilters(){
   // Scope to the selected target table first (the left-panel "one entity at a time").
   let rows = (_activeTable === null) ? _allLookupSets : _allLookupSets.filter(s => _tableKey(s) === _activeTable);
   const scopeTotal = rows.length;
+  // "Reset table" is available only when a specific target table (with sets) is selected.
+  const delTableBtn = document.getElementById("deleteTableBtn");
+  if(delTableBtn) delTableBtn.style.display = (_activeTable !== null && scopeTotal > 0) ? "" : "none";
   if(status === "has") rows = rows.filter(s => (s.targetValuesSpec || "").trim());
   else if(status === "missing") rows = rows.filter(s => !(s.targetValuesSpec || "").trim());
   if(q){
@@ -365,6 +401,7 @@ function renderLookupSets(sets, total){
     const s = (t || "").replace(/\s*\n\s*/g, " · ").trim();
     return s ? escapeHtml(s.length > 90 ? s.slice(0, 90) + "…" : s) : dash;
   };
+  const syncedMap = getSyncedMap();
   list.innerHTML =
     '<div class="table-responsive-el"><table class="grid-table sticky-first"><thead><tr>' +
       '<th style="min-width:150px;">Lookup Name</th>' +
@@ -384,11 +421,13 @@ function renderLookupSets(sets, total){
             exp.map(v => escapeHtml(v.code + (v.description ? " — " + v.description : ""))).join("<br>") +
           '</div><div class="text-xs text-muted-2 mt-1">' + exp.length + ' value' + (exp.length === 1 ? "" : "s") + ' from dictionary</div>'
         : '<span class="text-xs text-muted-2">No typelist in the dictionary for this column.</span>';
+      const un = isUnsynced(s, syncedMap);
       const genMapHtml = (s.targetValuesSpec || "").trim()
         ? '<div class="mono text-xs" style="max-height:96px;overflow:auto;line-height:1.5;white-space:pre-wrap;">' +
-            escapeHtml(s.targetValuesSpec) + '</div>'
+            escapeHtml(s.targetValuesSpec) + '</div>' +
+            (un ? '<div class="mt-1"><span class="badge-soft badge-medium" title="This Generated Mapping has not been pushed to the AI field mappings yet — click Sync to AI Mapping."><i class="bi bi-exclamation-circle"></i> Not synced</span></div>' : '')
         : '<span class="text-xs text-muted-2">Not generated yet.</span>';
-      return '<tr>' +
+      return '<tr' + (un ? ' class="lk-unsynced"' : '') + '>' +
         '<td class="mono">' + escapeHtml(_lookupDisplayName(s)) + '</td>' +
         '<td class="mono">' + (src ? escapeHtml(src) : dash) + '</td>' +
         '<td class="mono">' + (tgt ? escapeHtml(tgt) : dash) + '</td>' +
@@ -639,14 +678,18 @@ async function deriveLookupsFromListColumns(){
 
 async function clearAllLookups(){
   const ok = (typeof confirmDialog === "function")
-    ? await confirmDialog("Delete ALL lookup sets for this client? This removes every set along with its values and value mappings. This cannot be undone.", "Clear all")
-    : window.confirm("Delete ALL lookup sets? This cannot be undone.");
+    ? await confirmDialog("Clear the lookup mappings for this client (legacy values + generated mappings)? " +
+        "The imported Guidewire typelists (the Expected GW Values) are <b>kept</b>, so you won't need to re-import them. " +
+        "This cannot be undone.", "Clear all")
+    : window.confirm("Clear the lookup mappings? Imported typelists are kept. This cannot be undone.");
   if(!ok) return;
   try{
     const res = await fetch("/api/lookups", {method:"DELETE"});
     const j = await res.json().catch(() => ({}));
     if(!res.ok || !j.ok){ showNotification((j && j.error) || "Clear all failed.", "danger"); return; }
-    showNotification("Cleared " + (j.removed || 0) + " lookup set" + (j.removed === 1 ? "" : "s") + ".", "primary", 1800);
+    const kept = j.keptTypelists || 0;
+    showNotification("Cleared " + (j.removed || 0) + " lookup set" + (j.removed === 1 ? "" : "s") +
+      (kept ? " — kept " + kept + " imported typelist" + (kept === 1 ? "" : "s") : "") + ".", "primary", 2600);
     loadLookupSets();
   }catch(e){ showNotification("Cannot reach the server.", "danger"); }
 }
@@ -729,12 +772,14 @@ async function syncLookupsToMappings(){
 
   let updated = 0;
   const unmatched = [];
+  const syncedNow = [];
   sets.forEach(s => {
     const col = (s.targetColumn || "").trim().toLowerCase();
     const tbl = (s.targetTable || "").trim().toLowerCase();
     const matches = mappings.filter(m => (m.targetColumn || "").trim().toLowerCase() === col &&
       (!tbl || (m.targetTable || "").trim().toLowerCase() === tbl || (m.targetEntity || "").trim().toLowerCase() === tbl));
     if(!matches.length){ unmatched.push(s.lookupName); return; }
+    syncedNow.push(s);
     matches.forEach(m => {
       applyLookupToMapping(m, s);
       updated++;
@@ -756,12 +801,53 @@ async function syncLookupsToMappings(){
   }
   catch(e){ showNotification(e.message || "Could not save the updated mappings.", "danger", 6000); return; }
 
+  // Remember what was synced so those rows stop being flagged "Not synced" (and re-flag
+  // automatically if their Generated Mapping is regenerated/edited later).
+  const smap = getSyncedMap();
+  syncedNow.forEach(s => { smap[s.id] = (s.targetValuesSpec || "").trim(); });
+  setSyncedMap(smap);
+
   const box = document.getElementById("lkUploadResult");
   const msg = "Synced " + updated + " mapping row(s) from " + (sets.length - unmatched.length) + " lookup set(s)" +
     (unmatched.length ? "; " + unmatched.length + " set(s) had no matching generated column" : "") +
     ". Open the Mapping Workspace to review.";
   if(box) box.innerHTML = okNote(msg);
   showNotification("Synced " + updated + " mapping row(s) to the AI mappings.", "success", 3200);
+  applyLookupFilters();   // clear the "Not synced" highlights + refresh the Sync (N) count
+}
+
+/* Delete every lookup set for the currently-selected target table (legacy values +
+   generated mappings). The list columns for that table are re-created empty from the
+   active target schema on the next load (ensureListColumnSets), so this acts as a
+   per-table reset. Imported Guidewire typelists (no target table) are never in scope. */
+async function deleteSelectedTable(){
+  if(_activeTable === null){ showNotification("Pick a target table on the left first.", "warning"); return; }
+  const sets = (_allLookupSets || []).filter(s => _tableKey(s) === _activeTable);
+  if(!sets.length){ showNotification("No lookup mappings in this table.", "warning"); return; }
+  const label = _tableLabel(sets[0]);
+  const ok = (typeof confirmDialog === "function")
+    ? await confirmDialog("Delete all " + sets.length + " lookup mapping(s) for <b>" + escapeHtml(label) + "</b> " +
+        "(their Legacy values + Generated Mappings)? The list columns for this table are re-created <b>empty</b> from " +
+        "your target schema when the page reloads. Imported Guidewire typelists are not affected. This cannot be undone.",
+        "Reset table")
+    : window.confirm('Delete all lookup mappings for "' + label + '"? They repopulate empty on reload.');
+  if(!ok) return;
+
+  const btn = document.getElementById("deleteTableBtn");
+  const html = btn ? btn.innerHTML : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…'; }
+  let removed = 0, failed = 0;
+  for(const s of sets){
+    try{
+      const res = await fetch("/api/lookups/" + encodeURIComponent(s.id), {method:"DELETE"});
+      const j = await res.json().catch(() => ({}));
+      if(res.ok && j.ok) removed++; else failed++;
+    }catch(e){ failed++; }
+  }
+  if(btn){ btn.disabled = false; btn.innerHTML = html; }
+  showNotification("Deleted " + removed + " lookup mapping(s) for " + label +
+    (failed ? " (" + failed + " failed)" : "") + " — defaults will repopulate.", failed ? "warning" : "primary", 3200);
+  loadLookupSets();   // re-runs ensureListColumnSets → recreates this table's list columns empty
 }
 
 async function deleteLookupSet(id, name){

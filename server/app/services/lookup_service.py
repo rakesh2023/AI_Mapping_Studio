@@ -247,16 +247,28 @@ def update_set(user_id: int, client_id: int, set_id: int, *,
 
 
 def delete_all_sets(user_id: int, client_id: int) -> Result:
-    """Delete ALL lookup sets for this tenant; values + value mappings cascade away."""
+    """Clear the tenant's lookup MAPPINGS (list-column sets + their values/mappings), but
+    PRESERVE the imported Guidewire typelists (cctl_/pctl_/bctl_) — those are reference
+    code lists imported on Product Data Dictionary and are re-used as the Expected values.
+    Values + value mappings of the deleted sets cascade away."""
+    prefixes = ("cctl_", "pctl_", "bctl_")
     with write_lock():
         conn = connect()
         try:
-            cur = conn.execute("DELETE FROM lookup_sets WHERE user_id=? AND client_id=?", (user_id, client_id))
+            rows = conn.execute(
+                "SELECT id, lookup_name FROM lookup_sets WHERE user_id=? AND client_id=?",
+                (user_id, client_id),
+            ).fetchall()
+            ids = [r["id"] for r in rows if not (r["lookup_name"] or "").lower().startswith(prefixes)]
+            removed, kept = 0, len(rows) - len(ids)
+            if ids:
+                q = ",".join("?" * len(ids))
+                cur = conn.execute("DELETE FROM lookup_sets WHERE id IN (%s)" % q, ids)  # cascades values + mappings
+                removed = cur.rowcount if cur.rowcount is not None else len(ids)
             conn.commit()
-            removed = cur.rowcount if cur.rowcount is not None else 0
         finally:
             conn.close()
-    return {"ok": True, "removed": removed}, 200
+    return {"ok": True, "removed": removed, "keptTypelists": kept}, 200
 
 
 def delete_set(user_id: int, client_id: int, set_id: int) -> Result:

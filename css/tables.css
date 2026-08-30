@@ -89,6 +89,10 @@ table.grid-table tbody tr.is-new{background:var(--success-bg);}
 table.grid-table tbody tr.is-new td:first-child{box-shadow:inset 3px 0 0 var(--success);}
 table.grid-table tbody tr.is-changed{background:var(--warning-bg);}
 table.grid-table tbody tr.is-changed td:first-child{box-shadow:inset 3px 0 0 var(--warning);}
+/* Lookup rows whose Generated Mapping hasn't been pushed via "Sync to AI Mapping" */
+table.grid-table tbody tr.lk-unsynced > td{background:var(--warning-bg);}
+table.grid-table tbody tr.lk-unsynced > td:first-child{box-shadow:inset 3px 0 0 var(--warning);}
+table.grid-table.sticky-first tbody tr.lk-unsynced > td:first-child{background:var(--warning-bg);box-shadow:inset 3px 0 0 var(--warning);}
 table.grid-table tbody tr.is-removed{background:var(--danger-bg);color:var(--text-muted);}
 table.grid-table tbody tr.is-removed td:first-child{box-shadow:inset 3px 0 0 var(--danger);}
 table.grid-table tbody tr.is-removed td.mono{text-decoration:line-through;text-decoration-color:var(--danger);}

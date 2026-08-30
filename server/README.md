@@ -1,4 +1,4 @@
-# AI Mapping Studio — backend
+# AI Data Conversion Studio — backend
 
 A small Flask service that (1) serves the static frontend and (2) exposes the
 SQL Server + Claude AI APIs the app needs. A browser can't open a database

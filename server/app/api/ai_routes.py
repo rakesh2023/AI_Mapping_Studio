@@ -75,6 +75,13 @@ def validation_sql():
     return jsonify(payload), status
 
 
+@bp.route("/custom-rule", methods=["POST"])
+def custom_rule():
+    body = request.get_json(force=True) or {}
+    payload, status = validation_ai_service.author_custom_rule(body)
+    return jsonify(payload), status
+
+
 @bp.route("/parse-column", methods=["POST"])
 def parse_column():
     body = request.get_json(force=True) or {}

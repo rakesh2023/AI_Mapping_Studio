@@ -10,7 +10,7 @@
 const COLUMNS = [
   {key:"id", label:"Mapping ID"},
   {key:"targetTable", label:"Target Table"},
-  {key:"targetColumn", label:"Target Column", editable:true},
+  {key:"targetColumn", label:"Target Column"},
   {key:"sourceTable", label:"Source Table"},
   {key:"sourceColumn", label:"Source Column"},
   {key:"sampleSourceValue", label:"Sample Value"},
@@ -89,6 +89,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   allMappings = applyOverrides(aiRows !== null ? aiRows : []);
   joinConditions = lsGet("aims_ai_joins", {}) || {};
 
+  const wsLoad = document.getElementById("wsLoading"); if(wsLoad) wsLoad.style.display = "none";  // page loader done
   if(!allMappings.length){
     document.getElementById("emptyState").style.display = "";
     document.getElementById("reviewLayout").style.display = "none";
@@ -490,7 +491,7 @@ function rowHTML(m){
     '</div></td>' +
     '<td class="freeze fz1 mono" data-col="id"><a href="#" class="row-open" data-id="' + m.id + '">' + m.id + '</a></td>' +
     '<td class="freeze fz2 mono" data-col="targetTable">' + (m.targetTable||"-") + '</td>' +
-    '<td class="freeze fz3 editable-cell" data-col="targetColumn" data-field="targetColumn" data-id="' + m.id + '">' + m.targetColumn + '</td>' +
+    '<td class="freeze fz3" data-col="targetColumn">' + escapeHtml(m.targetColumn || "") + '</td>' +
     '<td class="mono editable-cell' + oc("sourceTable") + '" data-col="sourceTable" data-field="sourceTable" data-id="' + m.id + '">' + (m.sourceTable||"-") + '</td>' +
     '<td class="mono editable-cell' + oc("sourceColumn") + '" data-col="sourceColumn" data-field="sourceColumn" data-id="' + m.id + '">' + (m.sourceColumn||"-") + '</td>' +
     '<td class="mono" data-col="sampleSourceValue">' + escapeHtml(m.sampleSourceValue||"-") + '</td>' +

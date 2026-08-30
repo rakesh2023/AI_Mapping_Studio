@@ -65,3 +65,13 @@ def validate_table():
     cfg = request.get_json(force=True) or {}
     payload, status = db_service.validate_table(cfg)
     return jsonify(payload), status
+
+
+@bp.route("/validate-query", methods=["POST"])
+def validate_query():
+    blocked = _throttle()
+    if blocked:
+        return blocked
+    cfg = request.get_json(force=True) or {}
+    payload, status = db_service.run_custom_query(cfg)
+    return jsonify(payload), status

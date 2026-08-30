@@ -1,4 +1,4 @@
-# AI Mapping Studio — Session Summary
+# AI Data Conversion Studio — Session Summary
 
 _Last updated: 2026-08-12_
 
@@ -9,6 +9,34 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **Custom validation rules — now multi-table (cross-table)** (uncommitted).
+  The Custom Validation Rules editor lets the user pick **one OR more tables** (searchable checklist) and
+  describe a rule in plain English (e.g. "if a claim is closed, its exposures must also be closed").
+  **Interpret with AI** (`POST /api/ai/custom-rule`, `CUSTOM_RULE_SCHEMA` → `violationQuery`) returns a full
+  grounded T-SQL **SELECT** that returns the offending rows (joins across the selected tables, qualified
+  `[schema].[table]`, concise select list to keep counts wrappable), plus a plain-English interpretation —
+  **editable before saving**. Rules persist in `aims_data_validation_cfg.customRules` as
+  `{id, tables[], prompt, title, interpretation, query, enabled}` (legacy single-table `{table, predicate}`
+  rules auto-migrate via `normalizeRule`/`ruleFinalQuery`). They flow into: **Generate SQL** (top-level
+  `customQueries`, emitted verbatim) and the **Validation Report** (run read-only as
+  `SELECT COUNT(*) FROM (<query>) _vr` via new `POST /api/db/validate-query` → `db_service.run_custom_query`,
+  shown as the "Custom Rules" category). **Safety:** `_is_safe_query()` — single read-only SELECT/CTE only;
+  rejects `;`, comments, DML/DDL, `SELECT INTO`, `xp_`/`waitfor`/`openrowset`; plus the 30s query timeout.
+  Cache `20260822u`.
+
+- **New Validation Report page — graphical dashboard** (uncommitted).
+  Added **Validate ▸ Validation Report** (`pages/validation-report.html` + `js/validation-report.js`,
+  nav entry after Data Validation). It **reuses the Data Validation config** (`aims_data_validation_cfg`):
+  reconstructs the per-table checks, resolves typelist allowed-values (typeKey → `/api/lookups/snapshot`,
+  fallback `accepted`) and FK parents, then **runs live** against the active SQL Server target
+  (`/api/db/validate`, sequential per table) on open and via a **Run & Refresh** button. Renders **KPI
+  cards** (tables checked, total issues, duplicate rows, mandatory nulls, invalid typelist, FK orphans),
+  a **Chart.js doughnut** (issues by type) and **horizontal bar** (issues by table, worst-first top 15),
+  and a **filterable/paginated details table** (type/table/column filters). Chart.js loaded from the same
+  jsDelivr CDN as Bootstrap; charts are theme-aware (light/dark text + grid) and degrade gracefully
+  (KPIs + table still work) if the CDN is blocked. Shows guidance banners when no config exists or no
+  live SQL target is active. No backend change (reuses `/api/db/validate`). Cache-bust `20260822p`.
 
 - **New Data Validation page — two-panel, AI-assisted, SQL-generating** (uncommitted).
   Added a new **Validate ▸ Data Validation** sidebar section (after Build) — a data-quality tool over
@@ -260,7 +288,7 @@ Excel dictionaries now usually skip AI entirely via the direct parser.
   persisted; date-picker + modals + PwC logo all theme-aware.
 - **Reset Application** — header ↺ button clears ALL app data (prefix `aims_*`) and
   reloads; leaves `aims_ai_mappings` as `[]` so it doesn't fall back to sample.
-- **Header** — PwC logo before the "AI Mapping Studio" title; compact search box;
+- **Header** — PwC logo before the "AI Data Conversion Studio" title; compact search box;
   removed the project-name chip and the environment chip.
 - **PwC theme + logo** across all pages.
 

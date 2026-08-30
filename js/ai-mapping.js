@@ -224,6 +224,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   buildSourceOptions();
   buildTargetSummary();
   renderTablePicker();
+  // Page loader done: the form is built — reveal it, then check AI status (its own box shows progress).
+  const genLoad = document.getElementById("genLoading"); if(genLoad) genLoad.style.display = "none";
+  const genLayout = document.getElementById("genLayout"); if(genLayout) genLayout.style.display = "";
   await checkAiStatus();
 
   const selAll = document.getElementById("selectAllTablesBtn");
@@ -516,6 +519,20 @@ function logInfo(containerId, text){
   if(line){ line.classList.remove("log-line"); line.className = "log-line done"; line.innerHTML = '<i class="bi bi-info-circle"></i> ' + escapeHtml(text); }
   return line;
 }
+/* Live elapsed-time ticker on a running log line, so a long AI call never looks frozen.
+   Returns a stop() to call when the step finishes (before logDone/logFail replace the line). */
+function logTick(line, baseText){
+  if(!line) return () => {};
+  const t0 = Date.now();
+  const paint = () => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    line.innerHTML = '<span class="spin"><i class="bi bi-arrow-repeat"></i></span> ' + escapeHtml(baseText) +
+      ' <span class="text-muted-2">— ' + s + 's' + (s >= 6 ? ' · waiting for Claude…' : '') + '</span>';
+  };
+  paint();
+  const id = setInterval(paint, 1000);
+  return () => clearInterval(id);
+}
 
 /* ---------- generate (real LLM call, one table at a time) ---------- */
 async function generateMappings(){
@@ -564,12 +581,14 @@ async function generateMappings(){
   let totalIn = 0, totalOut = 0;
 
   try{
+    logInfo("aiLog", "Mapping " + chosen.length + " target table(s) — each is sent to Claude; wide tables are split into 40-column chunks server-side, then merged.");
     // Process each selected table in its own request so we can show which one is
     // running and stop with a clear error the moment any table's model call fails.
     for(let i = 0; i < chosen.length; i++){
       const e = chosen[i];
       const nFields = (e.fields||[]).length;
-      const line = logStep("aiLog", "[" + (i+1) + "/" + chosen.length + "] Mapping '" + e.name + "' (" + nFields + " of " + e.totalFields + " columns)...");
+      const base = "[" + (i+1) + "/" + chosen.length + "] Mapping '" + e.name + "' (" + nFields + " of " + e.totalFields + " cols)";
+      const line = logStep("aiLog", base + "…");
 
       // Guard: nothing selected for this table (shouldn't happen, but be safe).
       if(!nFields){
@@ -587,15 +606,18 @@ async function generateMappings(){
         businessContext, strategy, systemPrompt
       };
 
+      const stopTick = logTick(line, base);   // live elapsed timer so a long call never looks frozen
       let res, data;
       try{
         res = await fetch("/api/ai/generate-mappings", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
       }catch(netErr){
+        stopTick();
         logFail(line, "[" + (i+1) + "/" + chosen.length + "] '" + e.name + "' — backend not reachable. Start it with python server/app.py.");
         throw new Error("Backend not reachable while mapping '" + e.name + "'. Start it with python server/app.py.");
       }
       try{ data = await res.json(); }
       catch(parseErr){ data = {ok:false, error:"Server returned an invalid response (HTTP " + res.status + ")."}; }
+      stopTick();
 
       if(!res.ok || !data.ok){
         const msg = (data && data.error) ? data.error : ("HTTP " + res.status);
@@ -609,7 +631,11 @@ async function generateMappings(){
       if(data.usage){ totalIn += data.usage.input_tokens||0; totalOut += data.usage.output_tokens||0; }
 
       const mapped = rows.filter(r => r.mappingType !== "Not Mapped").length;
-      logDone(line, "[" + (i+1) + "/" + chosen.length + "] '" + e.name + "' done — " + mapped + "/" + rows.length + " columns mapped");
+      const notMapped = rows.length - mapped;
+      const tok = data.usage ? ((data.usage.input_tokens||0) + (data.usage.output_tokens||0)) : 0;
+      const joinFound = !!(joins[e.name] && String(joins[e.name]).trim());
+      logDone(line, "[" + (i+1) + "/" + chosen.length + "] '" + e.name + "' done — " + mapped + "/" + rows.length + " mapped" +
+        (notMapped ? " · " + notMapped + " not mapped" : "") + (joinFound ? " · join ✓" : "") + (tok ? " · ~" + tok.toLocaleString() + " tok" : ""));
     }
 
     // ACCUMULATE into the existing document at COLUMN granularity: new rows for a

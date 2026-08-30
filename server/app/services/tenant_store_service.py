@@ -27,6 +27,11 @@ ALLOWED_DOC_KEYS = frozenset({
     "target_ai_fields",
     # Guidewire data-dictionary per-column descriptions (source for Target description fill).
     "dict_descriptions",
+    # Data Validation page config (selected tables, column checks, custom rules) — per client.
+    "data_validation_cfg",
+    # AI Mapping Generator "Additional Instructions"; Target System user-edit highlight map;
+    # ETL Code deploy target database — all per client (were device-local, causing cross-client bleed).
+    "addl_instructions", "target_user_fields", "etl_db",
 })
 
 _MAX_DOC_CHARS = 6_000_000   # ~6 MB per document (guards against runaway payloads)

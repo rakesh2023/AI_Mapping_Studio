@@ -1,4 +1,4 @@
-# AI Mapping Studio — Technical Documentation
+# AI Data Conversion Studio — Technical Documentation
 
 This documentation was produced by analyzing the actual source code of the repository. It is intended to let a new engineer understand, run, extend, and maintain the application without depending on the original author.
 
@@ -46,7 +46,7 @@ This documentation was produced by analyzing the actual source code of the repos
 
 ## One‑paragraph summary
 
-**AI Mapping Studio** is a PwC‑themed, AI‑assisted **source‑to‑target data‑migration mapping** tool (insurance / Guidewire‑inspired). A static HTML/CSS/vanilla‑JS frontend is served by a single Python/Flask service that (a) talks to live **Microsoft SQL Server** databases via `pyodbc`, (b) calls **Anthropic Claude** through a corporate gateway for mapping generation, schema extraction, ETL/DDL generation, and SQL auto‑fix, and (c) persists per‑tenant working data in **SQLite**. It is **multi‑tenant**: email/password auth, admin‑managed users, per‑user Clients, and server‑side data isolation scoped by `(user_id, client_id)`.
+**AI Data Conversion Studio** is a PwC‑themed, AI‑assisted **source‑to‑target data‑migration mapping** tool (insurance / Guidewire‑inspired). A static HTML/CSS/vanilla‑JS frontend is served by a single Python/Flask service that (a) talks to live **Microsoft SQL Server** databases via `pyodbc`, (b) calls **Anthropic Claude** through a corporate gateway for mapping generation, schema extraction, ETL/DDL generation, and SQL auto‑fix, and (c) persists per‑tenant working data in **SQLite**. It is **multi‑tenant**: email/password auth, admin‑managed users, per‑user Clients, and server‑side data isolation scoped by `(user_id, client_id)`.
 
 ## Quick facts
 

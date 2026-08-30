@@ -1,7 +1,7 @@
 /* =========================================================================
    common.js
    Shared shell, notification, storage and utility helpers used across all
-   pages of AI Mapping Studio.
+   pages of AI Data Conversion Studio.
    ========================================================================= */
 
 /* SEC-005: double-submit CSRF. The server issues a readable `csrf_token` cookie;
@@ -58,7 +58,8 @@ const SIDEBAR_SECTIONS = [
     {label:"ETL Code (SQL)", icon:"bi-file-earmark-code", href:"etl-code.html"}
   ]},
   {title:"Validate", icon:"bi-clipboard-check", items:[
-    {label:"Data Validation", icon:"bi-clipboard-check", href:"data-validation.html"}
+    {label:"Data Validation Configuration", icon:"bi-clipboard-check", href:"data-validation.html"},
+    {label:"Validation Report", icon:"bi-bar-chart-line", href:"validation-report.html"}
   ]},
   {title:"Deliver", icon:"bi-send", items:[
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
@@ -100,7 +101,7 @@ const LS_KEYS = {
   filters: "aims_filter_prefs",
   scope: "aims_mapping_scope",
   history: "aims_mapping_history",
-  dataValidationCfg: "aims_data_validation_cfg"   // device-local: remembered per-table validation selections
+  dataValidationCfg: "aims_data_validation_cfg"   // per-client, server-synced (see TENANT_DOC_KEYS): tables, checks, custom rules
 };
 
 /* ---- Per-client data now lives server-side (multi-tenant), scoped by the
@@ -111,7 +112,8 @@ const LS_KEYS = {
 const TENANT_DOC_KEYS = ["db_connections","target_connections",
   "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
   "mapping_history","deploy_history","exports","business_context","etl_instructions",
-  "lookup_baseline","cmt_schema","cmt_baseline","target_ai_fields","dict_descriptions"];
+  "lookup_baseline","cmt_schema","cmt_baseline","target_ai_fields","dict_descriptions",
+  "data_validation_cfg","addl_instructions","target_user_fields","etl_db"];
 const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
 TENANT_DOC_KEYS.forEach(k => { TENANT_LS["aims_" + k] = k; });
 function isTenantKey(key){ return Object.prototype.hasOwnProperty.call(TENANT_LS, key); }
@@ -520,7 +522,7 @@ function buildSidebarHTML(activeHref){
       '<div class="brand-icon">' +
         '<img class="brand-mark" src="../assets/images/pwc-device.svg" alt="PwC">' +
       '</div>' +
-      '<div class="brand-text"><b>PwC</b><span>AI Mapping Studio</span></div>' +
+      '<div class="brand-text"><b>PwC</b><span>AI Data Conversion Studio</span></div>' +
     '</div>' +
     '<nav class="sidebar-nav">' +
       ((AUTH && AUTH.user && AUTH.user.isAdmin)
@@ -549,7 +551,7 @@ function buildHeaderHTML(){
       '<button class="icon-btn d-lg-none" id="mobileNavToggle"><i class="bi bi-list"></i></button>' +
       '<img class="topbar-logo logo-light" src="../assets/images/pwc-logo-dark.svg" alt="PwC">' +
       '<img class="topbar-logo logo-dark" src="../assets/images/pwc-logo.svg" alt="PwC">' +
-      '<div class="app-title">AI Mapping Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
+      '<div class="app-title">AI Data Conversion Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
     '</div>' +
     '<div class="topbar-meta">' +
       '<a class="brief-link" href="/docs/stakeholder-brief.html" target="_blank" rel="noopener" title="Open the Stakeholder Brief in a new tab">' +

@@ -1,4 +1,4 @@
-# Codebase Context — AI Mapping Studio
+# Codebase Context — AI Data Conversion Studio
 
 A reference for future sessions: how this app is built, so a new feature can follow the existing patterns. Derived from a read of the actual source (no files were modified during exploration). For deep detail, see the full technical docs in [`../`](../00-README.md) (especially [07 Backend](../07-backend.md), [06 Frontend](../06-frontend.md), [08 API](../08-api-documentation.md), [09 Database](../09-database.md), [16 Security](../16-security.md), [27 Source Index](../27-source-reference-index.md)).
 

@@ -27,13 +27,11 @@ let dvTypelistIndex = {};    // normalized typelist base -> [{code,...}]
 let dvTypelistNameByBase = {}; // normalized base -> physical typelist name (e.g. cctl_checkstatus)
 let dvSql = "";              // last generated SQL
 let dvColFilter = "";        // right-panel column-name search
-let dvIssues = [];           // live-run results
-let dvState = { page:1, pageSize:25, filters:{type:"", table:""} };
+let dvCustomRules = [];      // [{id, table, prompt, title, interpretation, predicate, enabled}]
+let dvRuleDraft = null;      // {title, interpretation} from the last AI interpretation in the editor
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("data-validation.html");
-  const ps = getSettings().pageSize;
-  if(ps) dvState.pageSize = ps;
 
   dvSchema = (typeof getTargetSchema === "function") ? getTargetSchema() : null;
   indexSchema();
@@ -45,38 +43,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadConfig();
     buildTableList();
     renderCheckGrid();
+    renderCustomRules();
   }
 
   // buttons
   document.getElementById("aiSuggestBtn").addEventListener("click", aiSuggest);
   document.getElementById("genSqlBtn").addEventListener("click", generateSql);
-  document.getElementById("runValidationBtn").addEventListener("click", runValidation);
-  document.getElementById("clearValidationBtn").addEventListener("click", clearResults);
+  document.getElementById("clearValidationBtn").addEventListener("click", clearConfig);
   document.getElementById("copySqlBtn").addEventListener("click", copySql);
   document.getElementById("downloadSqlBtn").addEventListener("click", downloadSql);
+  const addRuleBtn = document.getElementById("addRuleBtn");
+  if(addRuleBtn) addRuleBtn.addEventListener("click", () => openRuleEditor(null));
   const search = document.getElementById("tableSearch");
   if(search) search.addEventListener("input", buildTableList);
   const colSearch = document.getElementById("colSearch");
   if(colSearch) colSearch.addEventListener("input", e => { dvColFilter = (e.target.value || "").toLowerCase().trim(); renderCheckGrid(); });
   const selAll = document.getElementById("selectAllTables");
   if(selAll) selAll.addEventListener("change", onSelectAll);
-
-  buildFilterBar();
-  renderIssues();
 });
-
-/* ---------- connection cfg (same shape as profiling.js) ---------- */
-function connToConfig(c){
-  return {
-    driver: c.driver || "ODBC Driver 17 for SQL Server",
-    server: c.server || c.host || "",
-    database: c.database || c.db || "",
-    schema: c.schema || null,
-    trusted: !!c.trusted,
-    username: c.username || "",
-    password: c.password || ""
-  };
-}
 
 // POST JSON and classify the outcome so failures are actionable rather than a generic toast.
 // Returns {netError} | {ok:false, status, error} | {ok:true, data}.
@@ -118,7 +102,6 @@ function resolveActiveTarget(){
 function renderBanner(){
   const el = document.getElementById("targetBanner");
   if(!el) return;
-  const runBtn = document.getElementById("runValidationBtn");
   const aiBtn = document.getElementById("aiSuggestBtn");
   const sqlBtn = document.getElementById("genSqlBtn");
   const hasSchema = !!(dvSchema && dvSchema.entities && dvSchema.entities.length);
@@ -126,24 +109,19 @@ function renderBanner(){
   if(!hasSchema){
     el.innerHTML = notice("warning", "bi-exclamation-triangle",
       "No active target schema. Configure a target on the Target System page, then return here.");
-    [runBtn, aiBtn, sqlBtn].forEach(b => { if(b) b.disabled = true; });
+    [aiBtn, sqlBtn].forEach(b => { if(b) b.disabled = true; });
     return;
   }
-  // AI Suggest + Generate SQL work off the schema (no live DB needed).
   if(aiBtn) aiBtn.disabled = false;
   if(sqlBtn) sqlBtn.disabled = false;
-  if(runBtn) runBtn.disabled = !dvCanRunLive;
 
   const name = dvConn ? (dvConn.name || dvConn.server || "") : "";
-  const liveNote = dvCanRunLive
-    ? '<span class="badge-soft badge-high ms-auto"><i class="bi bi-lightning-charge"></i> live Run enabled</span>'
-    : '<span class="badge-soft badge-gray ms-auto">SQL-generation mode — connect a SQL Server target to enable live Run</span>';
   el.innerHTML =
     '<div class="card-el d-flex align-items-center gap-2" style="padding:.6rem .9rem;">' +
       '<i class="bi bi-hdd-network text-primary"></i>' +
       '<span>Target: <b>' + escapeHtml(name || "(schema only)") + '</b>' +
         (dvConn && dvConn.database ? ' &middot; <span class="text-muted-2">' + escapeHtml(dvConn.database) + '</span>' : '') + '</span>' +
-      liveNote +
+      '<span class="badge-soft badge-gray ms-auto">Configure checks, then open the Validation Report to run</span>' +
     '</div>';
 }
 
@@ -360,11 +338,12 @@ function onCheckToggle(e){
 function persistConfig(){
   const checks = {}, origin = {};
   dvSelected.forEach(t => { if(dvChecks[t]) checks[t] = dvChecks[t]; if(dvOrigin[t]) origin[t] = dvOrigin[t]; });
-  try{ lsSet(LS_KEYS.dataValidationCfg, {selected: Array.from(dvSelected), checks, origin}); }catch(e){ /* ignore quota */ }
+  try{ lsSet(LS_KEYS.dataValidationCfg, {selected: Array.from(dvSelected), checks, origin, customRules: dvCustomRules}); }catch(e){ /* ignore quota */ }
 }
 function loadConfig(){
   const saved = lsGet(LS_KEYS.dataValidationCfg, null);
   if(!saved) return;
+  dvCustomRules = (Array.isArray(saved.customRules) ? saved.customRules : []).map(normalizeRule);
   (saved.selected || []).forEach(t => { if(dvFieldsByTable[t]) dvSelected.add(t); });
   const checks = saved.checks || {};
   const origin = saved.origin || {};
@@ -433,8 +412,8 @@ function buildTablesPayload(){
       const st = checks[c];
       if(st.pk) keyColumns.push(c);
       if(st.mandatory) mandatoryColumns.push(c);
-      if(st.typelist && (dvAllowed[t][c] || []).length) typelistChecks.push({column: c, allowedValues: dvAllowed[t][c]});
-      if(st.fk && dvFk[t][c]) fkChecks.push({column: c, parentTable: dvFk[t][c].parentTable, parentColumn: dvFk[t][c].parentColumn});
+      if(st.typelist && ((dvAllowed[t] || {})[c] || []).length) typelistChecks.push({column: c, allowedValues: dvAllowed[t][c]});
+      if(st.fk && (dvFk[t] || {})[c]) fkChecks.push({column: c, parentTable: dvFk[t][c].parentTable, parentColumn: dvFk[t][c].parentColumn});
     });
     if(keyColumns.length || mandatoryColumns.length || typelistChecks.length || fkChecks.length)
       out.push({table: t, keyColumns, mandatoryColumns, typelistChecks, fkChecks});
@@ -442,14 +421,15 @@ function buildTablesPayload(){
   return out;
 }
 async function generateSql(){
-  const tables = buildTablesPayload();
-  if(!tables.length){ showNotification("Tick at least one check box first.", "warning"); return; }
   const schema = (dvConn && dvConn.schema) || "dbo";
+  const tables = buildTablesPayload();
+  const customQueries = buildCustomQueries(schema);
+  if(!tables.length && !customQueries.length){ showNotification("Tick at least one check or add a custom rule first.", "warning"); return; }
   const btn = document.getElementById("genSqlBtn");
   const orig = btn.innerHTML; btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Generating…';
   try{
-    const r = await apiPost("/api/ai/validation-sql", {schema, tables});
+    const r = await apiPost("/api/ai/validation-sql", {schema, tables, customQueries});
     if(r.netError){ showNotification("Backend not reachable — is the server running? (cd server && python main.py)", "danger"); return; }
     if(!r.ok){ showNotification("SQL generation failed: " + r.error, "danger"); return; }
     dvSql = r.data.sql || "";
@@ -479,146 +459,204 @@ function downloadSql(){
   URL.revokeObjectURL(url);
 }
 
-/* ---------- Run Validation (live path) ---------- */
-async function runValidation(){
-  if(!dvCanRunLive){ showNotification("Live Run needs a SQL Server target connection. Use Generate SQL instead.", "warning"); return; }
-  const tables = buildTablesPayload();
-  if(!tables.length){ showNotification("Tick at least one check box first.", "warning"); return; }
-  const tSchema = (dvConn && dvConn.schema) || "dbo";
-  const btn = document.getElementById("runValidationBtn");
-  const orig = btn.innerHTML; btn.disabled = true;
-  try{
-    const pw = await ensureConnPassword(dvConn);
-    if(pw === null){ showNotification("Cancelled — a password is required.", "warning"); return; }
-    const base = connToConfig(Object.assign({}, dvConn, {password: pw}));
-    dvIssues = [];
-    let done = 0, failed = 0;
-    for(const t of tables){
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> ' + (done + 1) + '/' + tables.length;
-      const cfg = Object.assign({}, base, {
-        schema: tSchema, table: t.table,
-        keyColumns: t.keyColumns, mandatoryColumns: t.mandatoryColumns,
-        typelistChecks: t.typelistChecks, fkChecks: t.fkChecks, sampleLimit: 10
-      });
-      try{
-        const res = await fetch("/api/db/validate", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
-        const data = await res.json();
-        if(!data.ok){ failed++; continue; }
-        collectIssues(t.table, data); done++;
-      }catch(err){ failed++; }
-    }
-    dvState.page = 1;
-    updateKpis(done);
-    buildFilterBar();
-    renderIssues();
-    const issueCount = dvIssues.length;
-    if(failed) showNotification("Validated " + done + " of " + tables.length + " tables (" + failed + " failed).", failed === tables.length ? "danger" : "warning");
-    else showNotification(issueCount ? ("Validation complete — " + issueCount + " issue type(s) found.") : "Validation complete — no issues found.", issueCount ? "warning" : "success");
-  }catch(err){
-    showNotification("Backend not reachable. Start it with: cd server && python main.py", "danger");
-  }finally{
-    btn.disabled = false; btn.innerHTML = orig;
-  }
+/* ---------- custom validation rules (NL prompt over 1+ tables -> reviewable SQL query) ---------- */
+// Normalize a stored rule to the current shape (migrates legacy {table, predicate} rules).
+function normalizeRule(r){
+  const tables = Array.isArray(r.tables) ? r.tables : (r.table ? [r.table] : []);
+  return {
+    id: r.id || ("r" + Date.now() + Math.floor(Math.random() * 1000)),
+    tables, prompt: r.prompt || "", title: r.title || "Custom rule",
+    interpretation: r.interpretation || "", query: r.query || "", predicate: r.predicate || "",
+    enabled: r.enabled !== false
+  };
 }
-function collectIssues(table, data){
-  (data.checks || []).forEach(c => {
-    if(c.error){
-      dvIssues.push({table, type:c.type, columns:(c.columns||[]).join(", "), detail:"Check error: " + c.error, count:null, samples:""});
+// The main driving table of a query — the first table after FROM (strips schema/brackets).
+function drivingTable(query){
+  if(!query) return "";
+  const m = /\bfrom\s+(\[[^\]]+\]|"[^"]+"|[A-Za-z0-9_]+)(?:\s*\.\s*(\[[^\]]+\]|"[^"]+"|[A-Za-z0-9_]+))?/i.exec(query);
+  if(!m) return "";
+  return (m[2] || m[1]).replace(/^[\["]|[\]"]$/g, "");
+}
+function ruleFinalQuery(r, schema){
+  if(r.query && r.query.trim()) return r.query.trim();
+  if(r.predicate && r.predicate.trim() && r.tables && r.tables[0])
+    return "SELECT * FROM [" + schema + "].[" + r.tables[0] + "] WHERE (" + r.predicate.trim() + ")";
+  return null;
+}
+function buildCustomQueries(schema){
+  return dvCustomRules.filter(r => r.enabled)
+    .map(r => ({name: r.title || "Custom rule", query: ruleFinalQuery(r, schema), tables: r.tables || []}))
+    .filter(x => x.query);
+}
+
+function renderCustomRules(){
+  const list = document.getElementById("customRulesList");
+  if(!list) return;
+  if(!dvCustomRules.length){ list.innerHTML = '<div class="text-xs text-muted-2">No custom rules yet. Click &ldquo;Add rule&rdquo; to describe one in plain English (it can span multiple tables).</div>'; return; }
+  list.innerHTML = dvCustomRules.map(r =>
+    '<div class="dv-rule">' +
+      '<input type="checkbox" class="dv-rule-en" data-id="' + escapeHtml(r.id) + '"' + (r.enabled ? " checked" : "") + ' title="Include in validation / SQL">' +
+      '<div class="dv-rule-body">' +
+        '<div class="dv-rule-title">' + escapeHtml(r.title || "Custom rule") + ' <span class="text-xs text-muted-2">&middot; ' + escapeHtml(drivingTable(r.query) || (r.tables || [])[0] || "") + '</span></div>' +
+        (r.interpretation ? '<div class="text-xs text-muted-2">' + escapeHtml(r.interpretation) + '</div>' : '') +
+        '<div class="dv-pred">' + escapeHtml(r.query || r.predicate || "(no SQL)") + '</div>' +
+      '</div>' +
+      '<div class="dv-rule-actions">' +
+        '<button class="btn btn-sm btn-outline-soft dv-rule-edit" data-id="' + escapeHtml(r.id) + '" title="Edit"><i class="bi bi-pencil"></i></button>' +
+        '<button class="btn btn-sm btn-outline-soft dv-rule-del" data-id="' + escapeHtml(r.id) + '" title="Delete"><i class="bi bi-trash"></i></button>' +
+      '</div>' +
+    '</div>').join("");
+  list.querySelectorAll(".dv-rule-en").forEach(cb => cb.addEventListener("change", e => toggleRule(e.target.getAttribute("data-id"), e.target.checked)));
+  list.querySelectorAll(".dv-rule-edit").forEach(b => b.addEventListener("click", e => openRuleEditor(e.currentTarget.getAttribute("data-id"))));
+  list.querySelectorAll(".dv-rule-del").forEach(b => b.addEventListener("click", e => deleteRule(e.currentTarget.getAttribute("data-id"))));
+}
+function toggleRule(id, on){ const r = dvCustomRules.find(x => x.id === id); if(r){ r.enabled = on; persistConfig(); } }
+function deleteRule(id){ dvCustomRules = dvCustomRules.filter(x => x.id !== id); persistConfig(); renderCustomRules(); closeRuleEditor(); }
+function closeRuleEditor(){ const e = document.getElementById("ruleEditor"); if(e) e.innerHTML = ""; dvRuleDraft = null; }
+
+function openRuleEditor(id){
+  const tables = Object.keys(dvFieldsByTable);
+  if(!tables.length){ showNotification("Load a target schema first.", "warning"); return; }
+  const editing = id ? dvCustomRules.find(x => x.id === id) : null;
+  dvRuleDraft = editing ? {title: editing.title, interpretation: editing.interpretation} : null;
+  const ruleSel = new Set(editing ? (editing.tables || []) : Array.from(dvSelected));
+  const ed = document.getElementById("ruleEditor");
+  ed.innerHTML =
+    '<div class="dv-rule-editor">' +
+      '<div class="d-flex align-items-center" id="ruleTablesHdr" style="cursor:pointer;">' +
+        '<label style="margin:0;cursor:pointer;">Tables — select one or more</label>' +
+        '<span class="text-xs text-muted-2 ms-2" id="ruleSelCountHdr"></span>' +
+        '<i class="bi bi-chevron-up ms-auto" id="ruleTablesChev"></i>' +
+      '</div>' +
+      '<div id="ruleTablesWrap">' +
+        '<input type="text" class="form-control form-control-sm mb-1 mt-1" id="ruleTableSearch" placeholder="Search tables…">' +
+        '<label class="d-flex align-items-center gap-2" style="text-transform:none;letter-spacing:0;font-size:.78rem;color:var(--text-main);margin:.1rem 0 .3rem;"><input type="checkbox" id="ruleSelectAll"> <span>Select all</span> <span class="ms-auto text-muted-2" id="ruleSelCount"></span></label>' +
+        '<div class="dv-rule-tables" id="ruleTables"></div>' +
+      '</div>' +
+      '<label class="mt-2">Rule (plain English)</label>' +
+      '<textarea class="form-control form-control-sm" id="rulePrompt" rows="2" placeholder="e.g. if a claim is closed, its exposures must also be closed">' + escapeHtml(editing ? (editing.prompt || "") : "") + '</textarea>' +
+      '<div class="d-flex gap-2 mt-2">' +
+        '<button class="btn btn-sm btn-primary" id="ruleInterpretBtn"><i class="bi bi-stars me-1"></i> Interpret with AI</button>' +
+        '<button class="btn btn-sm btn-outline-soft" id="ruleCancelBtn">Cancel</button>' +
+      '</div>' +
+      '<div id="ruleResult" class="mt-2"' + (editing && editing.query ? "" : ' style="display:none;"') + '>' +
+        '<label>AI interpretation</label><div class="text-xs mb-2" id="ruleInterp">' + escapeHtml(editing ? (editing.interpretation || "") : "") + '</div>' +
+        '<label>SQL query — returns offending rows (editable)</label>' +
+        '<textarea class="form-control form-control-sm dv-pred" id="ruleQuery" rows="4">' + escapeHtml(editing ? (editing.query || "") : "") + '</textarea>' +
+        '<div class="d-flex gap-2 mt-2"><button class="btn btn-sm btn-primary" id="ruleSaveBtn"><i class="bi bi-check2 me-1"></i> Save rule</button></div>' +
+      '</div>' +
+    '</div>';
+  function updateRuleSelState(filtered){
+    const sel = filtered.filter(t => ruleSel.has(t)).length;
+    const sa = document.getElementById("ruleSelectAll");
+    if(sa){ sa.checked = filtered.length > 0 && sel === filtered.length; sa.indeterminate = sel > 0 && sel < filtered.length; }
+    const label = ruleSel.size ? (ruleSel.size + " selected") : "";
+    const cnt = document.getElementById("ruleSelCount");
+    if(cnt) cnt.textContent = label;
+    const cntH = document.getElementById("ruleSelCountHdr");
+    if(cntH) cntH.textContent = ruleSel.size ? ("(" + ruleSel.size + " selected)") : "(none selected)";
+  }
+  function renderRuleTables(){
+    const q = (document.getElementById("ruleTableSearch").value || "").toLowerCase().trim();
+    const filtered = tables.filter(t => !q || t.toLowerCase().includes(q));
+    const box = document.getElementById("ruleTables");
+    box.innerHTML = filtered.map(t =>
+      '<label class="dv-rule-tbl"><input type="checkbox" class="rule-tbl-cb" value="' + escapeHtml(t) + '"' + (ruleSel.has(t) ? " checked" : "") + '> ' + escapeHtml(t) + '</label>').join("") ||
+      '<div class="text-xs text-muted-2" style="padding:.3rem;">No tables match.</div>';
+    box.querySelectorAll(".rule-tbl-cb").forEach(cb => cb.addEventListener("change", e => {
+      if(e.target.checked) ruleSel.add(e.target.value); else ruleSel.delete(e.target.value);
+      updateRuleSelState(filtered);
+    }));
+    updateRuleSelState(filtered);
+  }
+  renderRuleTables();
+  document.getElementById("ruleTableSearch").addEventListener("input", renderRuleTables);
+  document.getElementById("ruleSelectAll").addEventListener("change", e => {
+    const q = (document.getElementById("ruleTableSearch").value || "").toLowerCase().trim();
+    const filtered = tables.filter(t => !q || t.toLowerCase().includes(q));
+    if(e.target.checked) filtered.forEach(t => ruleSel.add(t)); else filtered.forEach(t => ruleSel.delete(t));
+    renderRuleTables();
+  });
+  // collapse the table list to give the rule text room; header toggles it back
+  const tablesWrap = document.getElementById("ruleTablesWrap");
+  const chev = document.getElementById("ruleTablesChev");
+  function setTablesCollapsed(collapsed){
+    tablesWrap.style.display = collapsed ? "none" : "";
+    if(chev) chev.className = "bi ms-auto " + (collapsed ? "bi-chevron-down" : "bi-chevron-up");
+  }
+  document.getElementById("ruleTablesHdr").addEventListener("click", () => setTablesCollapsed(tablesWrap.style.display !== "none"));
+  document.getElementById("rulePrompt").addEventListener("focus", () => setTablesCollapsed(true));
+  document.getElementById("ruleInterpretBtn").addEventListener("click", () => interpretRule(ruleSel));
+  document.getElementById("ruleCancelBtn").addEventListener("click", closeRuleEditor);
+  const saveBtn = document.getElementById("ruleSaveBtn");
+  if(saveBtn) saveBtn.addEventListener("click", () => saveRule(editing ? editing.id : null, ruleSel));
+}
+
+async function interpretRule(ruleSel){
+  const tablesSel = Array.from(ruleSel);
+  const prompt = (document.getElementById("rulePrompt").value || "").trim();
+  if(!tablesSel.length){ showNotification("Select at least one table.", "warning"); return; }
+  if(!prompt){ showNotification("Type the rule in plain English first.", "warning"); return; }
+  const schema = (dvConn && dvConn.schema) || "dbo";
+  const tablesPayload = tablesSel.map(t => ({
+    name: t,
+    columns: (dvFieldsByTable[t] || []).map(f => ({
+      name: f.name, dataType: f.dataType || "", description: f.description || "",
+      typeKey: f.typeKey || "", accepted: f.accepted || "", allowedValues: resolveAllowed(f).slice(0, 50)
+    }))
+  }));
+  const btn = document.getElementById("ruleInterpretBtn");
+  const orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Interpreting…';
+  try{
+    const r = await apiPost("/api/ai/custom-rule", {schema, tables: tablesPayload, prompt});
+    if(r.netError){ showNotification("Backend not reachable — is the server running?", "danger"); return; }
+    if(!r.ok){ showNotification("Could not interpret rule: " + r.error, "danger"); return; }
+    const rule = r.data.rule || {};
+    if(!rule.violationQuery){
+      showNotification("AI couldn't express this from the selected tables" + (rule.note ? (": " + rule.note) : "") + ".", "warning");
       return;
     }
-    if(c.type === "duplicate"){
-      dvIssues.push({table, type:"duplicate", columns:(c.columns||[]).join(", "),
-        detail:(c.groupCount||0) + " duplicate key group(s)", count:c.count || 0,
-        samples:(c.samples||[]).map(s => "[" + escapeHtml(String(s.key)) + "] ×" + s.count).join("  ·  ")});
-    }else if(c.type === "mandatory"){
-      dvIssues.push({table, type:"mandatory", columns:(c.columns||[]).join(", "),
-        detail:"NULLs in required column", count:c.count || 0, samples:""});
-    }else if(c.type === "typelist"){
-      dvIssues.push({table, type:"typelist", columns:(c.columns||[]).join(", "),
-        detail:"values outside the typelist domain", count:c.count || 0,
-        samples:(c.samples||[]).map(s => escapeHtml(String(s.value)) + " ×" + s.count).join("  ·  ")});
-    }else if(c.type === "foreignKey"){
-      dvIssues.push({table, type:"foreignKey", columns:(c.columns||[]).join(", "),
-        detail:"orphans → " + (c.reference || ""), count:c.count || 0,
-        samples:(c.samples||[]).map(s => escapeHtml(String(s.value)) + " ×" + s.count).join("  ·  ")});
-    }
-  });
-}
-function updateKpis(tablesChecked){
-  const sum = (type) => dvIssues.filter(i => i.type === type && i.count).reduce((a, i) => a + (i.count || 0), 0);
-  document.getElementById("statTables").textContent = tablesChecked;
-  document.getElementById("statDuplicates").textContent = sum("duplicate").toLocaleString();
-  document.getElementById("statMandatory").textContent = sum("mandatory").toLocaleString();
-  document.getElementById("statTypelist").textContent = sum("typelist").toLocaleString();
-  document.getElementById("statForeignKey").textContent = sum("foreignKey").toLocaleString();
+    dvRuleDraft = {title: rule.title || prompt.slice(0, 48), interpretation: rule.interpretation || ""};
+    document.getElementById("ruleInterp").textContent = rule.interpretation || "";
+    document.getElementById("ruleQuery").value = rule.violationQuery;
+    document.getElementById("ruleResult").style.display = "";
+  }catch(err){
+    showNotification("Interpret error: " + (err && err.message ? err.message : err), "danger");
+  }finally{ btn.disabled = false; btn.innerHTML = orig; }
 }
 
-/* ---------- results grid ---------- */
-const DV_TYPE_LABELS = {duplicate:"Duplicate", mandatory:"Mandatory Null", typelist:"Typelist", foreignKey:"Foreign Key", error:"Error"};
-function buildFilterBar(){
-  const bar = document.getElementById("filterBar");
-  if(!bar) return;
-  const tables = Array.from(new Set(dvIssues.map(i => i.table))).sort();
-  const typeOpts = ['<option value="">All checks</option>'].concat(
-    Object.keys(DV_TYPE_LABELS).map(k => '<option value="' + k + '"' + (dvState.filters.type === k ? " selected" : "") + '>' + DV_TYPE_LABELS[k] + '</option>')).join("");
-  const tblOpts = ['<option value="">All tables</option>'].concat(
-    tables.map(t => '<option value="' + escapeHtml(t) + '"' + (dvState.filters.table === t ? " selected" : "") + '>' + escapeHtml(t) + '</option>')).join("");
-  bar.innerHTML =
-    '<select class="form-select form-select-sm" id="fltType" style="max-width:180px;">' + typeOpts + '</select>' +
-    '<select class="form-select form-select-sm" id="fltTable" style="max-width:220px;">' + tblOpts + '</select>';
-  document.getElementById("fltType").addEventListener("change", e => { dvState.filters.type = e.target.value; dvState.page = 1; renderIssues(); });
-  document.getElementById("fltTable").addEventListener("change", e => { dvState.filters.table = e.target.value; dvState.page = 1; renderIssues(); });
-}
-function filteredIssues(){
-  return dvIssues.filter(i =>
-    (!dvState.filters.type || i.type === dvState.filters.type) &&
-    (!dvState.filters.table || i.table === dvState.filters.table));
-}
-function renderIssues(){
-  const body = document.getElementById("issuesBody");
-  if(!body) return;
-  const all = filteredIssues();
-  if(!all.length){
-    body.innerHTML = '<tr><td colspan="6" class="text-center text-muted-2" style="padding:1.4rem;">' +
-      (dvIssues.length ? "No issues match the current filter." : "No live results yet — tick checks and click Run Validation (or use Generate SQL to run on SQL Server yourself).") + '</td></tr>';
-    document.getElementById("pgInfo").textContent = "";
-    document.getElementById("pgControls").innerHTML = "";
-    return;
+function saveRule(existingId, ruleSel){
+  const tablesSel = Array.from(ruleSel);
+  const prompt = (document.getElementById("rulePrompt").value || "").trim();
+  const query = (document.getElementById("ruleQuery").value || "").trim();
+  if(!query){ showNotification("Interpret the rule (or enter a SQL query) before saving.", "warning"); return; }
+  const title = (dvRuleDraft && dvRuleDraft.title) || prompt.slice(0, 48) || "Custom rule";
+  const interpretation = (dvRuleDraft && dvRuleDraft.interpretation) || "";
+  if(existingId){
+    const r = dvCustomRules.find(x => x.id === existingId);
+    if(r) Object.assign(r, {tables: tablesSel, prompt, query, predicate: "", title, interpretation});
+  }else{
+    dvCustomRules.push({id: "r" + Date.now() + Math.floor(Math.random() * 1000), tables: tablesSel, prompt, query, predicate: "", title, interpretation, enabled: true});
   }
-  const total = all.length;
-  const pages = Math.max(1, Math.ceil(total / dvState.pageSize));
-  if(dvState.page > pages) dvState.page = pages;
-  const start = (dvState.page - 1) * dvState.pageSize;
-  const slice = all.slice(start, start + dvState.pageSize);
-  body.innerHTML = slice.map(i => {
-    const sevCls = i.type === "error" ? "badge-gray" : (i.type === "duplicate" || i.type === "mandatory" ? "badge-low" : "badge-med");
-    return '<tr>' +
-      '<td>' + escapeHtml(i.table) + '</td>' +
-      '<td><span class="badge-soft ' + sevCls + '">' + (DV_TYPE_LABELS[i.type] || i.type) + '</span></td>' +
-      '<td class="mono">' + escapeHtml(i.columns) + '</td>' +
-      '<td>' + escapeHtml(i.detail) + '</td>' +
-      '<td>' + (i.count == null ? "—" : Number(i.count).toLocaleString()) + '</td>' +
-      '<td class="text-xs">' + (i.samples || "") + '</td>' +
-    '</tr>';
-  }).join("");
-  document.getElementById("pgInfo").textContent = "Showing " + (start + 1) + "–" + Math.min(start + dvState.pageSize, total) + " of " + total;
-  const ctrl = document.getElementById("pgControls");
-  ctrl.innerHTML =
-    '<button class="btn btn-sm btn-outline-soft" ' + (dvState.page <= 1 ? "disabled" : "") + ' id="pgPrev">Prev</button>' +
-    '<span class="mx-2 text-xs">Page ' + dvState.page + ' / ' + pages + '</span>' +
-    '<button class="btn btn-sm btn-outline-soft" ' + (dvState.page >= pages ? "disabled" : "") + ' id="pgNext">Next</button>';
-  const prev = document.getElementById("pgPrev"), next = document.getElementById("pgNext");
-  if(prev) prev.addEventListener("click", () => { if(dvState.page > 1){ dvState.page--; renderIssues(); } });
-  if(next) next.addEventListener("click", () => { if(dvState.page < pages){ dvState.page++; renderIssues(); } });
+  persistConfig();
+  renderCustomRules();
+  closeRuleEditor();
+  showNotification("Custom rule saved.", "success");
 }
 
-async function clearResults(){
-  const ok = await confirmDialog("Clear the live validation results? Your table/column selections and generated SQL are kept.", "Clear Results");
+/* ---------- clear the whole configuration on this page ---------- */
+async function clearConfig(){
+  const ok = await confirmDialog("Clear all selected tables, ticked checks, and custom rules on this page? This cannot be undone.", "Clear Configuration");
   if(!ok) return;
-  dvIssues = [];
-  dvState.page = 1;
-  updateKpis(0);
-  buildFilterBar();
-  renderIssues();
-  showNotification("Results cleared.", "primary");
+  dvSelected = new Set();
+  dvChecks = {}; dvOrigin = {}; dvAllowed = {}; dvFk = {}; dvDomainName = {};
+  dvCustomRules = [];
+  dvSql = "";
+  persistConfig();
+  const selAll = document.getElementById("selectAllTables"); if(selAll) selAll.checked = false;
+  const sqlCard = document.getElementById("sqlCard"); if(sqlCard) sqlCard.style.display = "none";
+  buildTableList();
+  renderCheckGrid();
+  renderCustomRules();
+  showNotification("Configuration cleared.", "primary");
 }

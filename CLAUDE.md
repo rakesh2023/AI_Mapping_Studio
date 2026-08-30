@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**AI Mapping Studio** — a PwC-themed, AI-assisted **source-to-target data migration mapping** tool
+**AI Data Conversion Studio** — a PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). A static HTML/CSS/vanilla-JS frontend backed by a single-file
 Python/Flask service that talks to a live SQL Server (via pyodbc) and the Claude API (via a corporate
 gateway). There is **no build step** — the frontend is served as-is.
