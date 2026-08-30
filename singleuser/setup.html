@@ -118,6 +118,10 @@ document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('c
   const gw = currentMode()==='gateway';
   document.getElementById('gatewayFields').style.display = gw ? '' : 'none';
   document.getElementById('publicFields').style.display = gw ? 'none' : '';
+  // Steer the model to a sensible default for the chosen mode.
+  const m=document.getElementById('model');
+  if(gw && /^claude-/.test(m.value)) m.value='bedrock.anthropic.claude-opus-4-8';
+  if(!gw && /^bedrock\./.test(m.value)) m.value='claude-sonnet-5';
 }));
 document.getElementById('saveKey').addEventListener('click', async () => {
   const btn=document.getElementById('saveKey'), msg=document.getElementById('keyMsg');

@@ -77,6 +77,14 @@ def setup_api_key():
             token = (body.get("authToken") or "").strip()
             if not token:
                 return jsonify({"ok": False, "error": "Enter the gateway auth token."}), 400
+            if not ca:
+                # Auto-detect the app's CA bundle (server/win-ca-bundle.pem or an SSL_CERT_FILE
+                # env), so a gateway behind a TLS-intercepting proxy works without typing a path.
+                try:
+                    from app.core.config import ca_bundle as _detect_ca
+                    ca = _detect_ca() or ""
+                except Exception:  # noqa: BLE001
+                    ca = ""
             if ca and not os.path.isfile(ca):
                 return jsonify({"ok": False, "error": "CA bundle file not found: " + ca}), 400
             kwargs = {"auth_token": token, "base_url": base_url}
