@@ -37,6 +37,7 @@
     const name = el("cName").value.trim();
     if(!name){ showErr("Client name is required."); return; }
     const config = {
+      product: el("cProduct").value || "",
       migrationType: el("cMigration").value || "",
       sourceApplication: el("cSourceApp").value.trim(),
       targetApplication: el("cTargetApp").value.trim(),

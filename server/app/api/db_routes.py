@@ -75,3 +75,14 @@ def validate_query():
     cfg = request.get_json(force=True) or {}
     payload, status = db_service.run_custom_query(cfg)
     return jsonify(payload), status
+
+
+@bp.route("/issue-rows", methods=["POST"])
+def issue_rows():
+    """Fetch the offending rows for one Validation Report issue (row drill-down)."""
+    blocked = _throttle()
+    if blocked:
+        return blocked
+    cfg = request.get_json(force=True) or {}
+    payload, status = db_service.issue_rows(cfg)
+    return jsonify(payload), status

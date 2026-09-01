@@ -12,6 +12,7 @@ let vrFieldsByTable = {};
 let vrTypelistIndex = {};
 let vrTypelistNameByBase = {};
 let vrIssues = [];
+let vrCurrentSlice = [];   // issues rendered on the current page (indexed by <tr data-slot>)
 let vrTablesChecked = 0;
 let vrTablesSelected = 0;
 let vrState = { page:1, pageSize:25, filters:{type:"", table:"", q:""} };
@@ -36,6 +37,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   resolveActiveTarget();
 
   document.getElementById("refreshBtn").addEventListener("click", runReport);
+  const ib = document.getElementById("issuesBody");
+  if(ib) ib.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr.vr-row");
+    if(!tr) return;
+    e.preventDefault();
+    const slot = parseInt(tr.getAttribute("data-slot"), 10);
+    if(!isNaN(slot) && vrCurrentSlice[slot]) openIssueRows(vrCurrentSlice[slot]);
+  });
   buildFilterBar();
 
   if(!hasConfig()){
@@ -201,7 +210,7 @@ async function runReport(){
       try{
         const res = await fetch("/api/db/validate-query", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(Object.assign({}, base, {query: cq.query, sampleLimit: 10}))});
         const data = await res.json();
-        if(data && data.ok){ if((data.count || 0) > 0) vrIssues.push({table: drivingTable(cq.query) || (cq.tables || [])[0] || "—", type:"custom", columns:"", detail:cq.name, count:data.count, samples:""}); done++; }
+        if(data && data.ok){ if((data.count || 0) > 0) vrIssues.push({table: drivingTable(cq.query) || (cq.tables || [])[0] || "—", type:"custom", columns:"", detail:cq.name, count:data.count, samples:"", drillable:true, spec:{query:cq.query}}); done++; }
         else failed++;
       }catch(err){ failed++; }
     }
@@ -218,25 +227,153 @@ async function runReport(){
     btn.disabled = false; btn.innerHTML = orig;
   }
 }
+// A few sample values, escaped as plain text (context alongside the drill-down).
+function vrSamples(list){
+  return (list || []).map(s => escapeHtml(String(s.value)) + " ×" + s.count).join("  ·  ");
+}
+// The client's product foreign-key column on child tables: claim→claimid, policy→policyid, billing→billingid.
+function productKeyColumn(){
+  const p = (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "") : "";
+  return p ? (p.toLowerCase() + "id") : "";
+}
+
 function collectIssues(table, data){
+  const fields = vrFieldsByTable[table] || [];
+  const tSchema = (vrConn && vrConn.schema) || "dbo";
   (data.checks || []).forEach(c => {
-    if(c.error){ vrIssues.push({table, type:c.type, columns:(c.columns||[]).join(", "), detail:"Check error: " + c.error, count:0, samples:""}); return; }
+    if(c.error){ vrIssues.push({table, type:c.type, columns:(c.columns||[]).join(", "), detail:"Check error: " + c.error, count:0, samples:"", drillable:false}); return; }
     if(c.type === "duplicate"){
       vrIssues.push({table, type:"duplicate", columns:(c.columns||[]).join(", "),
         detail:(c.groupCount||0) + " duplicate key group(s)", count:c.count || 0,
-        samples:(c.samples||[]).map(s => "[" + escapeHtml(String(s.key)) + "] ×" + s.count).join("  ·  ")});
+        samples:(c.samples||[]).map(s => "[" + escapeHtml(String(s.key)) + "] ×" + s.count).join("  ·  "),
+        drillable:(c.count||0) > 0, spec:{keyColumns:(c.columns||[])}});
     }else if(c.type === "mandatory"){
-      vrIssues.push({table, type:"mandatory", columns:(c.columns||[]).join(", "), detail:"NULLs in required column", count:c.count || 0, samples:""});
+      vrIssues.push({table, type:"mandatory", columns:(c.columns||[]).join(", "), detail:"NULLs in required column", count:c.count || 0, samples:"",
+        drillable:(c.count||0) > 0, spec:{column:(c.columns||[])[0]}});
     }else if(c.type === "typelist"){
-      vrIssues.push({table, type:"typelist", columns:(c.columns||[]).join(", "), detail:"values outside the typelist domain", count:c.count || 0,
-        samples:(c.samples||[]).map(s => escapeHtml(String(s.value)) + " ×" + s.count).join("  ·  ")});
+      const col = (c.columns||[])[0];
+      const field = fields.find(f => (f.name||"") === col) || fields.find(f => (f.name||"").toLowerCase() === String(col||"").toLowerCase());
+      const allowed = field ? resolveAllowed(field) : [];
+      const base = field ? vrBaseName(field.typeKey || field.name) : "";
+      const typelistName = vrTypelistNameByBase[base] || "";
+      vrIssues.push({table, type:"typelist", columns:(c.columns||[]).join(", "), detail:"values outside the typelist domain" + (typelistName ? (" (" + typelistName + ")") : ""), count:c.count || 0,
+        samples:vrSamples(c.samples),
+        drillable:(c.count||0) > 0 && allowed.length > 0, spec:{column:col, allowedValues:allowed, typelistName:typelistName}});
     }else if(c.type === "foreignKey"){
+      const fk = parseFkRef(c.reference, (c.columns||[])[0]) || {};
       vrIssues.push({table, type:"foreignKey", columns:(c.columns||[]).join(", "), detail:"orphans → " + (c.reference || ""), count:c.count || 0,
-        samples:(c.samples||[]).map(s => escapeHtml(String(s.value)) + " ×" + s.count).join("  ·  ")});
+        samples:vrSamples(c.samples),
+        drillable:(c.count||0) > 0, spec:{column:(c.columns||[])[0], parentTable:fk.parentTable, parentColumn:fk.parentColumn, parentSchema:tSchema}});
     }else if(c.type === "custom"){
-      vrIssues.push({table, type:"custom", columns:"", detail:(c.name || "Custom rule"), count:c.count || 0, samples:""});
+      vrIssues.push({table, type:"custom", columns:"", detail:(c.name || "Custom rule"), count:c.count || 0, samples:"", drillable:false, spec:{}});
     }
   });
+}
+
+function injectIssueModal(){
+  if(document.getElementById("vrIssueModal")) return;
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal fade" id="vrIssueModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-xl">' +
+    '<div class="modal-content"><div class="modal-header">' +
+      '<h5 class="modal-title"><i class="bi bi-list-columns-reverse me-1"></i> Offending records <span id="vrIssueTitle" class="text-muted-2 fw-normal ms-1"></span></h5>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+    '<div class="modal-body" id="vrIssueBody" style="max-height:70vh;overflow:auto;"></div>' +
+    '<div class="modal-footer"><button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Close</button></div>' +
+    '</div></div></div>');
+}
+
+// Value of a named column in a returned row (case-insensitive), or "" if absent.
+function cellVal(cols, row, name){
+  if(!name) return "";
+  const i = (cols || []).findIndex(c => String(c).toLowerCase() === String(name).toLowerCase());
+  return i >= 0 ? row[i] : "";
+}
+// A plain-English explanation of why a given row is an offending record.
+function issueRowMessage(issue, cols, row){
+  const spec = issue.spec || {};
+  const val = cellVal(cols, row, spec.column);
+  const q = v => '"' + String(v) + '"';
+  switch(issue.type){
+    case "foreignKey":
+      return spec.column + " " + q(val) + " is not available in " +
+        (spec.parentTable || "the referenced table") + (spec.parentColumn ? ("." + spec.parentColumn) : "") +
+        " — orphaned reference.";
+    case "mandatory":
+      return "Required column " + q(spec.column) + " is missing (NULL) for this record.";
+    case "typelist":
+      return q(val) + " in " + spec.column + " is not an allowed value" +
+        (spec.typelistName ? (" as per typelist " + spec.typelistName) : "") + ".";
+    case "duplicate": {
+      const n = cellVal(cols, row, "duplicate_count");
+      return "This " + ((spec.keyColumns || []).join(", ") || "key") + " combination occurs " +
+        (n ? (n + " times") : "more than once") + " (must be unique).";
+    }
+    case "custom":
+      return "Violates rule: " + (issue.detail || "custom rule") + ".";
+    default:
+      return "";
+  }
+}
+
+/* Row drill-down: query the live target for ALL offending records of one issue and show them. */
+async function openIssueRows(issue){
+  if(!issue || !issue.drillable) return;
+  if(!vrConn){ showNotification("No active SQL Server target to query.", "warning"); return; }
+  const meta = VR_TYPE_META[issue.type] || {label:issue.type};
+  injectIssueModal();
+  const body = document.getElementById("vrIssueBody");
+  const titleEl = document.getElementById("vrIssueTitle");
+  if(titleEl) titleEl.textContent = "· " + issue.table + " · " + meta.label;
+  new bootstrap.Modal(document.getElementById("vrIssueModal")).show();
+  body.innerHTML = '<div class="text-center text-muted-2 py-4"><span class="spinner-border spinner-border-sm me-2"></span>Reading offending records from ' + escapeHtml(issue.table) + ' …</div>';
+
+  const pw = await ensureConnPassword(vrConn);
+  if(pw === null){ body.innerHTML = '<div class="text-xs text-muted-2">Cancelled — a password is required to query the target.</div>'; return; }
+  const schema = (vrConn && vrConn.schema) || "dbo";
+  const fields = vrFieldsByTable[issue.table] || [];
+  const hasCol = name => fields.some(f => (f.name||"").toLowerCase() === String(name||"").toLowerCase());
+  const spec = issue.spec || {};
+
+  // selectColumns: product key (claimid/policyid) if present, the offending column, then publicid.
+  const sel = [];
+  const pk = productKeyColumn();
+  const hasPk = pk && hasCol(pk);
+  if(hasPk) sel.push(pk);
+  if(spec.column && sel.map(s=>s.toLowerCase()).indexOf(String(spec.column).toLowerCase()) === -1) sel.push(spec.column);
+  if(hasCol("publicid") && sel.map(s=>s.toLowerCase()).indexOf("publicid") === -1) sel.push("publicid");
+
+  const payload = Object.assign(connToConfig(Object.assign({}, vrConn, {password: pw})), {
+    schema: schema, table: issue.table, type: issue.type,
+    selectColumns: sel,
+    orderBy: hasPk ? pk : "",   // group offending rows by the client's product key (claimid/policyid)
+    column: spec.column, parentTable: spec.parentTable, parentColumn: spec.parentColumn, parentSchema: spec.parentSchema,
+    allowedValues: spec.allowedValues, keyColumns: spec.keyColumns, predicate: spec.predicate, query: spec.query,
+    limit: 200
+  });
+  try{
+    const res = await fetch("/api/db/issue-rows", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){
+      body.innerHTML = '<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;"><i class="bi bi-x-circle"></i> ' +
+        escapeHtml((j && j.error) || "Could not read the offending rows.") + '</div>';
+      return;
+    }
+    const cols = j.columns || [], rows = j.rows || [];
+    const note = '<div class="text-xs text-muted-2 mb-2">' +
+      (rows.length ? ('Showing ' + rows.length + (j.truncated ? ("+ of " + Number(issue.count||0).toLocaleString()) : (" of " + Number(issue.count||0).toLocaleString())) + ' offending record(s).') : '') +
+      '</div>';
+    if(!rows.length){
+      body.innerHTML = '<div class="hint-note"><i class="bi bi-info-circle"></i> No offending rows returned.</div>';
+      return;
+    }
+    const head = '<tr><th>ErrorType</th><th>Issue</th>' + cols.map(c => '<th>' + escapeHtml(c) + '</th>').join("") + '</tr>';
+    const trs = rows.map(r =>
+      '<tr><td><span class="badge-soft" style="background:' + (meta.color||"#8a94a6") + '22;color:' + (meta.color||"#8a94a6") + ';">' + escapeHtml(meta.label) + '</span></td>' +
+      '<td class="text-xs">' + escapeHtml(issueRowMessage(issue, cols, r)) + '</td>' +
+      r.map(v => '<td class="mono text-xs">' + escapeHtml(String(v)) + '</td>').join("") + '</tr>').join("");
+    body.innerHTML = note +
+      '<div class="table-responsive-el"><table class="grid-table"><thead>' + head + '</thead><tbody>' + trs + '</tbody></table></div>';
+  }catch(e){ body.innerHTML = '<div class="text-xs text-muted-2">Cannot reach the server.</div>'; }
 }
 
 /* ---------- render ---------- */
@@ -336,7 +473,8 @@ function renderTable(){
   if(!body) return;
   const all = filteredIssues();
   if(!all.length){
-    body.innerHTML = '<tr><td colspan="6" class="vr-empty">' +
+    vrCurrentSlice = [];
+    body.innerHTML = '<tr><td colspan="7" class="vr-empty">' +
       (vrIssues.length ? "No issues match the current filter." : "No issues found — run the report, or your data is clean. 🎉") + '</td></tr>';
     document.getElementById("pgInfo").textContent = "";
     document.getElementById("pgControls").innerHTML = "";
@@ -347,9 +485,14 @@ function renderTable(){
   if(vrState.page > pages) vrState.page = pages;
   const start = (vrState.page - 1) * vrState.pageSize;
   const slice = all.slice(start, start + vrState.pageSize);
-  body.innerHTML = slice.map(i => {
+  vrCurrentSlice = slice;
+  body.innerHTML = slice.map((i, slot) => {
     const meta = VR_TYPE_META[i.type] || {label:i.type, color:"#8a94a6"};
-    return '<tr>' +
+    const view = i.drillable
+      ? '<a href="#" class="vr-drill" title="Show all offending records"><i class="bi bi-search"></i> View</a>'
+      : '<span class="text-muted-2 text-xs">—</span>';
+    return '<tr' + (i.drillable ? ' class="vr-row" data-slot="' + slot + '"' : '') + '>' +
+      '<td>' + view + '</td>' +
       '<td>' + escapeHtml(i.table) + '</td>' +
       '<td><span class="badge-soft" style="background:' + meta.color + '22;color:' + meta.color + ';">' + escapeHtml(meta.label) + '</span></td>' +
       '<td class="mono">' + escapeHtml(i.columns) + '</td>' +

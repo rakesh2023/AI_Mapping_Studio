@@ -597,6 +597,15 @@ function buildClientSwitcherHTML(){
   '</div>';
 }
 
+// The active client's selected Product ("claim" | "policy" | "billing"), or "" if none set.
+// Used by the data-validation feature to group results/SQL by the product's driving key.
+function getActiveClientProduct(){
+  try{
+    const c = ((AUTH && AUTH.clients) || []).find(x => x.id === (AUTH && AUTH.activeClientId));
+    return (c && c.config && c.config.product) || "";
+  }catch(e){ return ""; }
+}
+
 /* ---- Client management modal (create / edit / switch) ---- */
 function injectClientModal(){
   if(document.getElementById("clientModal")) return;
@@ -613,6 +622,13 @@ function injectClientModal(){
       '<input type="hidden" id="cmEditId">' +
       '<div class="form-group"><label>Name <span class="text-danger">*</span></label><input class="form-control" id="cmName" autocomplete="off"></div>' +
       '<div class="form-group"><label>Industry</label><input class="form-control" id="cmIndustry" autocomplete="off"></div>' +
+      '<div class="form-group"><label>Product <span class="text-muted-2 text-xs">(groups data validation)</span></label>' +
+        '<select class="form-select" id="cmProduct">' +
+          '<option value="">—</option>' +
+          '<option value="claim">Claim (ClaimCenter)</option>' +
+          '<option value="policy">Policy (PolicyCenter)</option>' +
+          '<option value="billing">Billing (BillingCenter)</option>' +
+        '</select></div>' +
       '<div class="d-flex gap-2 mt-2">' +
         '<button type="button" class="btn btn-primary btn-sm" id="cmSave"><i class="bi bi-check2 me-1"></i> Create client</button>' +
         '<button type="button" class="btn btn-outline-soft btn-sm" id="cmCancelEdit" style="display:none;">Cancel edit</button>' +
@@ -627,6 +643,7 @@ function setClientForm(client){
   document.getElementById("cmEditId").value = client ? client.id : "";
   document.getElementById("cmName").value = client ? client.name : "";
   document.getElementById("cmIndustry").value = client ? (client.industry || "") : "";
+  document.getElementById("cmProduct").value = client ? ((client.config && client.config.product) || "") : "";
   document.getElementById("cmFormTitle").innerHTML = client
     ? '<i class="bi bi-pencil"></i> Edit client'
     : '<i class="bi bi-plus-lg"></i> New client';
@@ -649,7 +666,7 @@ async function renderClientModalList(){
     return '<div class="d-flex align-items-center justify-content-between" style="padding:6px 0;border-bottom:1px solid var(--border);">' +
       '<div><div style="font-weight:600;">' + escapeHtml(c.name) +
         (active ? ' <span class="badge-soft badge-high">active</span>' : '') + '</div>' +
-        '<div class="text-xs text-muted-2">' + escapeHtml(c.industry || "—") + '</div></div>' +
+        '<div class="text-xs text-muted-2">' + escapeHtml(c.industry || "—") + ((c.config && c.config.product) ? ' &middot; ' + escapeHtml(c.config.product) : '') + '</div></div>' +
       '<div class="d-flex gap-2">' +
         (active ? '' : '<button type="button" class="btn btn-sm btn-outline-soft cm-switch" data-id="' + c.id + '">Switch</button>') +
         '<button type="button" class="btn btn-sm btn-outline-soft cm-edit" data-id="' + c.id + '">Edit</button>' +
@@ -693,12 +710,16 @@ async function saveClientFromModal(){
   const id = document.getElementById("cmEditId").value;
   const name = document.getElementById("cmName").value.trim();
   const industry = document.getElementById("cmIndustry").value.trim();
+  const product = document.getElementById("cmProduct").value || "";
   if(!name){ _cmErr("Client name is required."); return; }
+  // On edit, keep the client's existing config and only set product (don't wipe other keys).
+  let config = {product};
+  if(id){ const existing = (AUTH && AUTH.clients || []).find(x => String(x.id) === String(id)); if(existing && existing.config) config = Object.assign({}, existing.config, {product}); }
   const btn = document.getElementById("cmSave"); btn.disabled = true;
   try{
     const url = id ? ("/api/clients/" + encodeURIComponent(id)) : "/api/clients";
     const method = id ? "PUT" : "POST";
-    const res = await fetch(url, {method: method, headers:{"Content-Type":"application/json"}, body: JSON.stringify({name, industry, config:{}})});
+    const res = await fetch(url, {method: method, headers:{"Content-Type":"application/json"}, body: JSON.stringify({name, industry, config})});
     const j = await res.json().catch(()=>({}));
     if(!res.ok || !j.ok){ _cmErr(j.error || "Could not save the client."); return; }
     // Create -> it becomes the active client (server side) -> reload into its context.

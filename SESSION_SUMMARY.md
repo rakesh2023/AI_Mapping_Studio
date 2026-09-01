@@ -10,6 +10,20 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 
 ## Latest changes (most recent first)
 
+- **Validation Report — Issue Details row drill-down to offending records** (uncommitted).
+  Each Issue Details row is now clickable (leading **🔍 View** cell + clickable `tr.vr-row`). Clicking runs a
+  live read-only query against the active SQL target and shows **all offending records** for that issue in an
+  `modal-xl` table: an **ErrorType** badge column + `claimid`/`policyid` (the client's Product FK column, when
+  the table has it) + the offending column + `publicid`. New endpoint `POST /api/db/issue-rows` →
+  `db_service.issue_rows(cfg)` rebuilds the offending-row `SELECT TOP N` per check type by reusing
+  `validate_table`'s exact shapes (FK anti-join, `IS NULL`, `NOT IN`, `GROUP BY/HAVING`, custom query wrapped
+  as a derived table). Identifiers `_quote`d, typelist values **bound as params**, read-only single SELECT,
+  `TOP` capped at 500 (`ISSUE_ROWS_MAX`), route `_throttle()`d, generic SEC-004 errors, timeout. Product key
+  = `getActiveClientProduct()+"id"` (claim→`claimid`, policy→`policyid`, billing→`billingid`), omitted when the
+  table lacks it. Replaces the earlier per-sample-value link approach (removed `vrSampleLink` /
+  `/api/db/record` / `get_record`). Files: `server/app/services/db_service.py`, `server/app/api/db_routes.py`,
+  `js/validation-report.js`, `pages/validation-report.html`. Needs a server restart (route added).
+
 - **Custom validation rules — now multi-table (cross-table)** (uncommitted).
   The Custom Validation Rules editor lets the user pick **one OR more tables** (searchable checklist) and
   describe a rule in plain English (e.g. "if a claim is closed, its exposures must also be closed").

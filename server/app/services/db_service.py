@@ -517,3 +517,112 @@ def run_custom_query(cfg: Dict[str, Any]) -> Result:
         return {"ok": True, "count": count}, 200
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}, 400
+
+
+ISSUE_ROWS_MAX = 500  # hard cap on rows returned by a Validation Report drill-down
+
+
+def issue_rows(cfg: Dict[str, Any]) -> Result:
+    """Fetch the offending ROWS for ONE validation issue (Validation Report row drill-down).
+
+    Body: connection cfg + the check spec:
+      {schema, table, type, selectColumns[]?, column?, parentTable?, parentColumn?,
+       parentSchema?, allowedValues[]?, keyColumns[]?, predicate?, query?, limit?}
+    Reuses the exact offending-row shapes from validate_table (FK anti-join, IS NULL,
+    NOT IN, GROUP BY/HAVING, custom predicate/query). Read-only single SELECT: identifiers
+    are _quote-d, every value is a BOUND parameter, TOP is capped at ISSUE_ROWS_MAX.
+    Returns {ok, columns, rows, truncated}.
+    """
+    schema = (cfg.get("schema") or "dbo").strip() or "dbo"
+    table = (cfg.get("table") or "").strip()
+    ctype = (cfg.get("type") or "").strip()
+    if not table or not ctype:
+        return {"ok": False, "error": "Missing table or check type."}, 400
+    try:
+        limit = int(cfg.get("limit", 200))
+    except Exception:  # noqa: BLE001
+        limit = 200
+    top_n = max(1, min(limit, ISSUE_ROWS_MAX))
+
+    select_cols = [c for c in (cfg.get("selectColumns") or []) if c]
+    # Order by the client's product key (claimid/policyid) so offending rows group per claim/policy.
+    # Restricted to a column we are already selecting, then _quote-d (no free-form ORDER BY input).
+    order_col = (cfg.get("orderBy") or "").strip()
+    if order_col and not any(order_col.lower() == c.lower() for c in select_cols):
+        order_col = ""
+    fq = _quote(schema) + "." + _quote(table)
+    params: List[Any] = []
+
+    try:
+        if ctype == "foreignKey":
+            col = (cfg.get("column") or "").strip()
+            parent_table = (cfg.get("parentTable") or "").strip()
+            parent_col = (cfg.get("parentColumn") or "").strip()
+            parent_schema = (cfg.get("parentSchema") or schema).strip() or schema
+            if not col or not parent_table or not parent_col:
+                return {"ok": False, "error": "Incomplete foreign-key spec."}, 400
+            cols = select_cols or [col]
+            sel = ", ".join("c." + _quote(c) for c in cols)
+            pfq = _quote(parent_schema) + "." + _quote(parent_table)
+            qc, qpc = _quote(col), _quote(parent_col)
+            sql = (f"SELECT TOP {top_n} {sel} FROM {fq} c "
+                   f"LEFT JOIN {pfq} p ON c.{qc} = p.{qpc} "
+                   f"WHERE c.{qc} IS NOT NULL AND p.{qpc} IS NULL"
+                   + (f" ORDER BY c.{_quote(order_col)}" if order_col else ""))
+        elif ctype == "mandatory":
+            col = (cfg.get("column") or "").strip()
+            if not col:
+                return {"ok": False, "error": "Missing column."}, 400
+            cols = select_cols or [col]
+            sel = ", ".join(_quote(c) for c in cols)
+            sql = (f"SELECT TOP {top_n} {sel} FROM {fq} WHERE {_quote(col)} IS NULL"
+                   + (f" ORDER BY {_quote(order_col)}" if order_col else ""))
+        elif ctype == "typelist":
+            col = (cfg.get("column") or "").strip()
+            allowed = [v for v in (cfg.get("allowedValues") or []) if v is not None]
+            if not col or not allowed or len(allowed) > VALIDATE_MAX_DOMAIN:
+                return {"ok": False, "error": "Incomplete typelist spec."}, 400
+            cols = select_cols or [col]
+            sel = ", ".join(_quote(c) for c in cols)
+            placeholders = ", ".join("?" for _ in allowed)
+            params = [str(v) for v in allowed]
+            qc = _quote(col)
+            sql = (f"SELECT TOP {top_n} {sel} FROM {fq} "
+                   f"WHERE {qc} IS NOT NULL AND {qc} NOT IN ({placeholders})"
+                   + (f" ORDER BY {_quote(order_col)}" if order_col else ""))
+        elif ctype == "duplicate":
+            keys = [c for c in (cfg.get("keyColumns") or []) if c]
+            if not keys:
+                return {"ok": False, "error": "Missing key columns."}, 400
+            key_sql = ", ".join(_quote(c) for c in keys)
+            sql = (f"SELECT TOP {top_n} {key_sql}, COUNT(*) AS [duplicate_count] FROM {fq} "
+                   f"GROUP BY {key_sql} HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC")
+        elif ctype == "custom":
+            query = (cfg.get("query") or "").strip()
+            if not query or not _is_safe_query(query):
+                return {"ok": False, "error": "Custom rule query not available or unsafe."}, 400
+            sql = f"SELECT TOP {top_n} * FROM ({query}) AS _vr"
+        else:
+            return {"ok": False, "error": "Unknown or non-drillable check type."}, 400
+
+        conn = open_connection(cfg)
+        try:
+            conn.timeout = int(cfg.get("queryTimeout", 30))
+        except Exception:  # noqa: BLE001
+            pass
+        cur = conn.cursor()
+        if params:
+            cur.execute(sql, *params)
+        else:
+            cur.execute(sql)
+        fetched = cur.fetchall()
+        columns = [d[0] for d in cur.description] if cur.description else []
+        conn.close()
+    except ConnectionAttemptError:
+        return {"ok": False, "error": GENERIC_CONNECTION_ERROR}, 400
+    except Exception as exc:  # noqa: BLE001 - detail withheld from client
+        print("[db_service] issue_rows failed (details withheld): " + repr(exc))
+        return {"ok": False, "error": "Could not read the offending rows from the target."}, 400
+
+    rows = [["" if v is None else str(v)[:200] for v in r] for r in fetched]
+    return {"ok": True, "columns": columns, "rows": rows, "truncated": len(rows) >= top_n}, 200
