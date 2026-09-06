@@ -1,6 +1,6 @@
 # AI Data Conversion Studio — Session Summary
 
-_Last updated: 2026-08-12_
+_Last updated: 2026-09-06_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,44 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **Highlighted autocomplete for table/column suggestions (Target System + AI Mapping Workspace)** (uncommitted).
+  Replaced the native `<datalist>` (which can't be styled) with a shared custom dropdown that **highlights the
+  typed match**. New helper `attachAutocomplete(input, getItems, {onSelect, max})` in `js/common.js` (singleton
+  `.ac-menu`, keyboard ↑/↓/Enter/Esc, `mousedown`-before-blur select, dispatches `input`/`change`), styled via
+  `.ac-menu`/`.ac-item`/`.ac-mark` in `css/common.css` (token-based, theme-aware; match wrapped in
+  `<mark class="ac-mark">`). Wired at **all** table/column suggestion sites: Target System FK — inline cell
+  edit **and** the Add/Edit Column modal `#acFkRef`/`#ecFkRef` (attached once at init to avoid stacked
+  listeners; `fkRefSuggestions()` replaces `_ensureFkRefDatalist`); AI Mapping Workspace Source Table/Column —
+  inline `makeCellEditable` and the Edit-mapping modal (`sourceSuggestions()` replaces `_ensureSourceDatalist`,
+  attached once in `injectEditMappingModal`). Files: `js/common.js`, `css/common.css`, `js/target-system.js`,
+  `js/mapping-workspace.js`, `pages/target-system.html`.
+
+- **Product Schema upload parser — correct IsNull + embedded-length handling** (uncommitted).
+  Root-cause fix in `server/app/parsers/file_parsers.py` (`parse_xlsx_dictionary`). The IsNull/Nullable column
+  was read with `_truthy()`, which only knows `yes/1/true`, so both `nullable` **and** `not null` collapsed to
+  not-null → every column imported as **Required**. New `_nullable_flag()` reads the descriptive words
+  (`nullable`/`null`/`optional`→Optional, `not null`/`required`/`no`→Required; Yes/No still work; blank→unknown).
+  New `_split_type_length()` splits an embedded length (`varchar(100)`→`varchar`,`100`; `decimal(10,2)`→`decimal`,`10`)
+  so Type/Len are correct at the source. Backend-only; requires a **schema re-upload** (the fix runs at parse
+  time — already-stored `aims_cmt_schema` keeps the old values until re-parsed). Verified end-to-end with the
+  actual parser.
+
+- **Target System — Add-from-Product-Schema + Entities-panel UX** (uncommitted).
+  New third tab (`aeTabProduct`) in the Add Target Entity modal: reads `aims_cmt_schema`, searchable checkbox
+  list of tables (col count + PK/FK badges), **Select all**, live count; **Add selected tables** creates a
+  target entity per checked table via the existing `persistEntity()` path (columns + `pk`/`fk`), skipping
+  duplicates with a summary toast. Column names copied **verbatim** except a column named exactly `PMT_Parent`
+  (case-insensitive) → renamed after its FK table via `_fkRefBaseName` (`entity.Claim`→`ClaimId`); the import
+  also splits embedded lengths and derives Mandatory from `nullable`. New JS: `aeRenderProductList`,
+  `aeProdToggleSelectAll`, `aeMapProductEntity`, `aeAddSelectedFromProduct` (+ `aeProdChecked`); `aeSwitchTab`
+  extended to 3 tabs. Same pass: removed the redundant **Table** column from the fields grid (colspan 13→12);
+  clicking an entity **name** in the tree now toggles its checkbox; the right-toolbar delete button became
+  **Delete tables (N)** — deletes only the checked tables in one confirmed batch (`deleteSelectedEntities`,
+  replacing `deleteActiveEntity`), shown only when 1+ ticked; `selectEntity` scrolls the selected table into
+  view so a freshly-added table gets focus. Files: `pages/target-system.html`, `js/target-system.js`.
+
+  _Frontend cache-bust for all of the above is at `?v=20260906j`._
 
 - **Validation Report — Issue Details row drill-down to offending records** (uncommitted).
   Each Issue Details row is now clickable (leading **🔍 View** cell + clickable `tr.vr-row`). Clicking runs a

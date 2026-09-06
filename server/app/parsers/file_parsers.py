@@ -10,6 +10,7 @@ core.capabilities; each returns a clear "package not installed" message rather
 than crashing. No Flask, no Anthropic.
 """
 import io
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.capabilities import openpyxl, PdfReader, docx
@@ -200,6 +201,49 @@ def _truthy(v: Any) -> bool:
     return str(v or "").strip().lower() in ("yes", "y", "true", "1", "x", "t", "✓")
 
 
+def _nullable_flag(v: Any) -> Optional[bool]:
+    """Interpret an IsNull / Nullable cell into a tri-state:
+    True  -> the column CAN be null  (Optional),
+    False -> the column is NOT null  (Required),
+    None  -> unknown / not stated.
+
+    Handles both Yes/No-style flags and the descriptive words a Guidewire-style
+    dictionary uses ("nullable" / "not null"), which plain _truthy() misreads
+    (it treats BOTH as false, marking every column Required)."""
+    s = str(v or "").strip().lower()
+    if s == "":
+        return None
+    # explicit NOT-null / required markers -> not nullable
+    if s in ("not null", "notnull", "not-null", "not nullable", "notnullable",
+             "no", "n", "false", "0", "required", "mandatory"):
+        return False
+    # explicit nullable / optional markers -> nullable
+    if s in ("null", "nullable", "is null", "isnull", "yes", "y", "true", "1",
+             "x", "t", "✓", "optional"):
+        return True
+    # substring fallbacks — check "not null" BEFORE "null"
+    if "not null" in s or "notnull" in s or "not-null" in s or "not nullable" in s:
+        return False
+    if "null" in s:      # "is nullable", "allow null", "nulls allowed"
+        return True
+    return None
+
+
+# Type strings sometimes embed the length: "varchar(100)", "decimal(10,2)".
+_TYPE_LEN_RE = re.compile(r'^\s*([a-z0-9_ ]+?)\s*\(\s*(\d+)(?:\s*,\s*\d+)?\s*\)\s*$')
+
+
+def _split_type_length(dtype: str, length: Any) -> Tuple[str, Any]:
+    """Split an embedded length out of the data type ("varchar(100)" ->
+    ("varchar", 100)). Keeps an already-supplied length; only fills it when blank."""
+    m = _TYPE_LEN_RE.match(dtype or "")
+    if m:
+        dtype = m.group(1).strip()
+        if length is None:
+            length = int(m.group(2))
+    return dtype, length
+
+
 def norm_hdr(h: Any) -> str:
     return str(h or "").strip().lower().replace("_", "").replace(" ", "").replace("-", "")
 
@@ -262,16 +306,19 @@ def parse_xlsx_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
             b["_seen"].add(cname.lower())
             lraw = cell(r, "length")
             length = int(lraw) if lraw.isdigit() else (lraw or None)
-            # IsNull -> nullable/mandatory (None when the column isn't in the sheet).
+            # Type may embed the length ("varchar(100)"); split it out so length fills in.
+            dtype, length = _split_type_length((cell(r, "datatype") or "").lower(), length)
+            # IsNull / Nullable -> nullable/mandatory (None when the column isn't in the
+            # sheet). Handles the descriptive words "nullable" / "not null", not just Yes/No.
             isnull_raw = cell(r, "isnull")
-            nullable = _truthy(isnull_raw) if isnull_raw != "" else None
+            nullable = _nullable_flag(isnull_raw)
             # Foreign Key cell may be a referenced table name or just a Yes/No flag.
             fk_raw = cell(r, "fk")
             fk = fk_raw.strip().lower() not in ("", "no", "n", "false", "0")
             fk_ref = fk_raw if (fk and fk_raw.strip().lower() not in ("yes", "y", "true", "1", "x", "t")) else ""
             b["columns"].append({
                 "name": cname,
-                "dataType": (cell(r, "datatype") or "").lower(),
+                "dataType": dtype,
                 "length": length,
                 "businessTerm": cell(r, "businessterm"),
                 "description": cell(r, "description"),

@@ -37,6 +37,24 @@ def _clean_db(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "", str(name or "").strip()) or "CommonStage"
 
 
+def _parse_lookup(lt: str) -> Tuple[str, List[Tuple[str, str]]]:
+    """Parse a lookupTable string '<name>: <code>-<value>, ...' (as written by the
+    Lookup-Mapping sync) into (name, [(code, target), ...]). An unmapped lookup —
+    a bare name with no captured code-value pairs — yields an empty pair list."""
+    lt = (lt or "").strip()
+    if not lt:
+        return "", []
+    name, _, body = lt.partition(":")
+    name = name.strip()
+    pairs: List[Tuple[str, str]] = []
+    for pair in body.split(","):
+        code, sep, target = pair.partition("-")
+        code, target = code.strip(), target.strip()
+        if sep and code:
+            pairs.append((code, target))
+    return name, pairs
+
+
 def _mapping_lines(rows: List[Dict[str, Any]]) -> str:
     """One line per target column describing how to fill it, for the prompt."""
     lines = []
@@ -52,6 +70,18 @@ def _mapping_lines(rows: List[Dict[str, Any]]) -> str:
         dflt = (m.get("defaultValue") or "").strip()
         tgt_type = (m.get("targetDataType") or "").strip()
         src = (st + "." + sc) if (st and sc) else (sc or "(none)")
+        # A Lookup column is only treated as a lookup (LEFT JOIN [LookupData]) when it is
+        # actually usable: it needs BOTH a source column to translate AND captured lookup
+        # values. Otherwise the join is meaningless (e.g. `SourceValue = NULL` matches
+        # nothing, or an empty [LookupData] domain) — so downgrade it:
+        #   - has a source column -> Direct passthrough of the source
+        #   - no source column    -> Not Mapped (NULL)
+        # Either way, no LookupData JOIN and no reference-data entry are produced.
+        lk_name, lk_pairs = _parse_lookup(lookup) if typ.lower() == "lookup" else ("", [])
+        has_source = bool(sc)
+        is_mapped_lookup = typ.lower() == "lookup" and bool(lk_pairs) and has_source
+        if typ.lower() == "lookup" and not is_mapped_lookup:
+            typ = "Direct" if has_source else "Not Mapped"
         extra = []
         if typ:
             extra.append("type=" + typ)
@@ -59,10 +89,10 @@ def _mapping_lines(rows: List[Dict[str, Any]]) -> str:
             extra.append("targetType=" + tgt_type)
         if rule:
             extra.append("rule=" + rule)
-        if lookup:
+        if is_mapped_lookup and lk_name:
             # Pass ONLY the lookup name (text before the ':'), never the "table: pairs"
             # string — otherwise the model treats the name as a physical table to join.
-            extra.append("lookupName=" + lookup.split(":", 1)[0].strip())
+            extra.append("lookupName=" + lk_name)
         if dflt:
             extra.append("default=" + dflt)
         lines.append("- " + tgt + "  <=  " + src + "  [" + "; ".join(extra) + "]")
@@ -73,37 +103,29 @@ def _lookup_insert_block(rows: List[Dict[str, Any]]) -> str:
     """Build a COMMENTED-OUT block of INSERT statements seeding the common [LookupData]
     table from the lookup columns in this procedure. The pairs come from each Lookup
     row's 'lookupTable' attribute, formatted '<lookupName>: <code>-<value>, ...' (as
-    written by the Lookup-Mapping sync). Returns '' when there are no lookup columns."""
+    written by the Lookup-Mapping sync).
+
+    Only MAPPED, USABLE lookups contribute — one with captured code-value pairs AND a
+    source column to translate. An unmapped lookup (no pairs) or a source-less one is
+    left out entirely (it also gets no LEFT JOIN; see _mapping_lines). Returns '' when
+    there are no such lookup columns."""
     order: List[tuple] = []      # (lookupName, code) preserving first-seen order
     targets: Dict[tuple, str] = {}
-    names_no_values: List[str] = []
-    seen_names = set()
     for m in rows:
         if (m.get("mappingType") or "").strip().lower() != "lookup":
             continue
-        lt = (m.get("lookupTable") or "").strip()
-        if not lt:
-            continue
-        name, _, body = lt.partition(":")
-        name = name.strip()
-        if not name:
-            continue
-        pairs_found = False
-        for pair in body.split(","):
-            code, sep, target = pair.partition("-")
-            code, target = code.strip(), target.strip()
-            if not sep or not code:
-                continue
+        if not (m.get("sourceColumn") or "").strip():
+            continue                          # no source to translate — no join emitted
+        name, pairs = _parse_lookup((m.get("lookupTable") or "").strip())
+        if not name or not pairs:
+            continue                          # unmapped lookup — skip (no INSERT, no note)
+        for code, target in pairs:
             key = (name, code)
             if key not in targets:
                 order.append(key)
             targets[key] = target
-            pairs_found = True
-        if not pairs_found and name not in seen_names:
-            names_no_values.append(name)
-        seen_names.add(name)
 
-    if not order and not names_no_values:
+    if not order:
         return ""
 
     def esc(v: str) -> str:
@@ -123,11 +145,62 @@ def _lookup_insert_block(rows: List[Dict[str, Any]]) -> str:
     for (name, code) in order:
         lines.append("-- INSERT INTO LookupData (LookupName, SourceValue, TargetValue) VALUES ('"
                      + esc(name) + "', '" + esc(code) + "', '" + esc(targets[(name, code)]) + "');")
-    for name in names_no_values:
-        lines.append("-- (no expected values captured for '" + esc(name)
-                     + "' - add its SourceValue/TargetValue rows to LookupData manually)")
     lines.append("-- =====================================================================")
     return "\n".join(lines)
+
+
+def _usable_lookup_names(rows: List[Dict[str, Any]]) -> set:
+    """Lowercased set of lookup names that are actually usable — a Lookup column with
+    BOTH a source column and captured code-value pairs. Any LookupData join the model
+    emits for a name NOT in this set is meaningless and gets stripped (see below)."""
+    names = set()
+    for m in rows:
+        if (m.get("mappingType") or "").strip().lower() != "lookup":
+            continue
+        if not (m.get("sourceColumn") or "").strip():
+            continue
+        name, pairs = _parse_lookup((m.get("lookupTable") or "").strip())
+        if name and pairs:
+            names.add(name.lower())
+    return names
+
+
+# A single-line `LEFT JOIN [LookupData] <alias> ON ... LookupName = '<name>' ...`.
+_LOOKUP_JOIN_RE = re.compile(
+    r"^\s*(?:LEFT|INNER|RIGHT|FULL)?\s*(?:OUTER\s+)?JOIN\s+\[?LookupData\]?\s+(\[?[A-Za-z0-9_]+\]?)\s+ON\b.*$",
+    re.IGNORECASE,
+)
+_LOOKUP_NAME_RE = re.compile(r"LookupName\s*=\s*'([^']*)'", re.IGNORECASE)
+_SOURCE_NULL_RE = re.compile(r"SourceValue\s*=\s*NULL\b", re.IGNORECASE)
+
+
+def _strip_unmapped_lookup_joins(sql: str, allowed: set) -> Tuple[str, List[str]]:
+    """Deterministic safety net over the AI output. The model sometimes INVENTS a
+    LookupData join from a column's Guidewire-style name even when we never asked for
+    one. Remove every single-line `JOIN [LookupData] <alias> ON ...` whose LookupName is
+    not in `allowed` (or whose ON clause is the broken `SourceValue = NULL`), and rewrite
+    any `<alias>.TargetValue`/`<alias>.<col>` reference in the SELECT to NULL so the
+    column still fills. Returns (new_sql, [dropped lookup names])."""
+    lines = sql.split("\n")
+    kept: List[str] = []
+    drop_aliases: List[str] = []
+    dropped_names: List[str] = []
+    for ln in lines:
+        mjoin = _LOOKUP_JOIN_RE.match(ln)
+        if mjoin and _LOOKUP_NAME_RE.search(ln):   # only touch joins we can identify by name
+            alias = mjoin.group(1).strip("[]")
+            name = (_LOOKUP_NAME_RE.search(ln).group(1) or "").lower()
+            bad = bool(_SOURCE_NULL_RE.search(ln)) or (name not in allowed)
+            if bad:
+                drop_aliases.append(alias)
+                dropped_names.append(name)
+                continue   # drop the join line entirely
+        kept.append(ln)
+    out = "\n".join(kept)
+    for a in drop_aliases:
+        # `<alias>.TargetValue AS Col` -> `NULL AS Col`; any other `<alias>.<col>` -> NULL.
+        out = re.sub(r"\b" + re.escape(a) + r"\.[A-Za-z0-9_]+\b", "NULL", out)
+    return out, dropped_names
 
 
 def generate_etl(body: Dict[str, Any]) -> Result:
@@ -306,6 +379,14 @@ def generate_etl(body: Dict[str, Any]) -> Result:
             sql = _strip_leading_use(sql)
         if not sql.strip():
             return {"ok": False, "error": "The AI returned no SQL for this table."}, 400
+
+        # Safety net: drop any LookupData join the model invented for an unmapped/unusable
+        # lookup (name not backed by source+values, or a broken `SourceValue = NULL`),
+        # rewriting its TargetValue reference to NULL so the column still fills.
+        sql, dropped = _strip_unmapped_lookup_joins(sql, _usable_lookup_names(rows))
+        if dropped:
+            print("[etl] %s — stripped %d unmapped lookup join(s): %s"
+                  % (target_table, len(dropped), ", ".join(sorted(set(dropped)))))
 
         # Completeness guard: never silently ship a half procedure. If any target
         # column didn't make it into the SELECT list (output-token truncation, the

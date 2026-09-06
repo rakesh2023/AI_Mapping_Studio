@@ -24,6 +24,7 @@ const VR_TYPE_META = {
   typelist:   {label:"Typelist",        color:"#ffb600"},
   foreignKey: {label:"Foreign Keys",    color:"#2563eb"},
   custom:     {label:"Custom Rules",    color:"#7c3aed"},
+  passed:     {label:"Passed",          color:"#2e7d32"},
   error:      {label:"Errors",          color:"#8a94a6"}
 };
 
@@ -207,12 +208,28 @@ async function runReport(){
     // custom rules — full queries that may span tables, counted read-only
     for(const cq of customQueries){
       btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> ' + (++step) + '/' + total;
+      const cqTable = drivingTable(cq.query) || (cq.tables || [])[0] || "—";
       try{
         const res = await fetch("/api/db/validate-query", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(Object.assign({}, base, {query: cq.query, sampleLimit: 10}))});
         const data = await res.json();
-        if(data && data.ok){ if((data.count || 0) > 0) vrIssues.push({table: drivingTable(cq.query) || (cq.tables || [])[0] || "—", type:"custom", columns:"", detail:cq.name, count:data.count, samples:"", drillable:true, spec:{query:cq.query}}); done++; }
-        else failed++;
-      }catch(err){ failed++; }
+        if(data && data.ok){
+          if((data.count || 0) > 0) vrIssues.push({table: cqTable, type:"custom", columns:"", detail:cq.name, count:data.count, samples:"", drillable:true, spec:{query:cq.query}});
+          else vrIssues.push({table: cqTable, type:"passed", columns:"", detail:cq.name + " — no violations found", count:0, samples:"", drillable:false, spec:{}});
+          done++;
+        }
+        else {
+          // Surface the rule's SQL error in the report instead of failing silently.
+          failed++;
+          vrIssues.push({table: cqTable, type:"error", columns:"",
+            detail: "Custom rule “" + cq.name + "” failed: " + ((data && data.error) || "the query could not run"),
+            count:0, samples:"", drillable:false, spec:{}});
+        }
+      }catch(err){
+        failed++;
+        vrIssues.push({table: cqTable, type:"error", columns:"",
+          detail: "Custom rule “" + cq.name + "” failed: backend not reachable.",
+          count:0, samples:"", drillable:false, spec:{}});
+      }
     }
     vrTablesChecked = done;
     vrState.page = 1;
@@ -243,6 +260,7 @@ function collectIssues(table, data){
   (data.checks || []).forEach(c => {
     if(c.error){ vrIssues.push({table, type:c.type, columns:(c.columns||[]).join(", "), detail:"Check error: " + c.error, count:0, samples:"", drillable:false}); return; }
     if(c.type === "duplicate"){
+      if((c.count||0) <= 0) return;   // clean check — don't show a "0 duplicates" row
       vrIssues.push({table, type:"duplicate", columns:(c.columns||[]).join(", "),
         detail:(c.groupCount||0) + " duplicate key group(s)", count:c.count || 0,
         samples:(c.samples||[]).map(s => "[" + escapeHtml(String(s.key)) + "] ×" + s.count).join("  ·  "),

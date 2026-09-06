@@ -939,12 +939,23 @@ async function maybeOfferLegacyImport(){
 }
 
 async function fetchAuth(){
-  try{
-    const res = await fetch("/api/auth/me", {headers:{"Accept":"application/json"}});
-    if(res.status === 401) return null;
-    const j = await res.json();
-    return (j && j.ok) ? j : null;
-  }catch(e){ return null; }
+  // Only a real 401 means "not logged in". A network error or an ABORTED request — which
+  // happens when you navigate to another page before /api/auth/me returns — must NOT be
+  // treated as a logout. Retry once (the aborted call succeeds on the settled page), then
+  // report a transient failure so the caller can avoid a false bounce to /login.
+  for(let attempt = 0; attempt < 2; attempt++){
+    try{
+      const res = await fetch("/api/auth/me", {headers:{"Accept":"application/json"}});
+      if(res.status === 401) return null;              // genuinely unauthenticated
+      if(res.ok){
+        const j = await res.json().catch(() => null);
+        if(j && j.ok) return j;
+      }
+      // 5xx / unexpected body -> fall through to retry, then transient
+    }catch(e){ /* network or aborted request -> retry */ }
+    if(attempt === 0) await new Promise(r => setTimeout(r, 400));
+  }
+  return {transient: true};   // couldn't verify the session (no clean 401) — do NOT log out
 }
 
 // True when this document is loaded inside the SPA shell's <iframe> (app.html).
@@ -963,7 +974,14 @@ async function initShell(activeHref){
   // (The backend also enforces this via a before_request guard; this keeps the
   // header in sync and handles a session that expired after the page loaded.)
   AUTH = await fetchAuth();
-  if(!AUTH){ go("/login"); return; }
+  // Transient failure (server briefly unreachable, or the auth check was aborted by fast
+  // navigation): keep the session and retry shortly instead of bouncing to /login.
+  if(AUTH && AUTH.transient){
+    try{ showNotification("Reconnecting…", "warning", 1500); }catch(e){}
+    setTimeout(() => window.location.reload(), 1500);
+    return;
+  }
+  if(!AUTH){ go("/login"); return; }   // genuine 401 — not logged in
   // Admins manage users only — they have no active client and must NOT be sent to
   // onboarding (they live on the Admin page). Everyone else needs a client.
   const _isAdmin = !!(AUTH.user && AUTH.user.isAdmin);
@@ -1141,4 +1159,97 @@ function uid(prefix = "ID"){
 function escapeHtml(str){
   if(str === null || str === undefined) return "";
   return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+/* ---- Autocomplete with match highlighting --------------------------------------
+   A lightweight replacement for the native <datalist> that lets us highlight the
+   typed text inside each suggestion. Attach to a text input; getItems() returns
+   the candidate strings (recomputed on every keystroke).
+     attachAutocomplete(input, getItems, { onSelect(value), max })
+   One shared menu element is reused (only one field is ever edited at a time).
+   Keyboard: ArrowUp/Down move, Enter picks the active item, Escape closes.       */
+let _acMenu = null, _acInput = null, _acItems = [], _acActive = -1;
+
+function _acEnsureMenu(){
+  if(_acMenu) return _acMenu;
+  _acMenu = document.createElement("div");
+  _acMenu.className = "ac-menu";
+  _acMenu.style.display = "none";
+  // mousedown (not click) so we act BEFORE the input's blur fires.
+  _acMenu.addEventListener("mousedown", (e) => {
+    const it = e.target.closest(".ac-item"); if(!it) return;
+    e.preventDefault();                       // keep focus so we control the commit
+    _acChoose(parseInt(it.dataset.i, 10));
+  });
+  document.body.appendChild(_acMenu);
+  window.addEventListener("scroll", () => { if(_acInput) _acPosition(); }, true);
+  window.addEventListener("resize", () => { if(_acInput) _acPosition(); });
+  return _acMenu;
+}
+
+function _acPosition(){
+  if(!_acMenu || !_acInput) return;
+  const r = _acInput.getBoundingClientRect();
+  _acMenu.style.left = (window.scrollX + r.left) + "px";
+  _acMenu.style.top = (window.scrollY + r.bottom + 2) + "px";
+  _acMenu.style.minWidth = r.width + "px";
+}
+
+function _acHighlight(text, q){
+  const t = String(text);
+  if(!q) return escapeHtml(t);
+  const i = t.toLowerCase().indexOf(q.toLowerCase());
+  if(i === -1) return escapeHtml(t);
+  return escapeHtml(t.slice(0, i)) + '<mark class="ac-mark">' + escapeHtml(t.slice(i, i + q.length)) + '</mark>' + escapeHtml(t.slice(i + q.length));
+}
+
+function acClose(){ if(_acMenu) _acMenu.style.display = "none"; _acItems = []; _acActive = -1; _acInput = null; }
+
+function _acPaint(){
+  if(!_acMenu) return;
+  Array.from(_acMenu.children).forEach((el, i) => el.classList.toggle("active", i === _acActive));
+  const el = _acMenu.children[_acActive]; if(el) el.scrollIntoView({block:"nearest"});
+}
+
+function _acChoose(i){
+  if(i < 0 || i >= _acItems.length || !_acInput) return;
+  const input = _acInput, val = _acItems[i], cb = input._acOnSelect;
+  input.value = val;
+  input.dispatchEvent(new Event("input", {bubbles:true}));
+  input.dispatchEvent(new Event("change", {bubbles:true}));
+  acClose();
+  if(cb) cb(val);
+}
+
+function attachAutocomplete(input, getItems, opts){
+  opts = opts || {};
+  input._acOnSelect = opts.onSelect || null;
+  input.setAttribute("autocomplete", "off");
+  const menu = _acEnsureMenu();
+  const render = () => {
+    _acInput = input;
+    const q = (input.value || "").trim();
+    const ql = q.toLowerCase();
+    const all = (getItems() || []).map(String);
+    let list = ql ? all.filter(s => s.toLowerCase().indexOf(ql) !== -1) : all.slice();
+    if(ql) list.sort((a, b) => a.toLowerCase().indexOf(ql) - b.toLowerCase().indexOf(ql));  // earlier match first
+    list = list.slice(0, opts.max || 60);
+    _acItems = list;
+    if(!list.length){ acClose(); return; }
+    _acActive = 0;
+    menu.innerHTML = list.map((s, i) => '<div class="ac-item' + (i === 0 ? " active" : "") + '" data-i="' + i + '">' + _acHighlight(s, q) + '</div>').join("");
+    _acPosition();
+    menu.style.display = "";
+  };
+  input.addEventListener("input", render);
+  input.addEventListener("focus", render);
+  input.addEventListener("keydown", (e) => {
+    const openNow = menu.style.display !== "none" && _acInput === input;
+    if(!openNow){ if(e.key === "ArrowDown") render(); return; }
+    if(e.key === "ArrowDown"){ e.preventDefault(); _acActive = Math.min(_acActive + 1, _acItems.length - 1); _acPaint(); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _acActive = Math.max(_acActive - 1, 0); _acPaint(); }
+    else if(e.key === "Enter"){ if(_acActive >= 0){ e.preventDefault(); _acChoose(_acActive); } }
+    else if(e.key === "Escape"){ acClose(); }
+  });
+  input.addEventListener("blur", () => setTimeout(() => { if(_acInput === input) acClose(); }, 120));
 }

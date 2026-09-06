@@ -11,6 +11,7 @@
 
 const LS_ETL_DB = "aims_etl_db";
 const LS_ETL_INSTRUCTIONS = "aims_etl_instructions";
+const LS_GEN_FILES = "aims_generated_files";   // saved ETL/Create Table outputs (per client, this browser)
 
 let etlGroups = [];              // [{name, entity, table, rows:[...], join}]
 let etlSelected = new Set();     // selected target-table keys
@@ -37,6 +38,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initInstructions();
   renderTableList();
   wireControls();
+  renderGenFiles();
 });
 
 /* ---- AI Processing Console (right-side column; hidden until you generate) ---- */
@@ -130,6 +132,29 @@ function groupByTargetTable(mappings, joins){
   });
   return order.map(k => map[k]).sort((a,b) => a.name.localeCompare(b.name));
 }
+
+/* ---- lookup-table skip rule (generation) ----
+   A target table is a lookup/typelist table when the target schema marks it as a
+   List table (isListTable). We skip such a table during generation only when it
+   has NO mapping available (every column is "Not Mapped"). Lookup tables that DO
+   have mappings, and all non-lookup tables, are generated as usual. */
+function isLookupGroup(g){
+  try{
+    if(typeof getTargetSchema === "function"){
+      const meta = getTargetSchema();
+      if(meta && meta.entities){
+        const ent = meta.entities.find(e =>
+          e.name === g.entity || e.name === g.name || e.table === g.table || e.table === g.name);
+        if(ent) return !!ent.isListTable;
+      }
+    }
+  }catch(e){ /* schema unavailable — treat as non-lookup */ }
+  return false;
+}
+// Columns that carry a real mapping (anything other than "Not Mapped").
+function mappedColCount(g){ return (g.rows || []).filter(m => (m.mappingType || "") !== "Not Mapped").length; }
+// Skip a lookup/typelist table that has no mapping available.
+function shouldSkipForGen(g){ return isLookupGroup(g) && mappedColCount(g) === 0; }
 
 /* ---- left panel: selectable table cards (like the workspace Target Tables) ---- */
 function renderTableList(){
@@ -246,6 +271,18 @@ function wireControls(){
   const clrHist = document.getElementById("clearDeployHistoryBtn");
   if(clrHist) clrHist.addEventListener("click", (e) => { e.preventDefault(); clearDeployHistory(); });
 
+  // Generated Files table — download / load / remove (event-delegated).
+  const gfBody = document.getElementById("genFilesBody");
+  if(gfBody) gfBody.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-id]");
+    if(!btn) return;
+    e.preventDefault();
+    const id = btn.getAttribute("data-id");
+    if(btn.classList.contains("gf-dl")) downloadGenFile(id);
+    else if(btn.classList.contains("gf-view")) loadGenFileIntoEditor(id);
+    else if(btn.classList.contains("gf-rm")) removeGenFile(id);
+  });
+
   renderDeployHistory();
   updateDeployBtn();
   updateGenerateBtn();
@@ -313,8 +350,12 @@ function updateOutputButtons(){
 }
 
 async function generateEtl(){
-  const selected = etlGroups.filter(g => etlSelected.has(g.name));
-  if(!selected.length){ showNotification("Select at least one target table.", "warning"); return; }
+  const selectedAll = etlGroups.filter(g => etlSelected.has(g.name));
+  if(!selectedAll.length){ showNotification("Select at least one target table.", "warning"); return; }
+  // Skip lookup/typelist tables that have no mapping available.
+  const skipped = selectedAll.filter(shouldSkipForGen);
+  const selected = selectedAll.filter(g => !shouldSkipForGen(g));
+  if(!selected.length){ showNotification("All selected table(s) are lookup tables with no mapping — nothing to generate.", "warning"); return; }
   const db = currentEtlDb();
   const instr = currentEtlInstructions();
   const out = document.getElementById("etlOutput");
@@ -323,6 +364,7 @@ async function generateEtl(){
   // Reveal + reset the console for this run.
   etlConsoleShow(true);
   etlLogReset();
+  if(skipped.length) etlLogInfo("Skipped " + skipped.length + " lookup table(s) with no mapping: " + skipped.map(g => g.name).join(", "));
 
   // Always generate with AI (default = SQL Server format; the deterministic template
   // is used only as a fallback if an AI call fails). Instructions, when provided,
@@ -362,6 +404,8 @@ async function generateEtl(){
     }
     etlLastSql = parts.join("\n\nGO\n\n\n");
     etlView = "etl"; renderOutput();
+    // Editor shows the combined script; Generated Files saves ONE file per table.
+    selected.forEach((g, i) => { if(parts[i]) saveGeneratedFile("ETL Code", [g.name], parts[i], db); });
     if(info) info.textContent = selected.length + " procedure(s)"
       + (fbCount ? (" · " + fbCount + " fallback") : "") + (incompleteCount ? (" · " + incompleteCount + " incomplete") : "");
     if(fbCount){
@@ -629,14 +673,19 @@ function buildCreateTable(g){
 }
 
 async function generateDdl(){
-  const selected = etlGroups.filter(g => etlSelected.has(g.name));
-  if(!selected.length){ showNotification("Select at least one target table.", "warning"); return; }
+  const selectedAll = etlGroups.filter(g => etlSelected.has(g.name));
+  if(!selectedAll.length){ showNotification("Select at least one target table.", "warning"); return; }
+  // Skip lookup/typelist tables that have no mapping available.
+  const skipped = selectedAll.filter(shouldSkipForGen);
+  const selected = selectedAll.filter(g => !shouldSkipForGen(g));
+  if(!selected.length){ showNotification("All selected table(s) are lookup tables with no mapping — nothing to generate.", "warning"); return; }
   const db = currentEtlDb();
   const instr = currentEtlInstructions();
   const info = document.getElementById("etlOutInfo");
 
   etlConsoleShow(true);
   etlLogReset();
+  if(skipped.length) etlLogInfo("Skipped " + skipped.length + " lookup table(s) with no mapping: " + skipped.map(g => g.name).join(", "));
 
   // Always generate with AI (default = SQL Server T-SQL; deterministic build is the
   // fallback on AI failure). Instructions can switch dialect (e.g. Oracle/Postgres).
@@ -671,6 +720,8 @@ async function generateDdl(){
     }
     ddlLastSql = parts.join("\n\nGO\n\n\n");
     etlView = "ddl"; renderOutput();
+    // Editor shows the combined script; Generated Files saves ONE file per table.
+    selected.forEach((g, i) => { if(parts[i]) saveGeneratedFile("Create Table", [g.name], parts[i], db); });
     if(info) info.textContent = selected.length + " CREATE TABLE" + (fbCount ? (" · " + fbCount + " fallback") : "") + (warns.length ? " · " + warns.length + " warning(s)" : "");
     if(fbCount){
       etlLogInfo("Finished with " + fbCount + " fallback(s). See errors above.");
@@ -1102,6 +1153,113 @@ function lineDiffHtml(before, after){
     '<div class="diff-line diff-' + r[0] + '">' +
     (r[0]==="add" ? "+ " : r[0]==="del" ? "- " : "  ") + escapeHtml(r[1]) +
     '</div>').join("") + '</div>';
+}
+
+/* =========================================================================
+   Generated Files — persist every ETL / Create Table generation in localStorage,
+   scoped to the ACTIVE CLIENT (client data is never mixed). Download, load back
+   into the editor, or remove any time.
+   ========================================================================= */
+function activeClientId(){ try{ return (typeof AUTH !== "undefined" && AUTH && AUTH.activeClientId) || ""; }catch(e){ return ""; } }
+function getGenFilesAll(){ return lsGet(LS_GEN_FILES, []) || []; }
+function getGenFiles(){ const cid = activeClientId(); return getGenFilesAll().filter(f => (f.clientId || "") === cid); }
+
+// File name in the spirit of the mockup: <ETL|Create>_<table(s)>.
+function genFileName(type, tables){
+  const prefix = (type === "ETL Code") ? "ETL" : "Create";
+  let tbl;
+  if(!tables || !tables.length) tbl = "tables";
+  else if(tables.length === 1) tbl = tables[0];
+  else if(tables.length <= 3) tbl = tables.join("_");
+  else tbl = tables[0] + "_and_" + (tables.length - 1) + "_more";
+  return prefix + "_" + tbl;
+}
+function fmtSize(n){
+  n = +n || 0;
+  if(n < 1024) return n + " B";
+  if(n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+
+// Auto-save one generation run. Upserts by (client, name, type) so regenerating the
+// same selection replaces its saved file rather than piling up duplicates.
+function saveGeneratedFile(type, tables, sql, db){
+  if(!sql || !sql.trim()) return;
+  const cid = activeClientId();
+  const name = genFileName(type, tables);
+  const all = getGenFilesAll();
+  const entry = {
+    id: "gf_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    clientId: cid, name: name, type: type, db: db || "",
+    tables: (tables || []).slice(), sql: sql, size: sql.length,
+    createdAt: new Date().toISOString()
+  };
+  const i = all.findIndex(f => (f.clientId || "") === cid && f.name === name && f.type === type);
+  if(i !== -1){ entry.id = all[i].id; all[i] = entry; }
+  else all.unshift(entry);
+  try{ lsSet(LS_GEN_FILES, all); }
+  catch(e){ showNotification("Could not save the generated file — browser storage may be full.", "warning", 6000); }
+  renderGenFiles();
+}
+
+function renderGenFiles(){
+  const body = document.getElementById("genFilesBody");
+  const info = document.getElementById("genFilesInfo");
+  if(!body) return;
+  const list = getGenFiles().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  if(info) info.textContent = list.length ? (list.length + " file(s)") : "";
+  if(!list.length){
+    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted-2 text-xs" style="padding:1.2rem;">' +
+      'No files yet — generate ETL Code or a Create Table script and it will be saved here.</td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(f =>
+    '<tr>' +
+      '<td class="mono">' + escapeHtml(f.name) + '.sql</td>' +
+      '<td>' + (f.type === "ETL Code"
+        ? '<span class="badge-soft badge-medium">ETL Code</span>'
+        : '<span class="badge-soft badge-high">Create Table</span>') + '</td>' +
+      '<td class="text-xs">' + escapeHtml(new Date(f.createdAt).toLocaleString()) + '</td>' +
+      '<td class="text-xs">' + fmtSize(f.size) + '</td>' +
+      '<td><div class="d-flex gap-2">' +
+        '<button type="button" class="btn btn-sm btn-outline-soft gf-dl" data-id="' + f.id + '" title="Download .sql"><i class="bi bi-download"></i></button>' +
+        '<button type="button" class="btn btn-sm btn-outline-soft gf-view" data-id="' + f.id + '" title="Load into the editor above"><i class="bi bi-box-arrow-in-up"></i></button>' +
+        '<button type="button" class="btn btn-sm btn-outline-soft gf-rm" data-id="' + f.id + '" title="Remove this saved file"><i class="bi bi-trash"></i></button>' +
+      '</div></td>' +
+    '</tr>').join("");
+}
+
+function downloadGenFile(id){
+  const f = getGenFiles().find(x => x.id === id);
+  if(!f){ showNotification("File not found.", "warning"); return; }
+  const blob = new Blob([f.sql], {type: "text/sql"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = f.name + ".sql";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Load a saved file back into the (editable) output panel for review/edit/deploy.
+function loadGenFileIntoEditor(id){
+  const f = getGenFiles().find(x => x.id === id);
+  if(!f) return;
+  if(f.type === "Create Table"){ ddlLastSql = f.sql; etlView = "ddl"; }
+  else { etlLastSql = f.sql; etlView = "etl"; }
+  renderOutput();
+  const outEl = document.getElementById("etlOutput");
+  if(outEl) outEl.scrollIntoView({behavior: "smooth", block: "center"});
+  showNotification("Loaded " + f.name + ".sql into the editor.", "primary", 1500);
+}
+
+async function removeGenFile(id){
+  const f = getGenFiles().find(x => x.id === id);
+  if(!f) return;
+  const ok = await confirmDialog("Remove the generated file '" + f.name + ".sql'? This deletes only the saved copy on this browser.", "Remove File");
+  if(!ok) return;
+  lsSet(LS_GEN_FILES, getGenFilesAll().filter(x => x.id !== id));
+  renderGenFiles();
+  showNotification("Removed " + f.name + ".sql.", "primary", 1200);
 }
 
 /* ---- deployment history (localStorage; mirrors Mapping History) ---- */

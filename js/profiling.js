@@ -7,16 +7,32 @@
 let activeSource = null;       // {kind:'live', conn:{...}}
 let liveTables = [];           // [{name, schema}] for the active live source
 let activeSchema = "dbo";
+let lastProfile = null;        // the most recent profile payload (for client-side column filtering)
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("data-profiling.html");
 
   document.getElementById("sourceSelect").addEventListener("change", onSourceChange);
   document.getElementById("runProfileBtn").addEventListener("click", runProfiling);
+  const cs = document.getElementById("profileColSearch");
+  if(cs) cs.addEventListener("input", applyProfileFilter);
+  const nf = document.getElementById("profileNullFilter");
+  if(nf) nf.addEventListener("change", applyProfileFilter);
 
   buildSourceOptions();
   await onSourceChange();   // load tables for the first source
 });
+
+// Hide the column filter bar and forget the last profile (on source/table change or a new run).
+function resetProfileFilter(){
+  lastProfile = null;
+  const bar = document.getElementById("profileFilterBar");
+  if(bar) bar.style.display = "none";
+  const cs = document.getElementById("profileColSearch");
+  if(cs) cs.value = "";
+  const nf = document.getElementById("profileNullFilter");
+  if(nf) nf.value = "";
+}
 
 /* ---------- source dropdown ---------- */
 function buildSourceOptions(){
@@ -38,6 +54,7 @@ async function onSourceChange(){
   const tableSel = document.getElementById("tableSelect");
   document.getElementById("profileCards").innerHTML = "";
   document.getElementById("profileSummary").innerHTML = "";
+  resetProfileFilter();
 
   if(val && val.indexOf("live:") === 0){
     const id = val.slice(5);
@@ -115,6 +132,7 @@ async function runProfiling(){
   setConsole("Profiling " + schema + "." + table + " on " + (conn.name || conn.server) + " ...");
   document.getElementById("profileCards").innerHTML = "";
   document.getElementById("profileSummary").innerHTML = "";
+  resetProfileFilter();
   try{
     const pw = await ensureConnPassword(conn);
     if(pw === null){ setConsole("Cancelled — a password is required."); btn.disabled = false; return; }
@@ -135,12 +153,31 @@ async function runProfiling(){
 
 /* ---------- render: live ---------- */
 function renderLiveProfile(data){
+  lastProfile = data;
   document.getElementById("profileSummary").innerHTML =
     '<span class="badge-soft badge-high"><i class="bi bi-table"></i> ' + escapeHtml(data.schema) + '.' + escapeHtml(data.table) + '</span> ' +
     '<span class="badge-soft badge-gray">' + data.rowCount.toLocaleString() + ' rows</span> ' +
     '<span class="badge-soft badge-gray">' + data.columns.length + ' columns</span>';
+  const bar = document.getElementById("profileFilterBar");
+  if(bar) bar.style.display = data.columns.length ? "" : "none";
+  applyProfileFilter();   // render the cards (filtered by the current search/null selection)
+}
+
+// Filter the profiled columns by name search + null status, then re-render the cards.
+function applyProfileFilter(){
+  if(!lastProfile) return;
+  const q = (document.getElementById("profileColSearch").value || "").toLowerCase().trim();
+  const nf = document.getElementById("profileNullFilter").value;
+  let cols = lastProfile.columns;
+  if(q) cols = cols.filter(c => (c.name || "").toLowerCase().includes(q));
+  if(nf === "nulls") cols = cols.filter(c => Number(c.nullCount || 0) > 0);
+  else if(nf === "nonull") cols = cols.filter(c => Number(c.nullCount || 0) === 0);
   const wrap = document.getElementById("profileCards");
-  wrap.innerHTML = data.columns.map(c => buildLiveCard(data, c)).join("");
+  wrap.innerHTML = cols.length
+    ? cols.map(c => buildLiveCard(lastProfile, c)).join("")
+    : '<div class="col-12"><div class="text-xs text-muted-2 p-3">No columns match the filter.</div></div>';
+  const info = document.getElementById("profileFilterInfo");
+  if(info) info.textContent = "Showing " + cols.length + " of " + lastProfile.columns.length + " columns";
 }
 
 function buildLiveCard(data, c){

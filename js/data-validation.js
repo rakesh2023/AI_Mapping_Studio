@@ -292,7 +292,7 @@ function renderCheckGrid(){
           '<td class="dv-tname-cell">' + (i === 0 ? escapeHtml(t) : '') + '</td>' +
           '<td class="dv-colname">' + escapeHtml(f.name) +
             (f.dataType ? ' <span class="text-muted-2 text-xs">' + escapeHtml(String(f.dataType)) + '</span>' : '') + '</td>' +
-          checkCell(t, f.name, "pk", st.pk, og.pk, {}) +
+          pkCell(t, f.name, st.pk, og.pk) +
           checkCell(t, f.name, "mandatory", st.mandatory, og.mandatory, {}) +
           checkCell(t, f.name, "typelist", st.typelist, og.typelist, {disabled: !tlCount, tip: tlTip}) +
           '<td class="dv-check' + originClass(og.fk) + '"' + (fkRef ? ' title="' + escapeHtml(fkRef.parentTable + "." + fkRef.parentColumn) + '"' : '') + '>' +
@@ -309,6 +309,44 @@ function renderCheckGrid(){
   }
   body.innerHTML = html;
   body.querySelectorAll(".dv-chk").forEach(cb => cb.addEventListener("change", onCheckToggle));
+  // Primary Key is a per-table radio (one PK per table). Track prior state so clicking the
+  // already-selected PK clears it.
+  body.querySelectorAll(".dv-pk").forEach(r => {
+    r.addEventListener("mousedown", e => { e.currentTarget._wasChecked = e.currentTarget.checked; });
+    r.addEventListener("click", onPkRadioClick);
+  });
+}
+
+// PK cell: a radio grouped per table (exclusive) instead of a checkbox.
+function pkCell(t, col, checked, origin){
+  const nm = "dvpk_" + String(t).replace(/[^A-Za-z0-9_]/g, "_");
+  return '<td class="dv-check' + originClass(origin) + '">' +
+    '<input type="radio" class="dv-pk" name="' + nm + '" data-t="' + escapeHtml(t) + '" data-c="' + escapeHtml(col) + '"' +
+      (checked ? " checked" : "") + ' title="Primary key — one per table (click the selected one again to clear)">' +
+  '</td>';
+}
+
+function onPkRadioClick(e){
+  const r = e.currentTarget;
+  const t = r.getAttribute("data-t"), c = r.getAttribute("data-c");
+  if(r._wasChecked){ r.checked = false; setPk(t, null); }   // clicking the selected PK clears it
+  else setPk(t, c);
+}
+
+// Set (or clear) the single PK column for a table; all other columns' pk is turned off.
+function setPk(t, selectedCol){
+  ensureTableState(t); ensureOrigin(t);
+  (dvFieldsByTable[t] || []).forEach(f => {
+    if(!dvChecks[t][f.name]) dvChecks[t][f.name] = {pk:false, mandatory:false, typelist:false, fk:false};
+    const val = (f.name === selectedCol);
+    if(dvChecks[t][f.name].pk !== val){
+      dvChecks[t][f.name].pk = val;
+      if(!dvOrigin[t][f.name]) dvOrigin[t][f.name] = {pk:"schema", mandatory:"schema", typelist:"schema", fk:"schema"};
+      dvOrigin[t][f.name].pk = "user";
+    }
+  });
+  persistConfig();
+  renderCheckGrid();   // re-render so origin colors + radio states stay consistent
 }
 // opts: {disabled, tip, label}. tip -> hover title on the cell; label -> small text under the box.
 function checkCell(t, col, k, checked, origin, opts){
@@ -523,6 +561,8 @@ function openRuleEditor(id){
   const ed = document.getElementById("ruleEditor");
   ed.innerHTML =
     '<div class="dv-rule-editor">' +
+      '<label style="margin-top:0;">Rule name</label>' +
+      '<input type="text" class="form-control form-control-sm mb-2" id="ruleName" placeholder="e.g. Claim / exposure state mismatch (leave blank to let AI name it)" value="' + escapeHtml(editing ? (editing.title || "") : "") + '">' +
       '<div class="d-flex align-items-center" id="ruleTablesHdr" style="cursor:pointer;">' +
         '<label style="margin:0;cursor:pointer;">Tables — select one or more</label>' +
         '<span class="text-xs text-muted-2 ms-2" id="ruleSelCountHdr"></span>' +
@@ -617,6 +657,9 @@ async function interpretRule(ruleSel){
       return;
     }
     dvRuleDraft = {title: rule.title || prompt.slice(0, 48), interpretation: rule.interpretation || ""};
+    // Suggest the AI's name only when the user hasn't typed their own (never overwrite theirs).
+    const nameEl = document.getElementById("ruleName");
+    if(nameEl && !nameEl.value.trim() && rule.title) nameEl.value = rule.title;
     document.getElementById("ruleInterp").textContent = rule.interpretation || "";
     document.getElementById("ruleQuery").value = rule.violationQuery;
     document.getElementById("ruleResult").style.display = "";
@@ -630,7 +673,9 @@ function saveRule(existingId, ruleSel){
   const prompt = (document.getElementById("rulePrompt").value || "").trim();
   const query = (document.getElementById("ruleQuery").value || "").trim();
   if(!query){ showNotification("Interpret the rule (or enter a SQL query) before saving.", "warning"); return; }
-  const title = (dvRuleDraft && dvRuleDraft.title) || prompt.slice(0, 48) || "Custom rule";
+  const nameEl = document.getElementById("ruleName");
+  const typedName = nameEl ? (nameEl.value || "").trim() : "";
+  const title = typedName || (dvRuleDraft && dvRuleDraft.title) || prompt.slice(0, 48) || "Custom rule";
   const interpretation = (dvRuleDraft && dvRuleDraft.interpretation) || "";
   if(existingId){
     const r = dvCustomRules.find(x => x.id === existingId);

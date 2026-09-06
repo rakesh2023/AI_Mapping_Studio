@@ -868,29 +868,21 @@ async function regenerateMapping(id, silent, extraInstructions){
 
 const SELECT_FIELDS = {mappingType: COLUMNS.find(c=>c.key==="mappingType").options};
 
-/* Build a datalist of source-schema suggestions for inline / modal editing.
-   sourceTable -> distinct tables; sourceColumn -> columns of the row's source table
-   (falls back to all columns). Uses knownSourceColumns() (live schema or the mappings). */
-function _ensureSourceDatalist(field, m){
+/* Source-schema suggestions for inline / modal editing (array for the autocomplete).
+   sourceTable -> distinct tables + table.column combos; sourceColumn -> columns of
+   the row's selected source table. Uses knownSourceColumns() (live schema or mappings). */
+function sourceSuggestions(field, m){
   const cols = (typeof knownSourceColumns === "function") ? knownSourceColumns() : [];
-  if(!cols.length) return "";
-  let values;
+  if(!cols.length) return [];
   if(field === "sourceTable"){
     // Offer bare table names AND table.column combos (picking a combo sets both).
     const tables = Array.from(new Set(cols.map(c => c.table).filter(Boolean)));
     const combos = Array.from(new Set(cols.filter(c => c.table && c.column).map(c => c.table + "." + c.column)));
-    values = tables.concat(combos);
-  } else {
-    // sourceColumn: STRICTLY the columns of this row's selected source table (no fallback).
-    const st = ((m && m.sourceTable) || "").toLowerCase();
-    values = st ? Array.from(new Set(cols.filter(c => (c.table || "").toLowerCase() === st).map(c => c.column).filter(Boolean))) : [];
+    return tables.concat(combos);
   }
-  if(!values.length) return "";
-  const id = field === "sourceTable" ? "wsSrcTableList" : "wsSrcColList";
-  let dl = document.getElementById(id);
-  if(!dl){ dl = document.createElement("datalist"); dl.id = id; document.body.appendChild(dl); }
-  dl.innerHTML = values.map(v => '<option value="' + escapeHtml(v) + '"></option>').join("");
-  return id;
+  // sourceColumn: STRICTLY the columns of this row's selected source table (no fallback).
+  const st = ((m && m.sourceTable) || "").toLowerCase();
+  return st ? Array.from(new Set(cols.filter(c => (c.table || "").toLowerCase() === st).map(c => c.column).filter(Boolean))) : [];
 }
 
 function makeCellEditable(cell){
@@ -904,12 +896,12 @@ function makeCellEditable(cell){
     input.innerHTML = SELECT_FIELDS[field].map(o => '<option ' + (o===currentVal?"selected":"") + '>' + o + '</option>').join("");
   } else {
     input = document.createElement("input"); input.value = currentVal;
-    if(field === "sourceTable" || field === "sourceColumn"){   // autocomplete from the source schema
-      const listId = _ensureSourceDatalist(field, m);
-      if(listId){ input.setAttribute("list", listId); input.setAttribute("autocomplete", "off"); }
-    }
   }
   cell.innerHTML = ""; cell.appendChild(input); input.focus();
+  if(!SELECT_FIELDS[field] && (field === "sourceTable" || field === "sourceColumn")){
+    // highlighted autocomplete from the source schema; picking commits via blur
+    attachAutocomplete(input, () => sourceSuggestions(field, m), { onSelect: () => input.blur() });
+  }
   const commit = () => {
     const v = input.value;
     // Picking a "table.column" in the Source Table cell sets BOTH source table & column.
@@ -1008,6 +1000,12 @@ function injectEditMappingModal(){
       if(scEl) scEl.value = v.slice(dot + 1).trim();
     }
   });
+  // Highlighted source table/column autocomplete — attached once; reads the mapping
+  // currently open (_editingMappingId) so column suggestions track the chosen table.
+  [["sourceTable", "em_sourceTable"], ["sourceColumn", "em_sourceColumn"]].forEach(([fld, elId]) => {
+    const el = document.getElementById(elId);
+    if(el) attachAutocomplete(el, () => sourceSuggestions(fld, findMapping(_editingMappingId)), {});
+  });
 }
 
 function openEditMappingModal(id){
@@ -1018,13 +1016,7 @@ function openEditMappingModal(id){
   document.getElementById("emId").textContent = id;
   document.getElementById("emTarget").textContent = (m.targetTable || m.targetEntity || "") + "." + (m.targetColumn || "");
   EDIT_FIELDS.forEach(f => { const el = document.getElementById("em_" + f.key); if(el) el.value = m[f.key] || ""; });
-  // Source table / column autocomplete from the source schema.
-  [["sourceTable", "em_sourceTable"], ["sourceColumn", "em_sourceColumn"]].forEach(([fld, elId]) => {
-    const el = document.getElementById(elId);
-    if(!el) return;
-    const listId = _ensureSourceDatalist(fld, m);
-    if(listId){ el.setAttribute("list", listId); el.setAttribute("autocomplete", "off"); }
-  });
+  // Source table/column autocomplete is wired once in injectEditMappingModal.
   if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("editMapModal")).show(); }
 }
 

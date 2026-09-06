@@ -511,8 +511,22 @@ def run_custom_query(cfg: Dict[str, Any]) -> Result:
         except Exception:  # noqa: BLE001
             pass
         cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) FROM ({query}) AS _vr")
-        count = int(cur.fetchone()[0] or 0)
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM ({query}) AS _vr")
+            count = int(cur.fetchone()[0] or 0)
+        except Exception:  # noqa: BLE001
+            # A valid violation query can SELECT duplicate column names (e.g. c.publicid
+            # AND e.publicid across a join), which a derived-table COUNT wrapper rejects.
+            # Fall back to counting the returned rows directly (a real query error still
+            # raises here and surfaces below).
+            cur = conn.cursor()
+            cur.execute(query)
+            count = 0
+            while True:
+                batch = cur.fetchmany(1000)
+                if not batch:
+                    break
+                count += len(batch)
         conn.close()
         return {"ok": True, "count": count}, 200
     except Exception as exc:  # noqa: BLE001
@@ -601,7 +615,9 @@ def issue_rows(cfg: Dict[str, Any]) -> Result:
             query = (cfg.get("query") or "").strip()
             if not query or not _is_safe_query(query):
                 return {"ok": False, "error": "Custom rule query not available or unsafe."}, 400
-            sql = f"SELECT TOP {top_n} * FROM ({query}) AS _vr"
+            # Run the rule query unwrapped — a derived-table wrapper (… AS _vr) would reject
+            # duplicate column names (e.g. c.publicid AND e.publicid). fetchmany(top_n) caps rows.
+            sql = query
         else:
             return {"ok": False, "error": "Unknown or non-drillable check type."}, 400
 
@@ -615,7 +631,7 @@ def issue_rows(cfg: Dict[str, Any]) -> Result:
             cur.execute(sql, *params)
         else:
             cur.execute(sql)
-        fetched = cur.fetchall()
+        fetched = cur.fetchmany(top_n)   # cap rows (custom rules run unwrapped, without a TOP)
         columns = [d[0] for d in cur.description] if cur.description else []
         conn.close()
     except ConnectionAttemptError:

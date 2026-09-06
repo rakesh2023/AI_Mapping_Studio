@@ -319,6 +319,20 @@ textarea:focus::placeholder{color:transparent;}
 input:focus::-webkit-input-placeholder,
 textarea:focus::-webkit-input-placeholder{color:transparent;}
 
+/* A placeholder is a HINT, not content — make it clearly distinct from real text so an
+   empty editable field never looks like typed app text: a light muted color + italic in
+   both themes. (opacity:1 so Firefox doesn't dim it further; the focus rule above still
+   clears it on focus because it has higher specificity.) */
+input::placeholder,textarea::placeholder,.form-control::placeholder{color:#a7adb8;opacity:1;font-style:italic;}
+input::-webkit-input-placeholder,textarea::-webkit-input-placeholder{color:#a7adb8;opacity:1;font-style:italic;}
+/* Dark mode: default placeholder was almost invisible on the dark input; use a clearly
+   readable-but-faded gray. Scoped to :not(:focus) so hide-on-focus still wins. */
+body.theme-dark input:not(:focus)::placeholder,
+body.theme-dark textarea:not(:focus)::placeholder,
+body.theme-dark .form-control:not(:focus)::placeholder{color:#8a92a0;opacity:1;font-style:italic;}
+body.theme-dark input:not(:focus)::-webkit-input-placeholder,
+body.theme-dark textarea:not(:focus)::-webkit-input-placeholder{color:#8a92a0;opacity:1;font-style:italic;}
+
 body.theme-dark .form-select, body.theme-dark .form-control{background:var(--bg-card);color:var(--text-main);border-color:var(--border);}
 /* hardcoded near-black text that must flip in dark mode */
 body.theme-dark .topbar .app-title,
@@ -326,3 +340,11 @@ body.theme-dark .user-meta .user-name,
 body.theme-dark .kpi-card .kpi-value{color:var(--text-main);}
 body.theme-dark .empty-state h4{color:var(--text-main);}
 body.theme-dark .prof-card .kpi-icon, body.theme-dark .kpi-card i{color:var(--text-muted);}
+
+/* ---- Autocomplete dropdown (custom; replaces native <datalist> so we can
+   highlight the typed match). Reused singleton, positioned under the input. ---- */
+.ac-menu{position:absolute;z-index:3000;max-height:260px;overflow-y:auto;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;}
+.ac-item{padding:5px 9px;font-size:.8rem;border-radius:6px;cursor:pointer;color:var(--text-main);white-space:nowrap;}
+.ac-item.active,.ac-item:hover{background:var(--primary-soft);color:var(--primary-dark);}
+.ac-mark{background:transparent;color:var(--primary);font-weight:700;padding:0;}

@@ -40,11 +40,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   const ecDeleteBtn = document.getElementById("ecDeleteBtn");
   if(ecDeleteBtn) ecDeleteBtn.addEventListener("click", ecDelete);
   const delEntBtn = document.getElementById("deleteEntityBtn");
-  if(delEntBtn) delEntBtn.addEventListener("click", deleteActiveEntity);
+  if(delEntBtn) delEntBtn.addEventListener("click", deleteSelectedEntities);
   const ecTypeEl = document.getElementById("ecType");
   if(ecTypeEl) ecTypeEl.addEventListener("change", ecToggleLen);
   const ecFkEl = document.getElementById("ecFk");
   if(ecFkEl) ecFkEl.addEventListener("change", ecToggleFk);
+  // Highlighted FK-reference autocomplete for the Add / Edit Column modals (attach once).
+  const ecRefEl = document.getElementById("ecFkRef");
+  if(ecRefEl) attachAutocomplete(ecRefEl, fkRefSuggestions, {});
+  const acRefEl = document.getElementById("acFkRef");
+  if(acRefEl) attachAutocomplete(acRefEl, fkRefSuggestions, {});
   const inferBtn = document.getElementById("inferMetaBtn");
   if(inferBtn) inferBtn.addEventListener("click", runInferSelected);
   const selAllBtn = document.getElementById("ttSelectAllBtn");
@@ -497,7 +502,19 @@ function renderTargetTree(meta){
     '<li><div class="tree-node"><i class="bi bi-box"></i> ' + escapeHtml(meta.application || "Target Schema") + '</div>' +
       '<ul class="tree-children">' + items + '</ul>' +
     '</li>';
-  document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => selectEntity(n.dataset.entity, n.dataset.ghost === "1")));
+  document.querySelectorAll("[data-entity]").forEach(n => n.addEventListener("click", () => {
+    const name = n.dataset.entity, ghost = n.dataset.ghost === "1";
+    selectEntity(name, ghost);
+    // Clicking the table name also toggles its checkbox (select for AI fill / delete).
+    if(!ghost){
+      const cb = n.querySelector(".tt-check");
+      if(cb){
+        cb.checked = !cb.checked;
+        if(cb.checked) targetSelected.add(name); else targetSelected.delete(name);
+        updateInferSelectedBtn();
+      }
+    }
+  }));
   // Checkboxes: toggle the selection set without triggering the node's select-entity click.
   tree.querySelectorAll(".tt-check").forEach(cb => {
     cb.addEventListener("click", e => e.stopPropagation());
@@ -539,12 +556,17 @@ function filterEntityTree(){
   } else if(hint){ hint.style.display = "none"; }
 }
 
-/* Reflect the checked-table count on the "AI fill selected" button. */
+/* Reflect the checked-table count on the "AI fill" and "Delete tables" buttons. */
 function updateInferSelectedBtn(){
-  const btn = document.getElementById("inferMetaBtn");
-  if(!btn) return;
   const n = targetSelected.size;
-  btn.innerHTML = '<i class="bi bi-stars me-1"></i> AI fill' + (n ? " (" + n + ")" : "");
+  const btn = document.getElementById("inferMetaBtn");
+  if(btn) btn.innerHTML = '<i class="bi bi-stars me-1"></i> AI fill' + (n ? " (" + n + ")" : "");
+  // The delete button deletes ONLY the checked tables; it is shown only when 1+ are ticked.
+  const del = document.getElementById("deleteEntityBtn");
+  if(del){
+    del.innerHTML = '<i class="bi bi-trash me-1"></i> Delete tables' + (n ? " (" + n + ")" : "");
+    del.style.display = n ? "" : "none";
+  }
 }
 
 /* Select-all / clear toggle for the tree checkboxes. */
@@ -568,14 +590,19 @@ function selectEntity(name, isGhost){
     activeEntity = meta.entities.find(e => e.name === name);
     if(!activeEntity) return;
   }
-  document.querySelectorAll("[data-entity]").forEach(n => n.classList.toggle("active", n.dataset.entity === name));
+  let activeNode = null;
+  document.querySelectorAll("[data-entity]").forEach(n => {
+    const on = n.dataset.entity === name;
+    n.classList.toggle("active", on);
+    if(on) activeNode = n;
+  });
+  // Bring the selected table into view in the tree (e.g. a freshly-added table at the bottom).
+  if(activeNode && activeNode.scrollIntoView) activeNode.scrollIntoView({block:"nearest", inline:"nearest"});
   document.getElementById("targetTitle").innerHTML = '<i class="bi bi-table"></i> ' + escapeHtml(name) +
     (activeEntity._ghost ? ' <span class="badge-soft badge-low">removed</span>'
                          : ' <span class="text-muted-2 text-xs">(' + escapeHtml(activeEntity.table || name) + ')</span>');
   const addBtn = document.getElementById("addColumnBtn");
   if(addBtn) addBtn.style.display = activeEntity._ghost ? "none" : "";   // no editing a removed table
-  const delBtn = document.getElementById("deleteEntityBtn");
-  if(delBtn) delBtn.style.display = activeEntity._ghost ? "none" : "";
   renderTargetFields();
 }
 
@@ -590,14 +617,14 @@ function renderTargetFields(){
   if(activeEntity._ghost){
     const cols = (activeEntity._ghostCols || []).filter(c => !search || c.name.toLowerCase().indexOf(search) !== -1);
     body.innerHTML = cols.length ? cols.map(c => ghostFieldRow(activeEntity.table || activeEntity.name, c)).join("")
-      : '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-trash"></i><h4>This table was removed in the last extract.</h4></div></td></tr>';
+      : '<tr><td colspan="12"><div class="empty-state"><i class="bi bi-trash"></i><h4>This table was removed in the last extract.</h4></div></td></tr>';
     return;
   }
 
   const fields = activeEntity.fields.filter(f => !search || f.name.toLowerCase().indexOf(search) !== -1);
   const removedCols = (diff && diff.removedByTable[tl]) ? diff.removedByTable[tl].filter(c => !search || c.name.toLowerCase().indexOf(search) !== -1) : [];
   if(!fields.length && !removedCols.length){
-    body.innerHTML = '<tr><td colspan="13"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
+    body.innerHTML = '<tr><td colspan="12"><div class="empty-state"><i class="bi bi-search"></i><h4>No matching fields</h4></div></td></tr>';
     return;
   }
   // Availability check: a FK is "resolvable" only if its referenced table exists in
@@ -646,7 +673,6 @@ function renderTargetFields(){
                       : anyAi ? ' <span class="badge-soft badge-ai diff-badge" title="Populated from the schema file / data dictionary — review">AI</span>' : '';
     return '<tr class="' + cls + (anyUser ? "" : (anyAi ? " is-ai" : "")) + '" data-col="' + escapeHtml(f.name) + '">' +
       '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
-      '<td class="mono">' + escapeHtml(activeEntity.table || "") + '</td>' +
       '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + originBadge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
       '<td class="ts-edit' + cellCls("dataType") + '" data-tsfield="dataType" data-tscol="' + escapeHtml(f.name) + '" title="Click to edit type">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +
       '<td class="ts-edit' + cellCls("length") + '" data-tsfield="length" data-tscol="' + escapeHtml(f.name) + '" title="Click to edit length">' + (f.length ?? "-") + was("length", fLen) + '</td>' +
@@ -722,19 +748,16 @@ function tsMakeCellEditable(cell){
   } else if(fieldAttr === "fk"){
     const inp = document.createElement("input"); inp.type = "text"; inp.className = "form-control form-control-sm mono";
     inp.placeholder = "table.column (blank = no FK)"; inp.value = f.fkReference || "";
-    inp.setAttribute("list", _ensureFkRefDatalist());   // table / table.column suggestions
-    inp.setAttribute("autocomplete", "off");
     cell.innerHTML = ""; cell.appendChild(inp); inp.focus();
+    attachAutocomplete(inp, fkRefSuggestions, { onSelect: () => inp.blur() });   // highlighted table/column suggestions
     inp.addEventListener("blur", () => { const v = inp.value.trim(); done({fk: !!v, fkReference: v}); });
     inp.addEventListener("keydown", (e) => { if(e.key === "Enter") inp.blur(); if(e.key === "Escape") cancel(); });
   }
 }
 
-/* Build (once per edit) a datalist of FK suggestions from the active target schema:
-   each table, its table.<key>, and every table.column. Returns the datalist id. */
-function _ensureFkRefDatalist(){
-  let dl = document.getElementById("tsFkRefList");
-  if(!dl){ dl = document.createElement("datalist"); dl.id = "tsFkRefList"; document.body.appendChild(dl); }
+/* FK suggestions from the active target schema: each table, its table.<key>, and
+   every table.column. Returned as a de-duped array for the autocomplete dropdown. */
+function fkRefSuggestions(){
   const meta = getTargetSchema() || {};
   const opts = [];
   (meta.entities || []).forEach(e => {
@@ -748,8 +771,7 @@ function _ensureFkRefDatalist(){
   });
   const seen = {}, uniq = [];
   opts.forEach(o => { if(!seen[o]){ seen[o] = 1; uniq.push(o); } });
-  dl.innerHTML = uniq.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
-  return "tsFkRefList";
+  return uniq;
 }
 
 /* Persist a single inline field change, mark it as user-edited (green), keep scroll. */
@@ -798,7 +820,6 @@ function ghostFieldRow(table, c){
                         : '<span class="badge-soft badge-low diff-badge">REMOVED</span>';
   return '<tr class="' + rowCls + '" title="' + (renamed ? 'Renamed to ' + escapeHtml(renamed) : 'Removed in last extract') + '">' +
     '<td class="cell-center"><i class="bi ' + icon + ' text-muted-2"></i></td>' +
-    '<td class="mono">' + escapeHtml(table || "") + '</td>' +
     '<td class="mono">' + escapeHtml(c.name) + ' ' + badge + '</td>' +
     '<td>' + escapeHtml(c.dataType || "") + '</td>' +
     '<td>' + (c.length != null ? c.length : "-") + '</td>' +
@@ -1211,11 +1232,7 @@ function openEditColModal(name){
   document.getElementById("ecBT").value = field.businessTerm || "";
   document.getElementById("ecAcc").value = field.accepted || "";
   document.getElementById("ecDef").value = (field.default != null ? field.default : "");
-  // FK-reference options from the whole schema
-  const meta = getTargetSchema();
-  const fkOpts = [];
-  (meta.entities || []).forEach(e => (e.fields || []).forEach(f => fkOpts.push((e.table || e.name) + "." + f.name)));
-  const dl = document.getElementById("ecFkRefList"); if(dl) dl.innerHTML = fkOpts.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
+  // FK-reference suggestions come from the highlighted autocomplete wired at init.
   ecErr(null); ecToggleLen(); ecToggleFk();
   if(!ecModal) ecModal = new bootstrap.Modal(document.getElementById("editColModal"));
   ecModal.show();
@@ -1386,10 +1403,7 @@ function openAddColumnModal(){
   acRenderProposed();
   document.getElementById("acTableName").textContent = activeEntity.name;
 
-  // FK reference options: every table.column in the active schema
-  const fkOpts = [];
-  (meta.entities || []).forEach(e => (e.fields || []).forEach(f => fkOpts.push((e.table || e.name) + "." + f.name)));
-  document.getElementById("acFkRefList").innerHTML = fkOpts.map(o => '<option value="' + escapeHtml(o) + '"></option>').join("");
+  // FK-reference suggestions come from the highlighted autocomplete wired at init.
 
   // Insert-position options: existing columns of THIS table
   document.getElementById("acAfter").innerHTML = '<option value="">At the end</option>' +
@@ -1726,6 +1740,7 @@ function showColumnsAddedToast(cols, entityName){
    ========================================================================= */
 let aeModal = null;
 let aeProposedCols = [];   // proposed target fields for the new entity (from AI or empty)
+const aeProdChecked = new Set();   // Product-Schema tab: checked table names (lower-cased)
 
 function wireAddEntity(){
   const openBtn = document.getElementById("addEntityBtn");
@@ -1737,6 +1752,13 @@ function wireAddEntity(){
   if(saveBtn) saveBtn.addEventListener("click", aeSave);
   const nameEl = document.getElementById("aeName");
   if(nameEl) nameEl.addEventListener("input", () => aeClearErr("aeName"));
+  // Product Schema tab
+  const prodSearch = document.getElementById("aeProdSearch");
+  if(prodSearch) prodSearch.addEventListener("input", aeRenderProductList);
+  const prodAddBtn = document.getElementById("aeProdAddBtn");
+  if(prodAddBtn) prodAddBtn.addEventListener("click", aeAddSelectedFromProduct);
+  const prodSelAll = document.getElementById("aeProdSelectAll");
+  if(prodSelAll) prodSelAll.addEventListener("click", aeProdToggleSelectAll);
 }
 
 function openAddEntityModal(){
@@ -1748,6 +1770,11 @@ function openAddEntityModal(){
   document.getElementById("aeInstruction").value = "";
   aeProposedCols = [];
   aeRenderCols();
+  // reset Product Schema tab state
+  aeProdChecked.clear();
+  const prodSearch = document.getElementById("aeProdSearch"); if(prodSearch) prodSearch.value = "";
+  const prodErr = document.getElementById("aeProdError"); if(prodErr) prodErr.innerHTML = "";
+  const prodStatus = document.getElementById("aeProdStatus"); if(prodStatus) prodStatus.textContent = "";
   aeSwitchTab("manual");
   if(!aeModal) aeModal = new bootstrap.Modal(document.getElementById("addEntityModal"));
   aeModal.show();
@@ -1756,9 +1783,19 @@ function openAddEntityModal(){
 
 function aeSwitchTab(tab){
   const ai = tab === "ai";
+  const product = tab === "product";
+  const manual = !ai && !product;
   document.getElementById("aeAIPanel").style.display = ai ? "" : "none";
-  document.getElementById("aeTabManual").classList.toggle("active", !ai);
+  const prodPanel = document.getElementById("aeProductPanel"); if(prodPanel) prodPanel.style.display = product ? "" : "none";
+  // The shared name/desc form, columns preview and footer save button apply to
+  // Manual/AI only — the Product Schema tab adds many tables via its own button.
+  const form = document.getElementById("aeForm"); if(form) form.style.display = product ? "none" : "";
+  const colsBlock = document.getElementById("aeColsBlock"); if(colsBlock) colsBlock.style.display = product ? "none" : "";
+  const saveBtn = document.getElementById("aeSaveBtn"); if(saveBtn) saveBtn.style.display = product ? "none" : "";
+  document.getElementById("aeTabManual").classList.toggle("active", manual);
   document.getElementById("aeTabAI").classList.toggle("active", ai);
+  const prodTab = document.getElementById("aeTabProduct"); if(prodTab) prodTab.classList.toggle("active", product);
+  if(product) aeRenderProductList();
 }
 
 function aeSetErr(field, msg){ const el = document.querySelector('.aeerr[data-for="' + field + '"]'); if(el){ el.textContent = msg; el.style.color = "var(--danger)"; } }
@@ -1818,6 +1855,161 @@ async function aeParse(){
   }
 }
 
+/* ---------------- Add from Product Schema ---------------- */
+
+/* Load the Product Schema entities (aims_cmt_schema), or [] when none loaded. */
+function aeProductEntities(){
+  const ref = lsGet("aims_cmt_schema", null);
+  return (ref && Array.isArray(ref.entities)) ? ref.entities : [];
+}
+
+/* Render the checkbox list of Product Schema tables (filtered by the search box). */
+function aeRenderProductList(){
+  const list = document.getElementById("aeProdList");
+  const empty = document.getElementById("aeProdEmpty");
+  const body = document.getElementById("aeProdBody");
+  const ents = aeProductEntities();
+  if(!ents.length){
+    if(empty) empty.style.display = "";
+    if(body) body.style.display = "none";
+    aeUpdateProdCount();
+    return;
+  }
+  if(empty) empty.style.display = "none";
+  if(body) body.style.display = "";
+  const q = (document.getElementById("aeProdSearch").value || "").trim().toLowerCase();
+  const rows = ents.filter(e => {
+    const nm = (e.table || e.name || "").toLowerCase();
+    return !q || nm.includes(q);
+  });
+  if(!list) return;
+  if(!rows.length){ list.innerHTML = '<div class="text-xs text-muted-2 p-2">No tables match "' + escapeHtml(q) + '".</div>'; aeUpdateProdCount(); return; }
+  list.innerHTML = rows.map(e => {
+    const nm = e.table || e.name || "";
+    const key = nm.toLowerCase();
+    const fields = e.fields || [];
+    const pkN = fields.filter(f => f.pk).length;
+    const fkN = fields.filter(f => f.fk).length;
+    const badges =
+      '<span class="badge-soft badge-gray">' + fields.length + ' col' + (fields.length === 1 ? "" : "s") + '</span>' +
+      (pkN ? ' <span class="badge-soft badge-high">' + pkN + ' PK</span>' : "") +
+      (fkN ? ' <span class="badge-soft badge-medium">' + fkN + ' FK</span>' : "");
+    return '<label class="d-flex align-items-center gap-2 px-2 py-1" style="border-bottom:1px solid var(--border);cursor:pointer;">' +
+      '<input type="checkbox" class="ae-prod-cb" value="' + escapeHtml(key) + '"' + (aeProdChecked.has(key) ? " checked" : "") + '>' +
+      '<span class="mono flex-grow-1">' + escapeHtml(nm) + '</span>' +
+      '<span class="text-xs">' + badges + '</span>' +
+    '</label>';
+  }).join("");
+  list.querySelectorAll(".ae-prod-cb").forEach(cb => cb.addEventListener("change", () => {
+    if(cb.checked) aeProdChecked.add(cb.value); else aeProdChecked.delete(cb.value);
+    aeUpdateProdCount();
+  }));
+  aeUpdateProdCount();
+}
+
+function aeUpdateProdCount(){
+  const el = document.getElementById("aeProdCount");
+  if(el) el.textContent = aeProdChecked.size + " selected";
+}
+
+/* Select-all / clear the currently-visible (filtered) tables. */
+function aeProdToggleSelectAll(){
+  const cbs = Array.from(document.querySelectorAll("#aeProdList .ae-prod-cb"));
+  if(!cbs.length) return;
+  const allChecked = cbs.every(cb => cb.checked);
+  cbs.forEach(cb => {
+    cb.checked = !allChecked;
+    if(cb.checked) aeProdChecked.add(cb.value); else aeProdChecked.delete(cb.value);
+  });
+  aeUpdateProdCount();
+}
+
+/* Extract the referenced FK table name from an fkReference string:
+   "entity.Claim" -> "Claim", "cs_claim.publicid" -> "cs_claim", "Contact" -> "Contact". */
+function _fkRefBaseName(ref){
+  let s = (ref || "").trim();
+  if(!s) return "";
+  s = s.replace(/^entity\./i, "");        // entity.Claim -> Claim
+  if(s.indexOf(".") >= 0) s = s.split(".")[0];   // table.column -> table
+  return s.trim();
+}
+
+/* Map a Product Schema entity -> a target entity in the canonical shape.
+   Every column name is copied VERBATIM. The single exception is a column named
+   exactly "PMT_Parent" (case-insensitive), which is renamed after its referenced
+   FK table: entity.Claim -> ClaimId (append "Id" unless the ref already ends in Id).
+   If that column has no FK reference to derive from, it is left unchanged too. */
+function aeMapProductEntity(prodEntity){
+  const name = prodEntity.table || prodEntity.name || "";
+  return {
+    name: name,
+    table: name,
+    description: prodEntity.description || "",
+    isListTable: !!prodEntity.isListTable,
+    fields: (prodEntity.fields || []).map(f => {
+      let colName = f.name || "";
+      if(/^pmt_parent$/i.test(colName)){
+        const base = _fkRefBaseName(f.fkReference);
+        if(base) colName = /id$/i.test(base) ? base : (base + "Id");   // entity.Claim -> ClaimId
+      }
+      // Type sometimes arrives with the length embedded — "varchar(100)",
+      // "decimal(10,2)". Split it so the LEN column is populated like other sources.
+      let dt = (f.dataType || "").toLowerCase();
+      let len = (f.length != null ? f.length : null);
+      const lm = dt.match(/^\s*([a-z0-9_ ]+?)\s*\(\s*(\d+)(?:\s*,\s*\d+)?\s*\)\s*$/);
+      if(lm){ dt = lm[1].trim(); if(len == null) len = parseInt(lm[2], 10); }
+      // Mandatory: prefer the explicit nullable flag (not-null => Required); fall
+      // back to the stored mandatory flag only when nullable is unknown.
+      const mand = (f.nullable === false) ? true : (f.nullable === true ? false : !!f.mandatory);
+      return {
+        name: colName,
+        dataType: dt,
+        length: len,
+        mandatory: mand,
+        pk: !!f.pk,
+        fk: !!f.fk,
+        fkReference: f.fkReference || "",       // kept verbatim (e.g. entity.BulkInvoice)
+        description: f.description || "",
+        businessTerm: f.businessTerm || "",
+        typeKey: f.typeKey || "",
+        multipleFkType: f.multipleFkType || "",
+        accepted: null,
+        default: null
+      };
+    })
+  };
+}
+
+/* Add every checked Product Schema table as a new target entity (skips duplicates). */
+function aeAddSelectedFromProduct(){
+  const errBox = document.getElementById("aeProdError");
+  const status = document.getElementById("aeProdStatus");
+  if(errBox) errBox.innerHTML = "";
+  if(status) status.textContent = "";
+  if(!aeProdChecked.size){ if(errBox) errBox.innerHTML = failNote("Select at least one table."); return; }
+  const ents = aeProductEntities();
+  const byKey = {}; ents.forEach(e => { byKey[(e.table || e.name || "").toLowerCase()] = e; });
+  let added = 0, lastName = ""; const skipped = [];
+  aeProdChecked.forEach(key => {
+    const src = byKey[key];
+    if(!src) return;
+    const entity = aeMapProductEntity(src);
+    const res = persistEntity(entity);
+    if(res.ok){ added++; lastName = entity.name; }
+    else skipped.push(entity.name);
+  });
+  if(!added){
+    if(errBox) errBox.innerHTML = failNote("Nothing added — " + (skipped.length ? "the selected table(s) already exist." : "no matching tables found."));
+    return;
+  }
+  if(aeModal) aeModal.hide();
+  renderActiveBrowser();
+  if(lastName) selectEntity(lastName);
+  let msg = "Added " + added + " table" + (added === 1 ? "" : "s");
+  if(skipped.length) msg += " (" + skipped.length + " skipped — already exists)";
+  showNotification(msg + ".", "success", 3500);
+}
+
 function aeValidate(){
   document.querySelectorAll(".aeerr").forEach(e => e.textContent = "");
   let ok = true;
@@ -1873,20 +2065,28 @@ function persistEntity(entity){
   return {ok:true};
 }
 
-/* Remove a just-added entity (Undo). */
-/* Delete the currently-selected entity (target table) with confirmation. */
-async function deleteActiveEntity(){
-  if(!activeEntity){ showNotification("Select a table first.", "warning"); return; }
-  const name = activeEntity.name;
-  const colCount = (activeEntity.fields || []).length;
+/* Delete every CHECKED table (the tt-check selection) with one confirmation. */
+async function deleteSelectedEntities(){
+  const names = Array.from(targetSelected);
+  if(!names.length){ showNotification("Tick one or more tables first.", "warning"); return; }
   const ok = (typeof confirmDialog === "function")
-    ? await confirmDialog('Delete table <strong>' + escapeHtml(name) + '</strong> and its <strong>' +
-        colCount + '</strong> column' + (colCount === 1 ? '' : 's') +
-        ' from the target schema? This cannot be undone.', "Delete table")
-    : window.confirm("Delete table '" + name + "' and all its columns?");
+    ? await confirmDialog('Delete <strong>' + names.length + '</strong> selected table' + (names.length === 1 ? '' : 's') +
+        ' from the target schema? This cannot be undone.', "Delete tables")
+    : window.confirm("Delete " + names.length + " selected table(s)?");
   if(!ok) return;
-  removeEntity(name);   // filters the entity, updates counts, persists, re-renders (selects first entity)
-  showNotification("Table '" + name + "' deleted.", "success", 2500);
+  const activeId = getActiveTargetId();
+  const conn = activeId ? getTargetConnection(activeId) : null;
+  if(!conn){ showNotification("No active target connection to modify.", "danger"); return; }
+  const set = new Set(names);
+  conn.entities = (conn.entities || []).filter(e => !set.has(e.name));
+  conn.columnCount = (conn.entities || []).reduce((a, e) => a + (e.fields || []).length, 0);
+  conn.tableCount = (conn.entities || []).length;
+  upsertTargetConnection(conn);
+  if(getActiveTargetId() === conn.id) setActiveTarget(conn.id);
+  if(activeEntity && set.has(activeEntity.name)) activeEntity = null;   // so the browser falls back to the first table
+  targetSelected.clear();
+  renderActiveBrowser();
+  showNotification("Deleted " + names.length + " table" + (names.length === 1 ? '' : 's') + ".", "success", 2500);
 }
 
 function removeEntity(name){
