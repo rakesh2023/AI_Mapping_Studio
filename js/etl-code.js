@@ -271,6 +271,9 @@ function wireControls(){
   const clrHist = document.getElementById("clearDeployHistoryBtn");
   if(clrHist) clrHist.addEventListener("click", (e) => { e.preventDefault(); clearDeployHistory(); });
 
+  const clrGen = document.getElementById("clearGenFilesBtn");
+  if(clrGen) clrGen.addEventListener("click", (e) => { e.preventDefault(); clearAllGenFiles(); });
+
   // Generated Files table — download / load / remove (event-delegated).
   const gfBody = document.getElementById("genFilesBody");
   if(gfBody) gfBody.addEventListener("click", (e) => {
@@ -1162,7 +1165,7 @@ function lineDiffHtml(before, after){
    ========================================================================= */
 function activeClientId(){ try{ return (typeof AUTH !== "undefined" && AUTH && AUTH.activeClientId) || ""; }catch(e){ return ""; } }
 function getGenFilesAll(){ return lsGet(LS_GEN_FILES, []) || []; }
-function getGenFiles(){ const cid = activeClientId(); return getGenFilesAll().filter(f => (f.clientId || "") === cid); }
+function getGenFiles(){ const cid = String(activeClientId()); return getGenFilesAll().filter(f => String(f.clientId || "") === cid); }
 
 // File name in the spirit of the mockup: <ETL|Create>_<table(s)>.
 function genFileName(type, tables){
@@ -1208,6 +1211,8 @@ function renderGenFiles(){
   if(!body) return;
   const list = getGenFiles().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   if(info) info.textContent = list.length ? (list.length + " file(s)") : "";
+  const clrBtn = document.getElementById("clearGenFilesBtn");
+  if(clrBtn) clrBtn.disabled = !list.length;
   if(!list.length){
     body.innerHTML = '<tr><td colspan="5" class="text-center text-muted-2 text-xs" style="padding:1.2rem;">' +
       'No files yet — generate ETL Code or a Create Table script and it will be saved here.</td></tr>';
@@ -1260,6 +1265,18 @@ async function removeGenFile(id){
   lsSet(LS_GEN_FILES, getGenFilesAll().filter(x => x.id !== id));
   renderGenFiles();
   showNotification("Removed " + f.name + ".sql.", "primary", 1200);
+}
+
+// Remove ALL saved generated files for the active client (leaves other clients' files).
+async function clearAllGenFiles(){
+  const cid = String(activeClientId());
+  const mine = getGenFiles();
+  if(!mine.length){ showNotification("No generated files to clear.", "primary", 1200); return; }
+  const ok = await confirmDialog("Remove all " + mine.length + " generated file(s) for this client? This deletes the saved copies on this browser.", "Clear Generated Files");
+  if(!ok) return;
+  lsSet(LS_GEN_FILES, getGenFilesAll().filter(f => String(f.clientId || "") !== cid));
+  renderGenFiles();
+  showNotification("Cleared all generated files.", "primary", 1200);
 }
 
 /* ---- deployment history (localStorage; mirrors Mapping History) ---- */

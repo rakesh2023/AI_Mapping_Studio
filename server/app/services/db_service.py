@@ -121,6 +121,9 @@ def test_connection(cfg: Dict[str, Any]) -> Result:
 def get_metadata(cfg: Dict[str, Any]) -> Result:
     """Return real tables + columns (with PK/FK) in the app's source-metadata shape."""
     schema_filter = cfg.get("schema")  # optional, e.g. 'dbo'
+    # SQL Server matches schema names case-insensitively; compare the same way (and ignore
+    # surrounding whitespace) so e.g. 'Claim' still matches the physical schema 'claim'.
+    schema_norm = (schema_filter or "").strip().lower()
     try:
         conn = open_connection(cfg)
         cur = conn.cursor()
@@ -187,7 +190,7 @@ def get_metadata(cfg: Dict[str, Any]) -> Result:
         for r in col_rows:
             (tschema, tname, cname, dtype, charlen, numprec,
              is_nullable, default, _pos) = r
-            if schema_filter and tschema != schema_filter:
+            if schema_norm and (tschema or "").strip().lower() != schema_norm:
                 continue
             if first_schema is None:
                 first_schema = tschema

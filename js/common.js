@@ -239,6 +239,13 @@ async function resetApplication(){
   }catch(e){ /* ignore */ }
   // Only reset THIS client's in-memory cache. Device/UI prefs in localStorage are left intact.
   CLIENT_STATE = {ai_mappings: []};
+  // Generated Files live in localStorage (per client) — clear this client's, as the reset
+  // dialog promises to clear "generated outputs". Other clients' files are left intact.
+  try{
+    const cid = String((typeof AUTH !== "undefined" && AUTH && AUTH.activeClientId) || "");
+    const gf = lsGet("aims_generated_files", []) || [];
+    lsSet("aims_generated_files", gf.filter(f => String(f.clientId || "") !== cid));
+  }catch(e){ /* ignore */ }
   clearConnPasswords();   // drop session-cached DB passwords
   if(typeof showNotification === "function") showNotification(who + " data reset. Reloading…", "primary", 1500);
   setTimeout(() => {

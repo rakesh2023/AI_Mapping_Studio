@@ -116,8 +116,10 @@ def generate_values(set_id):
     if err:
         return err
     b = request.get_json(silent=True) or {}
+    mode = "append" if str(b.get("mode", "")).strip().lower() == "append" else "replace"
     payload, status = lookup_service.generate_value_mappings(
-        uid, cid, set_id, b.get("legacyValues", ""), b.get("targetCodes") or [])
+        uid, cid, set_id, b.get("legacyValues", ""), b.get("targetCodes") or [],
+        mode=mode, legacy_full=b.get("legacyFull"))
     return jsonify(payload), status
 
 

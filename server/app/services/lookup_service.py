@@ -605,10 +605,20 @@ _VALUE_MAP_SYSTEM = (
 
 
 def generate_value_mappings(user_id: int, client_id: int, set_id: int,
-                            legacy_values: str, target_codes: Optional[List[Dict[str, Any]]] = None) -> Result:
+                            legacy_values: str, target_codes: Optional[List[Dict[str, Any]]] = None,
+                            mode: str = "replace", legacy_full: Optional[str] = None) -> Result:
     """AI-map a lookup set's LEGACY values (free text) to its target Guidewire typelist
     codes. Persists the legacy text + a readable summary on the set, upserts one value
-    mapping per legacy code (preserving reviewed/manual overrides), and logs a pass."""
+    mapping per legacy code (preserving reviewed/manual overrides), and logs a pass.
+
+    Large legacy sets are mapped in CHUNKS by the client (a single AI call can't return
+    thousands of mappings). `mode`:
+      - "replace" (default / first chunk): clear the previous non-reviewed AI rows, then
+        upsert this call's mappings — identical to the original single-call behavior.
+      - "append" (subsequent chunks): keep existing rows and upsert this chunk on top.
+    `legacy_full`, when given, is the COMPLETE legacy text stored on the set (so the set's
+    saved legacy reflects every chunk, not just the last one); the AI still only maps the
+    `legacy_values` passed in this call."""
     owned, st = get_set(user_id, client_id, set_id)
     if st != 200:
         return owned, st
@@ -649,16 +659,18 @@ def generate_value_mappings(user_id: int, client_id: int, set_id: int,
     # Clear the previous run's AI rows so a NEW legacy set fully replaces the old one
     # (otherwise codes from an earlier legacy input linger and pollute the summary).
     # Manual / reviewed overrides are kept — they represent explicit user decisions.
-    with write_lock():
-        conn = connect()
-        try:
-            conn.execute(
-                "DELETE FROM lookup_value_mappings WHERE lookup_set_id=? AND user_id=? AND client_id=? "
-                "AND is_reviewed=0 AND mapping_type <> 'manual_override'",
-                (set_id, user_id, client_id))
-            conn.commit()
-        finally:
-            conn.close()
+    # On an "append" chunk we KEEP earlier chunks' rows (only the first chunk resets).
+    if mode != "append":
+        with write_lock():
+            conn = connect()
+            try:
+                conn.execute(
+                    "DELETE FROM lookup_value_mappings WHERE lookup_set_id=? AND user_id=? AND client_id=? "
+                    "AND is_reviewed=0 AND mapping_type <> 'manual_override'",
+                    (set_id, user_id, client_id))
+                conn.commit()
+            finally:
+                conn.close()
 
     for m in rows:
         if not isinstance(m, dict):
@@ -679,7 +691,9 @@ def generate_value_mappings(user_id: int, client_id: int, set_id: int,
     ms = vms.get("mappings", [])
     # One "legacyCode ---> gwCode" per line (the "--->" arrow is what the Sync parser reads).
     spec = "\n".join((v.get("sourceCode", "") + " ---> " + (v.get("targetCode") or "(unmapped)")) for v in ms)
-    update_set(user_id, client_id, set_id, target_values_spec=(spec or None), legacy_values_spec=legacy)
+    # Store the COMPLETE legacy text when the client passes it (chunked runs), else this call's.
+    stored_legacy = legacy_full.strip() if (legacy_full and legacy_full.strip()) else legacy
+    update_set(user_id, client_id, set_id, target_values_spec=(spec or None), legacy_values_spec=stored_legacy)
     mapped = sum(1 for v in ms if (v.get("targetCode") or "").strip())
     log_run(user_id, client_id, 2, prompt_version="value.v1", model=model,
             counts={"mapped": mapped, "unmapped": len(ms) - mapped, "total": len(ms)})

@@ -475,6 +475,54 @@ function _typelistBaseName(v){
   return s.replace(/[^a-z0-9]/g, "");
 }
 
+/* ---- Value mapping (chunked) ----
+   A single AI call can't return thousands of mappings, so a large legacy set is split into
+   chunks (~60 values each) and mapped in sequential calls — the first "replace" (resets the
+   previous AI rows), the rest "append" (merged server-side). Small sets = one call, as before. */
+const LK_CHUNK = 60;
+
+function splitLegacyEntries(text){
+  const t = (text || "").trim();
+  if(!t) return [];
+  let lines = t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if(lines.length <= 1) lines = t.split(",").map(s => s.trim()).filter(Boolean);   // single line -> commas
+  return lines;
+}
+
+// Map legacy -> target codes, chunking large sets. onProgress(done, total, chunkIdx, chunks).
+// Returns the final server response (its `spec` is the full merged spec); throws on total failure.
+async function runValueMappingChunked(id, legacy, targetCodes, onProgress){
+  const url = "/api/lookups/" + encodeURIComponent(id) + "/generate-values";
+  const entries = splitLegacyEntries(legacy);
+  if(entries.length <= LK_CHUNK){
+    const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ legacyValues: legacy, targetCodes })});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok) throw new Error((j && j.error) || "Generate failed.");
+    return j;
+  }
+  const chunks = [];
+  for(let i = 0; i < entries.length; i += LK_CHUNK) chunks.push(entries.slice(i, i + LK_CHUNK));
+  let last = null, failed = 0, replaceDone = false;
+  for(let ci = 0; ci < chunks.length; ci++){
+    const body = { legacyValues: chunks[ci].join("\n"), targetCodes,
+                   mode: replaceDone ? "append" : "replace", legacyFull: legacy };
+    let ok = false;
+    for(let attempt = 0; attempt < 2 && !ok; attempt++){   // one retry per chunk
+      try{
+        const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+        const j = await res.json().catch(() => ({}));
+        if(res.ok && j.ok){ last = j; ok = true; replaceDone = true; }
+      }catch(e){ /* retry, then skip */ }
+    }
+    if(!ok) failed++;
+    if(onProgress) onProgress(Math.min((ci + 1) * LK_CHUNK, entries.length), entries.length, ci + 1, chunks.length, failed);
+  }
+  if(!last) throw new Error("All chunks failed to map — check the server and try again.");
+  last._chunksFailed = failed;
+  return last;
+}
+
 /* Inline Generate: map this set's Legacy values → its target Guidewire typelist codes. */
 async function generateValueMapping(id, btn){
   const s = (_allLookupSets || []).find(x => String(x.id) === String(id));
@@ -496,14 +544,14 @@ async function generateValueMapping(id, btn){
   const html = btn ? btn.innerHTML : "";
   if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…'; }
   try{
-    const res = await fetch("/api/lookups/" + encodeURIComponent(id) + "/generate-values", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ legacyValues, targetCodes })});
-    const j = await res.json().catch(() => ({}));
-    if(!res.ok || !j.ok){ showNotification((j && j.error) || "Generate failed.", "danger", 5000); return; }
-    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s).", "success", 3000);
+    const j = await runValueMappingChunked(id, legacyValues, targetCodes, (done, total) => {
+      if(btn && total > LK_CHUNK) btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + done + '/' + total;
+    });
+    const extra = j._chunksFailed ? (" (" + j._chunksFailed + " chunk(s) failed — retry to fill gaps)") : "";
+    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s)." + extra,
+      j._chunksFailed ? "warning" : "success", 3500);
     loadLookupSets();
-  }catch(e){ showNotification("Cannot reach the server.", "danger"); }
+  }catch(e){ showNotification(e.message || "Cannot reach the server.", "danger", 5000); }
   finally{ if(btn){ btn.disabled = false; btn.innerHTML = html; } }
 }
 
@@ -562,18 +610,18 @@ async function generateInEditModal(){
   const html = btn ? btn.innerHTML : "";
   if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Generating…'; }
   try{
-    const res = await fetch("/api/lookups/" + encodeURIComponent(id) + "/generate-values", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ legacyValues: legacy, targetCodes })});
-    const j = await res.json().catch(() => ({}));
-    if(!res.ok || !j.ok){ _leErr((j && j.error) || "Generate failed."); return; }
+    const j = await runValueMappingChunked(id, legacy, targetCodes, (done, total) => {
+      if(btn && total > LK_CHUNK) btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> ' + done + '/' + total;
+    });
     const specEl = document.getElementById("leSpec");
     if(specEl) specEl.value = j.spec || "";
     s.legacyValuesSpec = legacy;             // keep local copy + row behind the modal in sync
     s.targetValuesSpec = j.spec || "";
     applyLookupFilters();
-    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s).", "success", 2500);
-  }catch(e){ _leErr("Cannot reach the server."); }
+    const extra = j._chunksFailed ? (" (" + j._chunksFailed + " chunk(s) failed — retry to fill gaps)") : "";
+    showNotification("Mapped " + (j.mapped || 0) + " of " + (j.saved || 0) + " value(s)." + extra,
+      j._chunksFailed ? "warning" : "success", 2500);
+  }catch(e){ _leErr(e.message || "Cannot reach the server."); }
   finally{ if(btn){ btn.disabled = false; btn.innerHTML = html; } }
 }
 
