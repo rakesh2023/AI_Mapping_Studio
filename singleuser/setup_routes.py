@@ -20,7 +20,13 @@ from app.core.capabilities import capability_report
 setup_bp = Blueprint("singleuser_setup", __name__)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SETUP_HTML = os.path.join(HERE, "setup.html")
+# In a PyInstaller build setup.html is bundled as a data file under sys._MEIPASS;
+# in dev it sits next to this module.
+_BUNDLE = getattr(sys, "_MEIPASS", None)
+if _BUNDLE and os.path.isfile(os.path.join(_BUNDLE, "setup.html")):
+    SETUP_HTML = os.path.join(_BUNDLE, "setup.html")
+else:
+    SETUP_HTML = os.path.join(HERE, "setup.html")
 
 # group key -> (friendly label, pip packages to install, capability keys it provides)
 GROUPS = {

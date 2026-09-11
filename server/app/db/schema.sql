@@ -241,6 +241,119 @@ CREATE TABLE IF NOT EXISTS lookup_value_mappings (
 CREATE INDEX IF NOT EXISTS ix_lvm_set   ON lookup_value_mappings(lookup_set_id);
 CREATE INDEX IF NOT EXISTS ix_lvm_scope ON lookup_value_mappings(user_id, client_id);
 
+-- ==========================================================================
+-- ClaimCenter dictionary index — the per-client schema index built from the
+-- Guidewire entityModel.xml embedded in the uploaded dictionary .zip. Powers the
+-- Data Reconciliation page's grounded NL->SQL. Tenant-scoped (user_id+client_id),
+-- fully replaced on each re-upload. Mirrors the skill's dictionary.db tables.
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS cc_dict_entities (
+    user_id       INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id     INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id            TEXT NOT NULL,               -- entity/subtype id (e.g. 'Claim')
+    kind          TEXT,                        -- 'entity' | 'subtype'
+    parent_id     TEXT,                        -- containing entity id, for subtypes
+    table_name    TEXT,                        -- physical table (e.g. cc_claim); NULL if not persistent
+    description   TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_ccdict_ent_scope ON cc_dict_entities(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS cc_dict_columns (
+    user_id             INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id           INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    owner_id            TEXT NOT NULL,          -- entity/subtype id this column is on
+    name                TEXT,                   -- property name
+    kind                TEXT,                   -- column | typekey | foreignkey | array
+    column_name         TEXT,                   -- physical column (NULL for array/virtual)
+    sql_type            TEXT,
+    type_length         TEXT,
+    description         TEXT,
+    is_nonnull          INTEGER,
+    target_entity       TEXT,                   -- FK/array target entity
+    target_typelist     TEXT,                   -- typekey's typelist
+    key_filter_typelist TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ccdict_col_scope ON cc_dict_columns(user_id, client_id, owner_id);
+
+CREATE TABLE IF NOT EXISTS cc_dict_typelists (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id          TEXT NOT NULL,                  -- typelist id (e.g. 'ClaimState')
+    table_name  TEXT,                           -- physical (e.g. cctl_claimstate)
+    description TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_ccdict_tl_scope ON cc_dict_typelists(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS cc_dict_typecodes (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    typelist_id TEXT NOT NULL,
+    code        TEXT,                           -- the stored value (e.g. 'open')
+    name        TEXT,
+    description TEXT,
+    is_retired  INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_ccdict_tc_scope ON cc_dict_typecodes(user_id, client_id, typelist_id);
+
+-- ==========================================================================
+-- PolicyCenter dictionary index — the PolicyCenter equivalent of cc_dict_*.
+-- Built from the SAME Guidewire entityModel.xml parser (physical pc_/pctl_ table
+-- names come straight from the XML) when a client's Product is Policy. Separate
+-- tables (not a shared discriminator) because UNIQUE(user_id,client_id,id) would
+-- collide between CC and PC entity ids. A client has one dictionary at a time.
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS pc_dict_entities (
+    user_id       INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id     INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id            TEXT NOT NULL,               -- entity/subtype id (e.g. 'Policy')
+    kind          TEXT,                        -- 'entity' | 'subtype'
+    parent_id     TEXT,                        -- containing entity id, for subtypes
+    table_name    TEXT,                        -- physical table (e.g. pc_policy); NULL if not persistent
+    description   TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_pcdict_ent_scope ON pc_dict_entities(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS pc_dict_columns (
+    user_id             INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id           INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    owner_id            TEXT NOT NULL,          -- entity/subtype id this column is on
+    name                TEXT,                   -- property name
+    kind                TEXT,                   -- column | typekey | foreignkey | array
+    column_name         TEXT,                   -- physical column (NULL for array/virtual)
+    sql_type            TEXT,
+    type_length         TEXT,
+    description         TEXT,
+    is_nonnull          INTEGER,
+    target_entity       TEXT,                   -- FK/array target entity
+    target_typelist     TEXT,                   -- typekey's typelist
+    key_filter_typelist TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_pcdict_col_scope ON pc_dict_columns(user_id, client_id, owner_id);
+
+CREATE TABLE IF NOT EXISTS pc_dict_typelists (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id          TEXT NOT NULL,                  -- typelist id (e.g. 'PolicyPeriodStatus')
+    table_name  TEXT,                           -- physical (e.g. pctl_policyperiodstatus)
+    description TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_pcdict_tl_scope ON pc_dict_typelists(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS pc_dict_typecodes (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    typelist_id TEXT NOT NULL,
+    code        TEXT,                           -- the stored value (e.g. 'Bound')
+    name        TEXT,
+    description TEXT,
+    is_retired  INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_pcdict_tc_scope ON pc_dict_typecodes(user_id, client_id, typelist_id);
+
 -- Per-pass AI run audit (counts/tokens/timing); complements per-call ai_usage_log.
 CREATE TABLE IF NOT EXISTS ai_mapping_runs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

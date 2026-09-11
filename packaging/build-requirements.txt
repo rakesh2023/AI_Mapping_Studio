@@ -1,0 +1,13 @@
+# Build/runtime dependencies bundled into the shipped .exe (see build.ps1 / aims.spec).
+# anthropic + httpx are pinned <1 on purpose: the app's client code targets the
+# standard httpx-based SDK (see singleuser/requirements-min.txt for the rationale).
+Flask>=3.0
+anthropic>=0.40,<1
+httpx>=0.25,<1
+numpy>=1.24
+openpyxl>=3.1
+pypdf>=4.0
+python-docx>=1.1
+pandas>=2.0
+pyodbc>=5.1
+pyinstaller>=6.0

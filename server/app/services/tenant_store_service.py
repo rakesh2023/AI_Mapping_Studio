@@ -22,7 +22,8 @@ ALLOWED_DOC_KEYS = frozenset({
     "mapping_history", "deploy_history", "exports", "business_context",
     "etl_instructions",
     # Lookup Data Explore diff baseline; Schema File Explore parsed schema + diff baseline.
-    "lookup_baseline", "cmt_schema", "cmt_baseline",
+    # cmt_* = Claim Migration Tool schema; pmt_* = Policy Migration Tool schema (Product Schema page).
+    "lookup_baseline", "cmt_schema", "cmt_baseline", "pmt_schema", "pmt_baseline",
     # Target System: which columns' pk/fk/list/description were AI/auto-populated (for review highlight).
     "target_ai_fields",
     # Guidewire data-dictionary per-column descriptions (source for Target description fill).

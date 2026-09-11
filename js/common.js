@@ -61,6 +61,9 @@ const SIDEBAR_SECTIONS = [
     {label:"Data Validation Configuration", icon:"bi-clipboard-check", href:"data-validation.html"},
     {label:"Validation Report", icon:"bi-bar-chart-line", href:"validation-report.html"}
   ]},
+  {title:"Data Reconciliation", icon:"bi-clipboard-data", items:[
+    {label:"SQL Assistant", icon:"bi-terminal", href:"data-reconciliation.html"}
+  ]},
   {title:"Deliver", icon:"bi-send", items:[
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
     {label:"Export", icon:"bi-download", href:"export.html"},
@@ -112,7 +115,7 @@ const LS_KEYS = {
 const TENANT_DOC_KEYS = ["db_connections","target_connections",
   "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
   "mapping_history","deploy_history","exports","business_context","etl_instructions",
-  "lookup_baseline","cmt_schema","cmt_baseline","target_ai_fields","dict_descriptions",
+  "lookup_baseline","cmt_schema","cmt_baseline","pmt_schema","pmt_baseline","target_ai_fields","dict_descriptions",
   "data_validation_cfg","addl_instructions","target_user_fields","etl_db"];
 const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
 TENANT_DOC_KEYS.forEach(k => { TENANT_LS["aims_" + k] = k; });
@@ -215,6 +218,19 @@ function setTheme(theme){
 if(typeof document !== "undefined"){
   if(document.body){ applyTheme(getTheme()); }
   else { document.addEventListener("DOMContentLoaded", () => applyTheme(getTheme()), {once:true}); }
+}
+// Cross-document theme sync. The SPA shell (app.html) and the open page live in two
+// same-origin documents (shell + <iframe>), so toggling the theme in one re-themes
+// only its OWN <body>. Writing `aims_settings` fires a `storage` event in the OTHER
+// document(s) — re-apply there so the shell chrome and the framed page flip together,
+// whichever side changed it (header toggle or the Settings page dropdown).
+if(typeof window !== "undefined"){
+  window.addEventListener("storage", (e) => {
+    if(e.key !== null && e.key !== LS_KEYS.settings) return;   // null = localStorage.clear()
+    applyTheme(getTheme());
+    const icon = document.querySelector("#themeToggleBtn i");   // present only in the shell
+    if(icon) icon.className = "bi " + (getTheme() === "dark" ? "bi-sun" : "bi-moon-stars");
+  });
 }
 
 /* ---- Reset: clear data for the LOGGED-IN USER + SELECTED CLIENT only ---- */
@@ -526,10 +542,10 @@ function severityBadge(sev){
 
 function buildSidebarHTML(activeHref){
   return '<div class="sidebar-brand">' +
-      '<div class="brand-icon">' +
-        '<img class="brand-mark" src="../assets/images/pwc-device.svg" alt="PwC">' +
-      '</div>' +
-      '<div class="brand-text"><b>PwC</b><span>AI Data Conversion Studio</span></div>' +
+      // Full PwC logo lockup (flag above the wordmark), shown both expanded and collapsed.
+      '<img class="brand-logo logo-light" src="../assets/images/pwc-logo-dark.svg?v=20260911g" alt="PwC">' +
+      '<img class="brand-logo logo-dark" src="../assets/images/pwc-logo.svg?v=20260911g" alt="PwC">' +
+      '<div class="brand-text"><span>AI Data Conversion Studio</span></div>' +
     '</div>' +
     '<nav class="sidebar-nav">' +
       ((AUTH && AUTH.user && AUTH.user.isAdmin)
@@ -556,8 +572,8 @@ function buildHeaderHTML(){
   const user = getCurrentUser();
   return '<div class="topbar-left">' +
       '<button class="icon-btn d-lg-none" id="mobileNavToggle"><i class="bi bi-list"></i></button>' +
-      '<img class="topbar-logo logo-light" src="../assets/images/pwc-logo-dark.svg" alt="PwC">' +
-      '<img class="topbar-logo logo-dark" src="../assets/images/pwc-logo.svg" alt="PwC">' +
+      '<img class="topbar-logo logo-light" src="../assets/images/pwc-logo-dark.svg?v=20260911g" alt="PwC">' +
+      '<img class="topbar-logo logo-dark" src="../assets/images/pwc-logo.svg?v=20260911g" alt="PwC">' +
       '<div class="app-title">AI Data Conversion Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
     '</div>' +
     '<div class="topbar-meta">' +

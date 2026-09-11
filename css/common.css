@@ -76,7 +76,7 @@ body.in-frame .main-wrapper{margin-left:0 !important;}
   padding:0 24px;position:sticky;top:0;z-index:40;
 }
 .topbar-left{display:flex;align-items:center;gap:14px;flex-shrink:0;min-width:0;}
-.topbar-logo{height:26px;width:auto;display:block;padding-right:14px;border-right:1px solid var(--border);flex-shrink:0;}
+.topbar-logo{height:34px;width:auto;display:block;padding-right:14px;border-right:1px solid var(--border);flex-shrink:0;}
 /* show the dark-text logo in light mode, the white-text logo in dark mode */
 .topbar-logo.logo-dark{display:none;}
 body.theme-dark .topbar-logo.logo-light{display:none;}

@@ -9,14 +9,17 @@ body.sidebar-collapsed .sidebar{width:76px;}
   display:flex;align-items:center;gap:10px;padding:18px 18px;border-bottom:1px solid var(--sidebar-divider);
   color:var(--sidebar-text-strong);white-space:nowrap;
 }
-.sidebar-brand .brand-icon{width:40px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.sidebar-brand .brand-icon img{width:40px;height:auto;display:block;}
-/* dark-text mark in light mode, white-text mark in dark mode (mirrors topbar logo) */
-.sidebar-brand .brand-mark.mark-dark{display:none;}
-body.theme-dark .sidebar-brand .brand-mark.mark-light{display:none;}
-body.theme-dark .sidebar-brand .brand-mark.mark-dark{display:block;}
-.sidebar-brand .brand-text b{display:block;font-size:.92rem;}
+/* Full PwC logo lockup (flag above the wordmark) — shown when the sidebar is expanded AND
+   when collapsed (just smaller on the narrow rail). Dark-ink logo on the light sidebar,
+   white-ink logo in dark mode (mirrors the topbar logo). */
+.sidebar-brand .brand-logo{height:38px;width:auto;display:block;flex-shrink:0;}
+.sidebar-brand .brand-logo.logo-dark{display:none;}
+body.theme-dark .sidebar-brand .brand-logo.logo-light{display:none;}
+body.theme-dark .sidebar-brand .brand-logo.logo-dark{display:block;}
 .sidebar-brand .brand-text span{display:block;font-size:.62rem;color:var(--sidebar-muted);}
+/* Collapsed rail (76px): keep the full logo, shrink it to fit, hide the subtitle. */
+body.sidebar-collapsed .sidebar-brand{justify-content:center;padding-left:0;padding-right:0;}
+body.sidebar-collapsed .sidebar-brand .brand-logo{height:30px;}
 body.sidebar-collapsed .brand-text{display:none;}
 
 .sidebar-nav{flex:1;overflow-y:auto;padding:10px 0;}

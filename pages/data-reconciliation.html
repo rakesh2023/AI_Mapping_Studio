@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Reconciliation - AI Data Conversion Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260911i">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260911i">
+<link rel="stylesheet" href="../css/tables.css?v=20260911i">
+<link rel="stylesheet" href="../css/forms.css?v=20260911i">
+<link rel="stylesheet" href="../css/mapping.css?v=20260911i">
+<link rel="stylesheet" href="../css/responsive.css?v=20260911i">
+<style>
+  .dr-tbl-list{max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:.4rem .6rem;}
+  .dr-tbl{display:block;font-size:.82rem;margin:0;padding:.12rem 0;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .dr-tbl input{margin-right:.45rem;}
+  .dr-chip{display:inline-block;background:var(--primary-soft);color:var(--primary);border-radius:12px;padding:1px 9px;font-size:.72rem;margin:2px 4px 2px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .dr-sql{width:100%;min-height:440px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.45;white-space:pre;overflow:auto;background:var(--gray-bg);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:.8rem;}
+  .dr-src{display:inline-flex;align-items:center;gap:.4rem;font-size:.85rem;cursor:pointer;margin:0;}
+  .dr-src input{margin:0;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Data Conversion Studio <i class="bi bi-chevron-right"></i> Data Reconciliation <i class="bi bi-chevron-right"></i> SQL Assistant</div>
+        <h2>Data Reconciliation — SQL Assistant</h2></div>
+      </div>
+
+      <!-- Schema source: which dataset to generate SQL against (per client). -->
+      <div class="card-el mb-3 d-flex align-items-center gap-3 flex-wrap" style="padding:.6rem .9rem;">
+        <label class="mb-0 fw-semibold" style="font-size:.85rem;"><i class="bi bi-hdd-stack me-1"></i> Schema source</label>
+        <div id="drSourceRadios" class="d-flex align-items-center gap-3 flex-wrap">
+          <span class="text-xs text-muted-2">Loading sources…</span>
+        </div>
+        <span class="text-xs text-muted-2 ms-auto">The SQL is grounded only on the selected source.</span>
+      </div>
+
+      <!-- Context: is the chosen source loaded for this client? -->
+      <div id="drBanner" class="mb-3"></div>
+
+      <div class="card-el mb-3" id="drCard" style="display:none;">
+        <div class="section-title"><i class="bi bi-terminal"></i> Describe your query
+          <span class="text-xs text-muted-2 fw-normal ms-2">Plain English → a read-only SQL SELECT grounded on your selected schema source.</span>
+        </div>
+
+        <!-- Optional table scope (collapsible) -->
+        <div class="mb-2">
+          <div class="d-flex align-items-center" id="drTablesHdr" style="cursor:pointer;">
+            <label style="margin:0;cursor:pointer;">Tables to use <span class="text-muted-2 text-xs">(optional — leave empty to auto-pick from your prompt)</span></label>
+            <span class="text-xs text-muted-2 ms-2" id="drSelCount"></span>
+            <i class="bi bi-chevron-down ms-auto" id="drTablesChev"></i>
+          </div>
+          <div id="drTablesWrap" style="display:none;">
+            <input type="text" class="form-control form-control-sm mt-2 mb-1" id="drTableSearch" placeholder="Search tables…">
+            <div class="dr-tbl-list" id="drTableList"></div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <textarea class="form-control" id="drPrompt" rows="6" style="min-height:140px;resize:vertical;" placeholder="e.g. all claims older than 30 days with their exposure count"></textarea>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <button type="button" class="btn btn-primary" id="drGenerateBtn"><i class="bi bi-magic me-1"></i> Generate SQL</button>
+          <button type="button" class="btn btn-outline-danger" id="drCancelBtn" style="display:none;" title="Stop generating SQL"><i class="bi bi-x-circle me-1"></i> Cancel</button>
+          <button type="button" class="btn btn-outline-soft" id="drNewChatBtn" style="display:none;" title="Forget the previous questions and start a fresh conversation"><i class="bi bi-arrow-counterclockwise me-1"></i> New conversation</button>
+          <span class="text-xs text-muted-2" id="drContextInfo"></span>
+        </div>
+
+        <!-- AI Processing Console: what the AI is doing — grounding, which conventions
+             ("skill") file it used, and progress. Kept separate so the SQL box is SQL-only. -->
+        <div class="mt-3" id="drConsoleWrap" style="display:none;">
+          <div class="section-title mb-1 d-flex align-items-center" id="drConsoleHdr" style="cursor:pointer;">
+            <span><i class="bi bi-terminal"></i> AI Processing Console</span>
+            <span id="drConsoleStatus" class="ms-2 fw-normal" style="font-size:.8rem;"></span>
+            <i class="bi bi-chevron-up ms-auto" id="drConsoleChev" title="Show / hide steps"></i>
+          </div>
+          <div class="process-log" id="drConsole" style="min-height:auto;"></div>
+        </div>
+
+        <div id="drResult" class="mt-3" style="display:none;">
+          <div class="section-title d-flex align-items-center justify-content-between">
+            <span><i class="bi bi-code-square"></i> Generated SQL <span class="text-xs text-muted-2 fw-normal">(editable)</span></span>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drCopyBtn"><i class="bi bi-clipboard me-1"></i> Copy</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drDownloadBtn"><i class="bi bi-download me-1"></i> Download .sql</button>
+            </div>
+          </div>
+          <textarea class="dr-sql" id="drSql" spellcheck="false"></textarea>
+          <div id="drUsed" class="mt-2"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260911i"></script>
+<script src="../js/navigation.js?v=20260911i"></script>
+<script src="../js/data-reconciliation.js?v=20260911i"></script>
+</body>
+</html>

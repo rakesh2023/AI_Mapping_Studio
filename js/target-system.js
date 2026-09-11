@@ -842,9 +842,13 @@ function ghostFieldRow(table, c){
    writes them. FILLS BLANKS ONLY and highlights every populated value for review.
    ========================================================================= */
 function _aiNote(ok, msg){
-  return '<div class="hint-note" style="background:var(--' + (ok ? "success" : "danger") + '-bg);color:var(--' +
+  // Dismissible: a × button removes the note (it's informational, not a blocking error).
+  const close = '<button type="button" aria-label="Dismiss" title="Dismiss" ' +
+    'onclick="this.closest(\'.hint-note\').remove()" ' +
+    'style="position:absolute;top:.35rem;right:.55rem;background:none;border:none;font-size:1.15rem;line-height:1;cursor:pointer;color:inherit;opacity:.65;">&times;</button>';
+  return '<div class="hint-note" style="position:relative;padding-right:2rem;background:var(--' + (ok ? "success" : "danger") + '-bg);color:var(--' +
     (ok ? "success" : "danger") + ');border-color:' + (ok ? "#bfe8cf" : "#f7c9c6") + ';"><i class="bi bi-' +
-    (ok ? "check-circle" : "x-circle") + '"></i> ' + msg + '</div>';
+    (ok ? "check-circle" : "x-circle") + '"></i> ' + msg + close + '</div>';
 }
 
 const AI_MATCH_MIN_CONF = 0.9;   // "very high" — only apply a table match at/above this
@@ -1169,9 +1173,15 @@ async function inferFromDictionary(targetEntities, btn, btnLabel){
 
     upsertTargetConnection(conn); setActiveTarget(conn.id); lsSet("aims_target_ai_fields", aiFields);
     renderActiveBrowser();
-    const msg = "Matched " + matched + " table" + (matched === 1 ? "" : "s") + ", filled " + filled + " value(s)" +
-      (hasDict ? " (" + descFilled + " description(s) from the dictionary)" : "") + "." +
-      (skipped.length ? " Skipped (low confidence): " + escapeHtml(skipped.join(", ")) + "." : "");
+    let msg = "Matched " + matched + " table" + (matched === 1 ? "" : "s") + ", filled " + filled + " value(s)" +
+      (hasDict ? " (" + descFilled + " description(s) from the dictionary)" : "") + ".";
+    // Skipped tables (the AI wasn't confident enough to match them to the dictionary) — collapse
+    // the long list behind a toggle instead of dumping every name into the banner.
+    if(skipped.length){
+      msg += ' <details style="margin-top:.4rem;"><summary style="cursor:pointer;">Skipped ' + skipped.length +
+        ' table' + (skipped.length === 1 ? "" : "s") + ' (low confidence) — left unchanged; fill them manually or refine their names, then re-run.</summary>' +
+        '<div class="text-xs mt-1" style="max-height:160px;overflow:auto;">' + escapeHtml(skipped.join(", ")) + '</div></details>';
+    }
     if(box) box.innerHTML = _aiNote(matched > 0, msg);
     if(matched) showNotification("Filled " + filled + " value(s) — review the highlighted columns.", "success", 3500);
   }catch(e){ if(box) box.innerHTML = _aiNote(false, (e && e.message) || "Cannot reach the server."); }

@@ -1,6 +1,6 @@
 # AI Data Conversion Studio — Session Summary
 
-_Last updated: 2026-09-06_
+_Last updated: 2026-09-11_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,118 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **Theme toggle now flips the open page too; sidebar reorder; SQL Assistant header trim; reset clears dictionary.**
+  - **Theme sync across the SPA shell + iframe:** the header toggle (and the Settings dropdown) only re-themed
+    its own document, leaving the other stale. Added a shared `storage`-event listener in `js/common.js` — since
+    `aims_settings` is same-origin localStorage shared by both, whichever side changes the theme, the other
+    re-applies it (and the shell updates its sun/moon icon). Fixes both directions.
+  - **Sidebar:** moved the **Data Reconciliation** section (SQL Assistant) to *after* **Validate** in
+    `SIDEBAR_SECTIONS` (`js/common.js`).
+  - **SQL Assistant header trim:** the generated SQL comment header (`cc_sql_service.py`) no longer emits the
+    `-- Request:` / `-- Purpose:` / `-- Grounded on:` lines (keeps title + Conventions Skill + analysis). The
+    UI's Purpose log line and Grounded chips are unaffected (they come from the response payload).
+  - **Reset clears the Guidewire dictionary:** `client_service.reset_client_data` now also deletes the
+    `cc_dict_*` / `pc_dict_*` tables (they live outside `tenant_documents`), so a reset no longer leaves the
+    Data Reconciliation schema source populated. Note: `main.py` runs with `use_reloader=False`, so the server
+    must be restarted for backend edits to take effect.
+  - Cache-buster bumped to `?v=20260911i` across all HTML pages.
+
+- **Dictionary product-mismatch warning (inform + proceed)** (uncommitted).
+  If a client's Product is ClaimCenter but the uploaded dictionary `.zip` is actually PolicyCenter data
+  (or vice versa), the app now informs the user and lets them proceed. New `cc_dictionary_service.detect_app(raw)`
+  infers the app from the dominant physical table prefix in `entityModel.xml` (pc_/pctl_ → policy, cc_/cctl_
+  → claim, else None). `lookup_service.import_document` returns `{ok:false, mismatch:true, detected, product}`
+  (importing nothing) when the detected app disagrees with the client Product; `js/lookup-data-system.js`
+  `uploadLds` shows a confirm dialog and, on OK, re-imports as the **detected** application (so the import is
+  internally consistent). Only the data dictionary is checked (reliably detectable); the Product Schema
+  (CMT/PMT Excel) has no reliable prefix to detect, so it's unchanged.
+
+- **Uploads derive application from the client's Product — no more per-upload prompts** (uncommitted).
+  The client's **Product** (`getActiveClientProduct()` → claim/policy/billing, set in the client modal) is
+  now the single source of truth, so neither upload asks anymore:
+  - **Product Data Dictionary** (`js/lookup-data-system.js`): removed the ClaimCenter/PolicyCenter modal —
+    a `.zip`/`.html` upload sends `product = getActiveClientProduct()` straight to `/api/lookups/upload`
+    (Policy → pctl_/`pc_dict`, else → cctl_/`cc_dict`).
+  - **Product Schema** (`js/schema-file-explore.js`): removed the CMT/PMT `askSchemaKind` modal — the tool is
+    `sfeKindFromProduct()` (Policy → PMT, else CMT), for both the initial view and upload.
+  - If the client has **no Product set**, the upload is blocked with a notification to set it first
+    (prevents indexing under the wrong application). Copy on both pages updated to say the app follows Product.
+  - This removes the earlier ClaimCenter/PolicyCenter and CMT/PMT upload prompts entirely; the Data
+    Reconciliation source radios already keyed off the same Product, so all three are now consistent.
+
+- **PolicyCenter data dictionary + product-aware Data Reconciliation sources** (uncommitted).
+  Added a PolicyCenter equivalent of the ClaimCenter dictionary index, and made the SQL Assistant's
+  source picker follow the client's **Product** (`getActiveClientProduct()`): **Policy → PolicyCenter +
+  PMT**, **Claim → ClaimCenter + CMT**.
+  - The PolicyCenter skill's `entityModel.xml` parser is identical to ClaimCenter's, so
+    `cc_dictionary_service.py` was **parametrized by a `prefix` arg** (`cc_dict` default | `pc_dict`) —
+    every read/write builds table names from it; `build_from_zip` clears BOTH dict prefixes for the client
+    (one dictionary per client). New thin `pc_dictionary_service.py` delegates with `prefix="pc_dict"`.
+  - New `pc_dict_{entities,columns,typelists,typecodes}` tables in `schema.sql` (mirror `cc_dict_*`;
+    auto-created on boot, no migration).
+  - `lookup_service.import_document` routes the **existing** Product picker: `product=="policy"` builds the
+    PolicyCenter index, else ClaimCenter (the Product Data Dictionary page already asks CC/PC/Billing).
+  - `cc_sql_service`: new `policycenter` provider + `_PC_PROMPT`/`_PC_FALLBACK`; `list_sources` now probes
+    all four. New `server/app/prompts/policycenter_sql.md` — key divergence: physical soft-delete column is
+    **`Retired`** (0=active), NOT `RetiredValue`; typecodes not consistently lowercase; `_amt`/`_cur` money
+    pairs; heavy subtypes; `pc_policycontactrole` roles; `pctl_` typelist joins.
+  - `js/data-reconciliation.js`: `drProductSources()` picks the pair by product; radios render that pair.
+  - Verified in-process (throwaway client): PC build/store/read work; generation emits correct PC SQL
+    (`pc_`/`pctl_`, `Retired = 0`, `Status='Bound'`, `Conventions: policycenter_sql.md`); ClaimCenter
+    generation unaffected (839 entities via the parametrized default).
+
+- **One product schema per client + SQL Assistant source radios** (uncommitted).
+  Revised the model: a client has at most **one** product schema — **CMT or PMT, not both** (plus optionally
+  the ClaimCenter dictionary).
+  - **Product Schema** page: no tool dropdown — after the user picks a file, a **modal asks CMT or PMT**
+    (`askSchemaKind`). The page displays whichever product schema the client already has (badge in the toolbar);
+    uploading a schema of the other tool **confirms then replaces** it (clears the other tool's
+    `_schema`/`_baseline` tenant docs) so only one is ever kept.
+  - **SQL Assistant**: the source `<select>` became **radio buttons** built from a new
+    `GET /api/ai/reconcile-sources` (→ `cc_sql_service.list_sources`) — ClaimCenter dictionary is always shown;
+    a product source (CMT or PMT) appears **only if it's actually loaded**. Default = first loaded source.
+  - Files: `server/app/services/cc_sql_service.py` (`list_sources`), `server/app/api/ai_routes.py`
+    (`/reconcile-sources`), `js/data-reconciliation.js` (radios + `loadDrSources`), `js/schema-file-explore.js`
+    (single-schema enforcement + confirm), `pages/data-reconciliation.html`.
+
+- **Data Reconciliation SQL Assistant — 3 schema sources (ClaimCenter | CMT | PMT)** (uncommitted).
+  The SQL Assistant can now ground on any of a client's loaded schema sources, chosen with a **Schema source**
+  selector on the page. A small provider abstraction (`_provider(source)` in `cc_sql_service.py`) binds each
+  source to its read API + conventions doc + prompt hints; the AI flow (table-select → grounding → generate)
+  is identical across sources.
+  - **claimcenter** → the ClaimCenter dictionary index (`cc_dict_*`, from `entityModel.xml`) + `claimcenter_sql.md`.
+  - **cmt** / **pmt** → the migration-tool schema uploaded on **Product Schema** (`cmt_schema` / `pmt_schema`
+    tenant docs) + `migration_sql.md`. New `migration_schema_service.py` exposes the same read API and surfaces
+    migration specifics (PK varies: `PMT_ID`/`_ID1`/`_ID2`; direct + polymorphic FKs with `<col>_Type`
+    discriminator; typekeys as plain string columns). Missing column descriptions are enriched from the
+    imported data dictionary (`dict_descriptions`).
+  - **Product Schema** page gained a **CMT / PMT toggle** (`#sfeKind`, remembered per device) so the same upload
+    UI routes the file to the right tenant doc + baseline (`aims_{cmt,pmt}_schema` / `_baseline`).
+  - Routes `reconcile-context` / `reconcile-tables` / `reconcile-sql` all take `?source=` (POST body for sql).
+  - Registered `pmt_schema` / `pmt_baseline` in `tenant_store_service.ALLOWED_DOC_KEYS` + `common.js TENANT_DOC_KEYS`.
+  - Verified in-process (client 30): claimcenter (839 entities) uses `claimcenter_sql.md` + `cc_`/`cctl_` joins;
+    cmt (244 tables) uses `migration_sql.md` + `PMT_ID`; pmt correctly reports not-indexed.
+  - Files: `server/app/services/cc_sql_service.py`, `migration_schema_service.py`, `tenant_store_service.py`,
+    `server/app/api/ai_routes.py`, `server/app/prompts/migration_sql.md`, `js/data-reconciliation.js`,
+    `js/schema-file-explore.js`, `js/common.js`, `pages/data-reconciliation.html`, `pages/schema-file-explore.html`.
+    (`sqlparse` added for SQL pretty-printing; `extraction_service.py` temporary debug prints removed.)
+
+- **Shareable `.exe` packaging (portable EXE + Windows installer)** (uncommitted).
+  New `packaging/` folder builds the whole single-user app into a Windows executable so it can be shared
+  with someone who has no Python and no source. Wraps `singleuser/run.py` (existing bring-your-own-key
+  launcher). `packaging/aims.spec` (PyInstaller one-file) bundles the `app` backend as bytecode + the
+  frontend (`index.html`, `pages/`, `css/`, `js/`, `assets/`, `data/`) + `setup.html` + **all** optional libs
+  (openpyxl/pypdf/python-docx/pandas/pyodbc) so every feature works out of the box. `packaging/build.ps1`
+  builds in a throwaway venv, then compiles `packaging/installer.iss` (Inno Setup) if `ISCC.exe` is present.
+  The installer prompts for the **Anthropic API key during install** and writes it to
+  `%LOCALAPPDATA%\AI Data Conversion Studio\.env`; leave it blank → the app's browser wizard asks on first run.
+  **Frozen-mode edits (all guarded by `sys.frozen`, so multi-user `python main.py` is unaffected):**
+  `server/app/core/config.py` resolves `ROOT`/`SERVER_DIR` to `sys._MEIPASS` when frozen;
+  `singleuser/run.py` redirects writable state (`.env`, SQLite DBs) to `%LOCALAPPDATA%\AI Data Conversion Studio\`;
+  `singleuser/_envfile.py` honors `AIMS_ENV_FILE`; `singleuser/setup_routes.py` resolves `setup.html` from the
+  bundle. Build artifacts gitignored. Caveats: live SQL still needs the OS ODBC driver; frontend JS/HTML is
+  still readable in the browser (inherent to web apps) — casual code-hiding, not strong IP protection.
 
 - **Highlighted autocomplete for table/column suggestions (Target System + AI Mapping Workspace)** (uncommitted).
   Replaced the native `<datalist>` (which can't be styled) with a shared custom dropdown that **highlights the

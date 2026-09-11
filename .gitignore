@@ -33,3 +33,10 @@ Thumbs.db
 # Temp files
 *.tmp
 *.bak
+
+# EXE packaging build artifacts (rebuild locally with packaging/build.ps1)
+packaging/.buildvenv/
+packaging/build/
+packaging/dist/
+packaging/installer_output/
+singleuser/.venv/

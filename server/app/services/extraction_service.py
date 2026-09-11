@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterator, List, Tuple
 
 from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET, EXTRACT_MAX_CHUNKS
-from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary
+from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary, parse_csv_dictionary
 from app.parsers.gw_dictionary import iter_zip_html, parse_gw_entity
 from app.parsers.sql_ddl_parser import parse_sql_ddl
 from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA, RICH_EXTRACT_SCHEMA
@@ -133,6 +133,15 @@ def extract_source(filename: str, raw: bytes, rich: bool = False) -> Result:
             cc = sum(len(t["columns"]) for t in xl)
             return {"ok": True, "model": "xlsx-dictionary-parser", "fileName": filename,
                     "tables": xl, "tableCount": len(xl), "columnCount": cc}, 200
+
+    # Fast path #1b: a STRUCTURED CSV/TSV data dictionary — same deterministic parse, no AI.
+    # Without this a large CSV always fell to the slow AI chunk loop.
+    if not rich and filename.lower().endswith((".csv", ".tsv")):
+        cd = parse_csv_dictionary(raw)
+        if cd:
+            cc = sum(len(t["columns"]) for t in cd)
+            return {"ok": True, "model": "csv-dictionary-parser", "fileName": filename,
+                    "tables": cd, "tableCount": len(cd), "columnCount": cc}, 200
 
     chunks, err = extract_file_chunks(filename, raw)
     if err:

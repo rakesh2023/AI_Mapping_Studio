@@ -14,7 +14,6 @@ let _ldsSnap = {at: null, sets: []};   // current snapshot (sets WITH values)
 let _ldsValues = {};                   // id -> values[] (from the snapshot)
 let _ldsDiff = null;                   // computed diff vs baseline, or null
 let _ldsActiveId = null;
-let _ldsPendingFile = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("lookup-data-system.html");
@@ -27,8 +26,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     const f = file.files && file.files[0];
     file.value = "";
     if(!f) return;
-    if(/\.(zip|html?)$/i.test(f.name)) openLdsProductModal(f);
-    else uploadLds(f);
+    // A Guidewire dictionary's application is decided by the client's Product (Policy -> PolicyCenter
+    // pctl_/pc_dict, else ClaimCenter cctl_/cc_dict) — not asked. Other file types upload as-is.
+    if(/\.(zip|html?)$/i.test(f.name)){
+      const product = (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "").toLowerCase() : "";
+      if(!product){
+        showNotification("Set this client’s Product (Claim or Policy) in client settings before importing a Guidewire dictionary.", "warning", 5000);
+        return;
+      }
+      uploadLds(f, product);
+    } else uploadLds(f);
   });
   const tsearch = document.getElementById("ldsTreeSearch");
   if(tsearch) tsearch.addEventListener("input", renderLdsTree);
@@ -337,43 +344,8 @@ function renderLdsCodes(){
   body.innerHTML = rows.join("");
 }
 
-/* ---------------- upload (Guidewire dictionary asks the product first) ---------------- */
-function injectLdsProductModal(){
-  if(document.getElementById("ldsProductModal")) return;
-  const html =
-    '<div class="modal fade" id="ldsProductModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered">' +
-    '<div class="modal-content"><div class="modal-header">' +
-      '<h5 class="modal-title"><i class="bi bi-box-seam me-1"></i> Import Guidewire dictionary</h5>' +
-      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
-    '<div class="modal-body">' +
-      '<p class="text-xs text-muted-2 mb-2">Which product is this dictionary? Only that product’s <b>typelists</b> (code lists) will be imported.</p>' +
-      '<div class="form-group"><label>Product</label>' +
-        '<select class="form-select" id="ldsProduct">' +
-          '<option value="claim">ClaimCenter — cctl_* typelists</option>' +
-          '<option value="policy">PolicyCenter — pctl_* typelists</option>' +
-          '<option value="billing">BillingCenter — bctl_* typelists</option>' +
-        '</select></div>' +
-      '<div class="text-xs text-muted-2" id="ldsProductFile"></div>' +
-    '</div>' +
-    '<div class="modal-footer">' +
-      '<button type="button" class="btn btn-outline-soft btn-sm" data-bs-dismiss="modal">Cancel</button>' +
-      '<button type="button" class="btn btn-primary btn-sm" id="ldsProductImport"><i class="bi bi-upload me-1"></i> Import</button>' +
-    '</div></div></div></div>';
-  document.body.insertAdjacentHTML("beforeend", html);
-  document.getElementById("ldsProductImport").addEventListener("click", () => {
-    const product = (document.getElementById("ldsProduct") || {}).value || "claim";
-    const m = bootstrap.Modal.getInstance(document.getElementById("ldsProductModal")); if(m) m.hide();
-    if(_ldsPendingFile){ uploadLds(_ldsPendingFile, product); _ldsPendingFile = null; }
-  });
-}
 
-function openLdsProductModal(file){
-  injectLdsProductModal();
-  _ldsPendingFile = file;
-  const fn = document.getElementById("ldsProductFile");
-  if(fn) fn.textContent = "File: " + file.name;
-  if(typeof bootstrap !== "undefined"){ new bootstrap.Modal(document.getElementById("ldsProductModal")).show(); }
-}
+const LDS_APP_NAME = {claim: "ClaimCenter", policy: "PolicyCenter"};
 
 async function uploadLds(file, product){
   const box = document.getElementById("ldsUploadResult");
@@ -383,6 +355,20 @@ async function uploadLds(file, product){
   try{
     const res = await fetch("/api/lookups/upload", {method:"POST", body: fd});
     const j = await res.json().catch(() => ({}));
+    // The file's application doesn't match the client's Product — inform, then proceed if confirmed
+    // (re-import as the detected application).
+    if(j && j.mismatch && j.detected){
+      const det = LDS_APP_NAME[j.detected] || j.detected;
+      const cur = LDS_APP_NAME[j.product] || j.product;
+      const ok = (typeof confirmDialog === "function")
+        ? await confirmDialog("This client’s Product is <b>" + escapeHtml(cur) + "</b>, but this file looks like <b>"
+            + escapeHtml(det) + "</b> data. Import it as " + escapeHtml(det) + " anyway? "
+            + "(Consider updating the client’s Product to " + escapeHtml(det) + " so it matches.)",
+            "Import as " + det)
+        : window.confirm("This client’s Product is " + cur + " but the file looks like " + det + " data. Import as " + det + " anyway?");
+      if(!ok){ if(box) box.innerHTML = ""; return; }
+      return uploadLds(file, j.detected);   // re-import using the detected application
+    }
     if(!res.ok || !j.ok){ if(box) box.innerHTML = ldsFail((j && j.error) || "Import failed."); return; }
     if(box) box.innerHTML = ldsOk("Imported " + j.created + " table" + (j.created === 1 ? "" : "s") +
       " (" + j.totalValues + " typecode value" + (j.totalValues === 1 ? "" : "s") +

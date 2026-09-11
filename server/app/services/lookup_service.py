@@ -462,7 +462,40 @@ def import_document(user_id: int, client_id: int, filename: str, raw: bytes, ext
     from app.parsers.lookup_parsers import parse_lookup_document
     raw = raw or b""
     if (ext or "").lower() == "zip" or (raw[:64].lstrip().lower().startswith(b"<") and "typelistbody" in raw[:20000].decode("utf-8", errors="ignore").lower()):
-        return _import_gw_typelists(user_id, client_id, filename, raw, product=product)
+        # Warn (before importing anything) if the file's actual application disagrees with the client's
+        # Product — e.g. a Claim client uploading a PolicyCenter dictionary. The caller confirms and
+        # re-uploads with the detected product to proceed.
+        prod = (product or "").strip().lower()
+        try:
+            from app.services import cc_dictionary_service as _ccd
+            detected = _ccd.detect_app(raw)   # 'policy' | 'claim' | None
+        except Exception:  # noqa: BLE001
+            detected = None
+        if detected and prod in ("claim", "policy") and detected != prod:
+            names = {"claim": "ClaimCenter", "policy": "PolicyCenter"}
+            return {"ok": False, "mismatch": True, "detected": detected, "product": prod,
+                    "error": "This client’s Product is %s, but the uploaded dictionary looks like %s data."
+                             % (names[prod], names[detected])}, 200
+        payload, status = _import_gw_typelists(user_id, client_id, filename, raw, product=product)
+        # Additionally build this client's schema index from the entityModel.xml inside the SAME
+        # .zip (powers the Data Reconciliation page). The Product chosen at upload picks which
+        # index: PolicyCenter (pc_dict_*) for "policy", else ClaimCenter (cc_dict_*). Additive and
+        # best-effort — never affects the typelist-import result above.
+        is_policy = (product or "").strip().lower() == "policy"
+        try:
+            if is_policy:
+                from app.services import pc_dictionary_service as dict_svc
+                key = "pcDictionary"
+            else:
+                from app.services import cc_dictionary_service as dict_svc
+                key = "ccDictionary"
+            idx = dict_svc.build_from_zip(user_id, client_id, raw)
+            if isinstance(payload, dict) and idx.get("indexed"):
+                payload[key] = idx
+        except Exception as exc:  # noqa: BLE001
+            print("[lookup] %s dictionary index build skipped: %r"
+                  % ("PolicyCenter" if is_policy else "ClaimCenter", exc))
+        return payload, status
     parsed = parse_lookup_document(raw, ext)
     sets = parsed.get("sets") if parsed.get("ok") else None
     used_ai = False

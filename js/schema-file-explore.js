@@ -13,9 +13,25 @@ let _sfe = null;          // {application, fileName, at, entities:[{name,table,f
 let _sfeDiff = null;      // computeSchemaDiff(baseline, entities) or null
 let _sfeActive = null;    // active entity name
 let _sfePending = null;   // file awaiting confirm (none needed; kept for symmetry)
+let _sfeKind = "cmt";     // cmt (Claim Migration Tool) | pmt (Policy Migration Tool)
+
+// Which tenant docs back the currently-selected migration tool.
+function sfeKeys(){
+  return _sfeKind === "pmt"
+    ? {schema: "aims_pmt_schema", baseline: "aims_pmt_baseline", label: "PMT (Policy Migration Tool)"}
+    : {schema: "aims_cmt_schema", baseline: "aims_cmt_baseline", label: "CMT (Claim Migration Tool)"};
+}
+// The OTHER migration tool's docs — a client has only one product schema, so uploading one clears the other.
+function sfeOtherKeys(){
+  return _sfeKind === "pmt"
+    ? {schema: "aims_cmt_schema", baseline: "aims_cmt_baseline", label: "CMT (Claim Migration Tool)"}
+    : {schema: "aims_pmt_schema", baseline: "aims_pmt_baseline", label: "PMT (Policy Migration Tool)"};
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("schema-file-explore.html");
+  // The migration tool is decided by the client's Product (Policy -> PMT, else CMT) — not asked.
+  _sfeKind = sfeKindFromProduct();
   loadSfe();
 
   const btn = document.getElementById("sfeUploadBtn");
@@ -24,7 +40,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(file) file.addEventListener("change", () => {
     const f = file.files && file.files[0];
     file.value = "";
-    if(f) uploadSfe(f);
+    if(!f) return;
+    if(!clientProduct()){
+      showNotification("Set this client’s Product (Claim or Policy) in client settings before uploading a schema file.", "warning", 5000);
+      return;
+    }
+    _sfeKind = sfeKindFromProduct();   // Policy -> PMT, Claim/Billing -> CMT
+    uploadSfe(f);
   });
   const ts = document.getElementById("sfeTreeSearch");
   if(ts) ts.addEventListener("input", renderSfeTree);
@@ -32,19 +54,29 @@ document.addEventListener("DOMContentLoaded", async () => {
   if(cs) cs.addEventListener("input", renderSfeColumns);
 });
 
+// The active client's Product ("claim" | "policy" | "billing" | ""), lowercased.
+function clientProduct(){
+  return (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "").toLowerCase() : "";
+}
+// Migration tool implied by the client's Product: Policy -> PMT, everything else -> CMT.
+function sfeKindFromProduct(){
+  return clientProduct() === "policy" ? "pmt" : "cmt";
+}
+
 function sfeOk(msg){ return '<div class="hint-note" style="background:var(--success-bg);color:var(--success);border-color:#bfe8cf;"><i class="bi bi-check-circle"></i> ' + msg + '</div>'; }
 function sfeFail(msg){ return '<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;"><i class="bi bi-x-circle"></i> ' + escapeHtml(msg) + '</div>'; }
 
 function loadSfe(){
-  _sfe = lsGet("aims_cmt_schema", null);
-  const baseline = lsGet("aims_cmt_baseline", null);
+  const K = sfeKeys();
+  _sfe = lsGet(K.schema, null);
+  const baseline = lsGet(K.baseline, null);
   if(_sfe && _sfe.entities && baseline){
     _sfeDiff = computeSchemaDiff(baseline, _sfe.entities);
   } else {
     _sfeDiff = null;
     if(_sfe && _sfe.entities && !baseline){    // first load with data but no baseline -> set silently
       const snap = snapshotEntities(_sfe.entities); snap.at = _sfe.at || null;
-      lsSet("aims_cmt_baseline", snap);
+      lsSet(K.baseline, snap);
     }
   }
   renderSfe();
@@ -66,6 +98,18 @@ function _tablesToEntities(tables){
 
 async function uploadSfe(file){
   const box = document.getElementById("sfeUploadResult");
+  // A client keeps only one product schema. If the OTHER tool already has one, confirm the replacement.
+  const other = sfeOtherKeys();
+  const otherExisting = lsGet(other.schema, null);
+  if(otherExisting && otherExisting.entities && otherExisting.entities.length){
+    const ok = (typeof confirmDialog === "function")
+      ? await confirmDialog("This client already has a " + other.label + " schema. A client can have only one "
+          + "product schema, so uploading this " + sfeKeys().label + " file will replace it. Continue?",
+          "Replace product schema")
+      : window.confirm("This client already has a " + other.label + " schema. Uploading this "
+          + sfeKeys().label + " file will replace it. Continue?");
+    if(!ok) return;
+  }
   if(box) box.innerHTML = '<div class="text-xs text-muted-2"><span class="spinner-border spinner-border-sm me-2"></span>Reading ' + escapeHtml(file.name) + '…</div>';
   const fd = new FormData(); fd.append("file", file);
   try{
@@ -74,11 +118,15 @@ async function uploadSfe(file){
     if(!res.ok || !j.ok){ if(box) box.innerHTML = sfeFail((j && j.error) || "Could not read the schema file."); return; }
     const entities = _tablesToEntities(j.tables);
     if(!entities.length){ if(box) box.innerHTML = sfeFail("No tables/columns were found in the file."); return; }
-    _sfe = {application: "Product Schema", fileName: file.name, at: new Date().toISOString(), entities: entities};
-    lsSet("aims_cmt_schema", _sfe);
+    const K = sfeKeys();
+    _sfe = {application: K.label, tool: _sfeKind, fileName: file.name, at: new Date().toISOString(), entities: entities};
+    lsSet(K.schema, _sfe);
+    // Enforce one product schema per client — clear the other tool's docs if present.
+    const other = sfeOtherKeys();
+    if(lsGet(other.schema, null)){ lsRemove(other.schema); lsRemove(other.baseline); }
     // Baseline stays -> the diff highlights what changed. First-ever upload sets it silently.
-    const baseline = lsGet("aims_cmt_baseline", null);
-    if(!baseline){ const snap = snapshotEntities(entities); snap.at = _sfe.at; lsSet("aims_cmt_baseline", snap); _sfeDiff = null; }
+    const baseline = lsGet(K.baseline, null);
+    if(!baseline){ const snap = snapshotEntities(entities); snap.at = _sfe.at; lsSet(K.baseline, snap); _sfeDiff = null; }
     else _sfeDiff = computeSchemaDiff(baseline, entities);
     const cc = entities.reduce((n, e) => n + e.fields.length, 0);
     if(box) box.innerHTML = sfeOk("Loaded " + entities.length + " table" + (entities.length === 1 ? "" : "s") +
@@ -94,6 +142,12 @@ function renderSfe(){
   if(loading) loading.style.display = "none";
   document.getElementById("sfeEmpty").style.display = has ? "none" : "";
   document.getElementById("sfeLayout").style.display = has ? "" : "none";
+  // Toolbar badge: which product schema this client currently holds.
+  const kb = document.getElementById("sfeKindBadge");
+  if(kb){
+    if(has){ kb.style.display = ""; kb.innerHTML = '<i class="bi bi-hdd-stack me-1"></i>' + escapeHtml(sfeKeys().label); }
+    else { kb.style.display = "none"; kb.innerHTML = ""; }
+  }
   if(!has){ renderSfeDiffPanel(); return; }
   const meta = document.getElementById("sfeMeta");
   const cc = _sfe.entities.reduce((n, e) => n + e.fields.length, 0);
@@ -147,7 +201,7 @@ function _sfeSec(title, badge, items){
 }
 
 function dismissSfeDiff(){
-  if(_sfe && _sfe.entities){ const snap = snapshotEntities(_sfe.entities); snap.at = new Date().toISOString(); lsSet("aims_cmt_baseline", snap); }
+  if(_sfe && _sfe.entities){ const snap = snapshotEntities(_sfe.entities); snap.at = new Date().toISOString(); lsSet(sfeKeys().baseline, snap); }
   _sfeDiff = null;
   renderSfe();
   showNotification("Change highlights cleared.", "primary", 1400);

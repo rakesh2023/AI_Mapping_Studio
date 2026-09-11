@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.db.app_db import connect, write_lock
+from app.services import cc_dictionary_service
 
 _MAX_NAME = 120
 _MAX_INDUSTRY = 80
@@ -182,6 +183,12 @@ def reset_client_data(user_id: int, client_id: int) -> Tuple[Dict[str, Any], int
                     conn.execute(f'DROP TABLE IF EXISTS "{pt}"')
             # Delete each per-client ROOT table; children cascade (foreign_keys=ON).
             for tbl in ("tenant_documents", "documents", "chat_sessions", "lookup_sets", "ai_mapping_runs"):
+                conn.execute(f"DELETE FROM {tbl} WHERE user_id=? AND client_id=?", (user_id, client_id))
+            # The ClaimCenter / PolicyCenter dictionary index lives in dedicated cc_dict_* /
+            # pc_dict_* tables (NOT tenant_documents), so clear it explicitly — otherwise a reset
+            # leaves the Data Reconciliation schema source populated. (CMT/PMT schemas live in
+            # tenant_documents and are already cleared by the loop above.)
+            for tbl in cc_dictionary_service.all_dict_tables():
                 conn.execute(f"DELETE FROM {tbl} WHERE user_id=? AND client_id=?", (user_id, client_id))
             conn.commit()
         finally:

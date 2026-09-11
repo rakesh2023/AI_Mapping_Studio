@@ -9,6 +9,7 @@ Depends on optional packages (openpyxl / pypdf / python-docx) via
 core.capabilities; each returns a clear "package not installed" message rather
 than crashing. No Flask, no Anthropic.
 """
+import csv
 import io
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -178,6 +179,7 @@ def extract_file_text(filename: str, raw: bytes) -> Tuple[Optional[str], Optiona
 
 # Header synonyms for a structured Excel data dictionary (normalised: lowercase,
 # no spaces/underscores). Used to read attributes DIRECTLY from cells — no AI.
+_XLSX_HEADER_SCAN = 15   # rows from the top to search for the dictionary header (skips title/metadata rows)
 _XLSX_HDR = {
     "table":       ("table", "tablename", "targettable", "physicaltable", "entity",
                     "entityname", "objectname", "object", "sourcetable"),
@@ -248,14 +250,80 @@ def norm_hdr(h: Any) -> str:
     return str(h or "").strip().lower().replace("_", "").replace(" ", "").replace("-", "")
 
 
+def _collect_dict_rows(rows: List[List[str]], tables: Dict[str, Dict[str, Any]], order: List[str]) -> bool:
+    """Header-scan ONE grid (list of row-lists) and append its dictionary columns into the
+    shared `tables`/`order`. Returns True if a Table+Column header was found within the top
+    rows. Shared by the Excel and CSV dictionary parsers (same synonyms + header-scan), so a
+    title/version/metadata row above the real header never knocks the file onto the slow AI path."""
+    rows = [r for r in rows if any(v for v in r)]
+    if len(rows) < 2:
+        return False
+    header_i, idx = -1, {}
+    for i in range(min(_XLSX_HEADER_SCAN, len(rows))):
+        cand: Dict[str, int] = {}
+        for ci, h in enumerate(rows[i]):
+            n = norm_hdr(h)
+            for key, syns in _XLSX_HDR.items():
+                if key not in cand and n in syns:
+                    cand[key] = ci
+                    break
+        if "table" in cand and "column" in cand:
+            header_i, idx = i, cand
+            break
+    if header_i < 0:
+        return False
+
+    def cell(r, key):
+        i = idx.get(key)
+        return (r[i].strip() if (i is not None and i < len(r)) else "")
+
+    for r in rows[header_i + 1:]:
+        tname = cell(r, "table")
+        cname = cell(r, "column")
+        if not tname or not cname:
+            continue
+        if tname not in tables:
+            tables[tname] = {"name": tname, "columns": [], "_seen": set()}
+            order.append(tname)
+        b = tables[tname]
+        if cname.lower() in b["_seen"]:
+            continue
+        b["_seen"].add(cname.lower())
+        lraw = cell(r, "length")
+        length = int(lraw) if lraw.isdigit() else (lraw or None)
+        # Type may embed the length ("varchar(100)"); split it out so length fills in.
+        dtype, length = _split_type_length((cell(r, "datatype") or "").lower(), length)
+        # IsNull / Nullable -> nullable/mandatory (None when the column isn't present).
+        nullable = _nullable_flag(cell(r, "isnull"))
+        # Foreign Key cell may be a referenced table name or just a Yes/No flag.
+        fk_raw = cell(r, "fk")
+        fk = fk_raw.strip().lower() not in ("", "no", "n", "false", "0")
+        fk_ref = fk_raw if (fk and fk_raw.strip().lower() not in ("yes", "y", "true", "1", "x", "t")) else ""
+        b["columns"].append({
+            "name": cname,
+            "dataType": dtype,
+            "length": length,
+            "businessTerm": cell(r, "businessterm"),
+            "description": cell(r, "description"),
+            "sample": cell(r, "sample"),
+            "nullable": nullable,
+            "mandatory": (nullable is False),
+            "pk": _truthy(cell(r, "pk")),
+            "fk": fk,
+            "fkReference": fk_ref,
+            "typeKey": cell(r, "typekey"),
+            "multipleFkType": cell(r, "multiplefk"),
+        })
+    return True
+
+
 def parse_xlsx_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
     """Deterministically parse a STRUCTURED Excel data dictionary into the source
     shape, reading every attribute (name, dataType, length, description,
     businessTerm, sample) straight from the cells — no AI, verbatim, instant.
 
-    Returns a list of tables, or None if the sheet isn't a recognisable
-    dictionary (no table-name + column-name header pair) so the caller falls
-    back to the AI loop.
+    Returns a list of tables, or None if no sheet is a recognisable dictionary
+    (no table-name + column-name header pair) so the caller falls back to the AI loop.
     """
     if openpyxl is None:
         return None
@@ -263,76 +331,45 @@ def parse_xlsx_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
         wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception:  # noqa: BLE001
         return None
-
     tables: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
     recognised_any = False
-
     for ws in wb.worksheets:
         rows = [["" if c is None else str(c).strip() for c in r]
                 for r in ws.iter_rows(values_only=True)]
-        rows = [r for r in rows if any(v for v in r)]
-        if len(rows) < 2:
-            continue
-        header = rows[0]
-        # map each attribute to a column index via synonyms
-        idx: Dict[str, int] = {}
-        for ci, h in enumerate(header):
-            n = norm_hdr(h)
-            for key, syns in _XLSX_HDR.items():
-                if key not in idx and n in syns:
-                    idx[key] = ci
-                    break
-        # need at least a TABLE column and a COLUMN column to be a dictionary
-        if "table" not in idx or "column" not in idx:
-            continue
-        recognised_any = True
-
-        def cell(r, key):
-            i = idx.get(key)
-            return (r[i].strip() if (i is not None and i < len(r)) else "")
-
-        for r in rows[1:]:
-            tname = cell(r, "table")
-            cname = cell(r, "column")
-            if not tname or not cname:
-                continue
-            if tname not in tables:
-                tables[tname] = {"name": tname, "columns": [], "_seen": set()}
-                order.append(tname)
-            b = tables[tname]
-            if cname.lower() in b["_seen"]:
-                continue
-            b["_seen"].add(cname.lower())
-            lraw = cell(r, "length")
-            length = int(lraw) if lraw.isdigit() else (lraw or None)
-            # Type may embed the length ("varchar(100)"); split it out so length fills in.
-            dtype, length = _split_type_length((cell(r, "datatype") or "").lower(), length)
-            # IsNull / Nullable -> nullable/mandatory (None when the column isn't in the
-            # sheet). Handles the descriptive words "nullable" / "not null", not just Yes/No.
-            isnull_raw = cell(r, "isnull")
-            nullable = _nullable_flag(isnull_raw)
-            # Foreign Key cell may be a referenced table name or just a Yes/No flag.
-            fk_raw = cell(r, "fk")
-            fk = fk_raw.strip().lower() not in ("", "no", "n", "false", "0")
-            fk_ref = fk_raw if (fk and fk_raw.strip().lower() not in ("yes", "y", "true", "1", "x", "t")) else ""
-            b["columns"].append({
-                "name": cname,
-                "dataType": dtype,
-                "length": length,
-                "businessTerm": cell(r, "businessterm"),
-                "description": cell(r, "description"),
-                "sample": cell(r, "sample"),
-                "nullable": nullable,
-                "mandatory": (nullable is False),
-                "pk": _truthy(cell(r, "pk")),
-                "fk": fk,
-                "fkReference": fk_ref,
-                "typeKey": cell(r, "typekey"),
-                "multipleFkType": cell(r, "multiplefk"),
-            })
-
+        if _collect_dict_rows(rows, tables, order):
+            recognised_any = True
     if not recognised_any:
+        return None
+    out = [{"name": t["name"], "columns": t["columns"]}
+           for t in (tables[k] for k in order) if t["columns"]]
+    return out or None
+
+
+def parse_csv_dictionary(raw: bytes) -> Optional[List[Dict[str, Any]]]:
+    """Deterministically parse a STRUCTURED CSV/TSV data dictionary into the source shape —
+    same header synonyms + header-scan as parse_xlsx_dictionary, no AI, instant. Returns None
+    when the file isn't a recognisable dictionary so the caller falls back to the AI loop.
+    (Without this, a large CSV always went to the slow AI chunk loop.)"""
+    if not raw:
+        return None
+    try:
+        text = raw.decode("utf-8-sig")
+    except Exception:  # noqa: BLE001
+        try:
+            text = raw.decode("latin-1")
+        except Exception:  # noqa: BLE001
+            return None
+    sample = text[:4096]
+    delim = "\t" if sample.count("\t") > sample.count(",") else ","   # TSV vs CSV
+    try:
+        rows = [["" if c is None else str(c).strip() for c in r]
+                for r in csv.reader(io.StringIO(text), delimiter=delim)]
+    except Exception:  # noqa: BLE001
+        return None
+    tables: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    if not _collect_dict_rows(rows, tables, order):
         return None
     out = [{"name": t["name"], "columns": t["columns"]}
            for t in (tables[k] for k in order) if t["columns"]]

@@ -23,11 +23,23 @@ import webbrowser
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 SERVER_DIR = os.path.join(REPO, "server")
-DATA_DIR = os.path.join(HERE, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+FROZEN = getattr(sys, "frozen", False)
 
-sys.path.insert(0, HERE)          # _envfile, setup_routes
-sys.path.insert(0, SERVER_DIR)    # the existing `app` package
+if FROZEN:
+    # PyInstaller .exe: the bundle is read-only/temporary, so working data
+    # (config .env, SQLite DBs) must live in a persistent, writable per-user
+    # folder. `app`, `_envfile`, `setup_routes` are already importable from the
+    # bundle, so no sys.path wiring is needed.
+    _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    DATA_DIR = os.path.join(_base, "AI Data Conversion Studio")
+else:
+    DATA_DIR = os.path.join(HERE, "data")
+    sys.path.insert(0, HERE)          # _envfile, setup_routes
+    sys.path.insert(0, SERVER_DIR)    # the existing `app` package
+
+os.makedirs(DATA_DIR, exist_ok=True)
+# Point the single-user config file at the writable data dir (frozen-safe).
+os.environ.setdefault("AIMS_ENV_FILE", os.path.join(DATA_DIR, ".env"))
 
 import _envfile  # noqa: E402
 
