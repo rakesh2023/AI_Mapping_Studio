@@ -90,7 +90,9 @@ body.theme-dark .topbar-logo.logo-dark{display:block;}
   white-space:nowrap;
 }
 .meta-chip.ai-ready{background:var(--success-bg);color:var(--success);border-color:#c8ecd8;}
+.meta-chip.ai-not-ready{background:var(--danger-bg);color:var(--danger);border-color:#f2c4c4;}
 .meta-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block;}
+.meta-chip.ai-not-ready .dot{background:var(--danger);}
 /* Stakeholder-brief link in the header (accent pill, opens the brief in a new tab) */
 .brief-link{display:inline-flex;align-items:center;gap:7px;font-size:.8rem;font-weight:600;text-decoration:none;
   color:var(--primary-dark);background:var(--primary-soft);border:1px solid #f3c9a6;border-radius:999px;
@@ -305,6 +307,7 @@ body.theme-dark .prof-bar{background:#333;}
 body.theme-dark .card-el{background:var(--bg-card);}
 body.theme-dark .hint-note{color:var(--text-main);}
 body.theme-dark .meta-chip{background:var(--gray-bg);color:var(--text-main);}
+body.theme-dark .meta-chip.ai-not-ready{color:var(--danger);}
 /* Bootstrap modals (confirm dialog) in dark mode */
 body.theme-dark .modal-content{background:var(--bg-card);color:var(--text-main);border:1px solid var(--border);}
 body.theme-dark .modal-header,

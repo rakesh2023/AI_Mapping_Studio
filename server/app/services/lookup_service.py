@@ -376,7 +376,9 @@ def _store_dict_descriptions(user_id: int, client_id: int, raw: bytes) -> int:
     db/ entity pages and store it as the tenant doc 'dict_descriptions'
     ({ "<physical table>": { "<normcol>": "<description>" } }). Used by Target System
     'AI fill' to populate column descriptions. Returns the number of tables stored."""
-    from app.parsers.gw_dictionary import iter_zip_html, parse_gw_entity
+    from app.parsers.gw_dictionary import (
+        iter_zip_html, parse_gw_entity, find_entity_model_xml, build_desc_index, norm_key,
+    )
     from app.services import tenant_store_service as store
     try:
         pages = iter_zip_html(raw)
@@ -398,11 +400,36 @@ def _store_dict_descriptions(user_id: int, client_id: int, raw: bytes) -> int:
             d = (c.get("description") or "").strip()
             if not d:
                 continue
-            key = re.sub(r"[^a-z0-9]", "", (c.get("name") or "").lower())
+            key = norm_key(c.get("name") or "")
             if key:
                 cols[key] = d
         if cols:
             out[ent.get("physical") or ent.get("name")] = cols
+    # Backfill from entityModel.xml: the db/ HTML pages omit descriptions for inherited
+    # columns of SUBTYPE entities (e.g. AutoRepairShop), so union in the authoritative
+    # model's descriptions. HTML-derived text wins where present (setdefault below).
+    try:
+        xml = find_entity_model_xml(raw)
+        index = build_desc_index(xml) if xml else []
+    except Exception:  # noqa: BLE001 — best effort; the HTML pass still stands
+        index = []
+    if index:
+        by_norm = {norm_key(k): k for k in out.keys()}
+        for entry in index:
+            entry_cols = entry.get("cols") or {}
+            if not entry_cols:
+                continue
+            key = next((by_norm[norm_key(nm)] for nm in entry["names"] if norm_key(nm) in by_norm), None)
+            if key is None:                        # a table the db/ pass never captured
+                names = entry.get("names") or []
+                if not names:
+                    continue
+                key = names[0]
+                out.setdefault(key, {})
+                by_norm[norm_key(key)] = key
+            bucket = out[key]
+            for ncol, d in entry_cols.items():
+                bucket.setdefault(ncol, d)
     if out:
         store.set_doc(user_id, client_id, "dict_descriptions", out)
     return len(out)
@@ -468,33 +495,35 @@ def import_document(user_id: int, client_id: int, filename: str, raw: bytes, ext
         prod = (product or "").strip().lower()
         try:
             from app.services import cc_dictionary_service as _ccd
-            detected = _ccd.detect_app(raw)   # 'policy' | 'claim' | None
+            detected = _ccd.detect_app(raw)   # 'policy' | 'claim' | 'billing' | None
         except Exception:  # noqa: BLE001
             detected = None
-        if detected and prod in ("claim", "policy") and detected != prod:
-            names = {"claim": "ClaimCenter", "policy": "PolicyCenter"}
+        names = {"claim": "ClaimCenter", "policy": "PolicyCenter", "billing": "BillingCenter"}
+        if detected and prod in ("claim", "policy", "billing") and detected != prod:
             return {"ok": False, "mismatch": True, "detected": detected, "product": prod,
                     "error": "This client’s Product is %s, but the uploaded dictionary looks like %s data."
                              % (names[prod], names[detected])}, 200
         payload, status = _import_gw_typelists(user_id, client_id, filename, raw, product=product)
         # Additionally build this client's schema index from the entityModel.xml inside the SAME
         # .zip (powers the Data Reconciliation page). The Product chosen at upload picks which
-        # index: PolicyCenter (pc_dict_*) for "policy", else ClaimCenter (cc_dict_*). Additive and
-        # best-effort — never affects the typelist-import result above.
-        is_policy = (product or "").strip().lower() == "policy"
+        # index: PolicyCenter (pc_dict_*) for "policy", BillingCenter (bc_dict_*) for "billing",
+        # else ClaimCenter (cc_dict_*). Additive and best-effort — never affects the typelist-import
+        # result above.
+        if prod == "policy":
+            from app.services import pc_dictionary_service as dict_svc
+            key, app_name = "pcDictionary", "PolicyCenter"
+        elif prod == "billing":
+            from app.services import bc_dictionary_service as dict_svc
+            key, app_name = "bcDictionary", "BillingCenter"
+        else:
+            from app.services import cc_dictionary_service as dict_svc
+            key, app_name = "ccDictionary", "ClaimCenter"
         try:
-            if is_policy:
-                from app.services import pc_dictionary_service as dict_svc
-                key = "pcDictionary"
-            else:
-                from app.services import cc_dictionary_service as dict_svc
-                key = "ccDictionary"
             idx = dict_svc.build_from_zip(user_id, client_id, raw)
             if isinstance(payload, dict) and idx.get("indexed"):
                 payload[key] = idx
         except Exception as exc:  # noqa: BLE001
-            print("[lookup] %s dictionary index build skipped: %r"
-                  % ("PolicyCenter" if is_policy else "ClaimCenter", exc))
+            print("[lookup] %s dictionary index build skipped: %r" % (app_name, exc))
         return payload, status
     parsed = parse_lookup_document(raw, ext)
     sets = parsed.get("sets") if parsed.get("ok") else None

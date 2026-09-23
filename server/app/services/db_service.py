@@ -321,6 +321,53 @@ def profile_table(cfg: Dict[str, Any]) -> Result:
         return {"ok": False, "error": str(exc)}, 400
 
 
+# Default / hard cap on how many DISTINCT source values to pull for a Legacy-value list.
+DISTINCT_VALUES_DEFAULT = 200
+DISTINCT_VALUES_MAX = 1000
+
+
+def distinct_values(cfg: Dict[str, Any]) -> Result:
+    """Return the DISTINCT non-null values of ONE column, for auto-filling the Lookup
+    Mapping "Legacy value" list from live source data. Body: connection cfg +
+    {schema, table, column, limit}. Read-only; identifiers are quoted with _quote and
+    no value is interpolated (there are no value params), mirroring profile_table().
+    """
+    schema = cfg.get("schema") or "dbo"
+    table = cfg.get("table")
+    column = cfg.get("column")
+    if not table or not column:
+        return {"ok": False, "error": "No table/column specified."}, 400
+    try:
+        limit = int(cfg.get("limit", DISTINCT_VALUES_DEFAULT))
+    except (TypeError, ValueError):
+        limit = DISTINCT_VALUES_DEFAULT
+    limit = max(1, min(limit, DISTINCT_VALUES_MAX))
+    try:
+        conn = open_connection(cfg)
+        conn.timeout = int(cfg.get("queryTimeout", 30))
+        cur = conn.cursor()
+        fq = f"{_quote(schema)}.{_quote(table)}"
+        col = _quote(column)
+
+        # Total distinct count (to report truncation), then the capped, ordered list.
+        cur.execute(f"SELECT COUNT(DISTINCT {col}) FROM {fq}")
+        distinct_count = int((cur.fetchone() or [0])[0] or 0)
+        cur.execute(
+            f"SELECT DISTINCT TOP ({limit}) {col} FROM {fq} "
+            f"WHERE {col} IS NOT NULL ORDER BY {col}"
+        )
+        values = [("" if r[0] is None else str(r[0])) for r in cur.fetchall()]
+        conn.close()
+        return {
+            "ok": True,
+            "values": values,
+            "distinctCount": distinct_count,
+            "truncated": distinct_count > limit,
+        }, 200
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}, 400
+
+
 # Cap on the number of allowed values in a typelist NOT IN (...) check — SQL Server's
 # hard parameter ceiling is ~2100; stay well under it and skip oversized domains.
 VALIDATE_MAX_DOMAIN = 1000

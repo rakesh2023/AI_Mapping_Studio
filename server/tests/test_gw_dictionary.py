@@ -3,7 +3,10 @@ typelists -> lookup sets)."""
 import io
 import zipfile
 
-from app.parsers.gw_dictionary import parse_gw_entity, parse_gw_typelist, iter_zip_html
+from app.parsers.gw_dictionary import (
+    parse_gw_entity, parse_gw_typelist, iter_zip_html,
+    find_entity_model_xml, build_desc_index,
+)
 from app.services import extraction_service as X
 from app.services import auth_service as A
 from app.services import client_service as C
@@ -116,6 +119,68 @@ def test_import_typelists_from_zip_as_lookups():
     m = [x for x in sets if x["lookupName"] == "cctl_accidentpremises"][0]
     vals = L.get_values(uid, cid, m["id"])[0]["values"]
     assert [v["code"] for v in vals] == ["Employer", "Lessee"]
+
+
+# entityModel.xml description backfill (subtype/inherited columns the db/ pages omit) ----
+
+ENTITY_MODEL_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<entityModel xmlns="http://www.guidewire.com/entityModel/1.0">
+  <entity id="Contact" tableName="cc_contact">
+    <description>A contact.</description>
+    <column name="Name" columnName="Name" type="varchar" typeLength="180">
+      <description>The contact display name.</description>
+    </column>
+    <subtype id="AutoRepairShop">
+      <description>An auto repair shop.</description>
+      <column name="VendorNumber" columnName="VendorNumber" type="varchar" typeLength="60">
+        <description>The vendor number.</description>
+      </column>
+    </subtype>
+  </entity>
+</entityModel>"""
+
+# A physical db/ page for the subtype whose per-column descriptions are BLANK.
+AUTOSHOP_DB_HTML = """<html><head><title>AutoRepairShop</title></head><body>
+<div class="pagetitle">AutoRepairShop</div>
+<div class="arraysbox">Fields</div>
+<p class="column"><span class="coltitle">Name</span>&nbsp;&nbsp;<span class="titleDesc">varchar (180)</span>
+<span class="spaceandsize">(non-null)</span><br><span class="desc"></span>
+<p class="column"><span class="coltitle">VendorNumber</span>&nbsp;&nbsp;<span class="titleDesc">varchar (60)</span>
+<span class="spaceandsize"></span><br><span class="desc"></span>
+</body></html>"""
+
+
+def test_build_desc_index_subtype_inherits_parent_columns():
+    index = build_desc_index(ENTITY_MODEL_XML.encode("utf-8"))
+    sub = next(e for e in index if e["names"] == ["AutoRepairShop"])
+    # inherited parent column AND subtype-specific column both carry descriptions
+    assert sub["cols"]["name"] == "The contact display name."
+    assert sub["cols"]["vendornumber"] == "The vendor number."
+
+
+def test_extract_gw_zip_backfills_subtype_descriptions_from_entity_model():
+    z = _zip({
+        "d/data/data/db/AutoRepairShop.html": AUTOSHOP_DB_HTML,   # blank descriptions
+        "d/data/data/entityModel.xml": ENTITY_MODEL_XML,          # authoritative source
+    })
+    tables, _stats = X.extract_gw_zip(z)
+    t = next(t for t in tables if t["name"] == "AutoRepairShop")
+    by = {c["name"]: c for c in t["columns"]}
+    assert by["Name"]["description"] == "The contact display name."
+    assert by["VendorNumber"]["description"] == "The vendor number."
+
+
+def test_enrichment_does_not_disturb_typelists_or_populated_descriptions():
+    # entityModel.xml is locatable; the (untouched) typelist parser still works; and an
+    # already-populated HTML description is NOT overwritten by the model.
+    z = _zip({"x/entityModel.xml": ENTITY_MODEL_XML,
+              "x/data/data/db/Account.html": ENTITY_HTML})
+    assert find_entity_model_xml(z) is not None
+    tables, _ = X.extract_gw_zip(z)
+    acct = next(t for t in tables if t["name"] == "cc_account")
+    by = {c["name"]: c for c in acct["columns"]}
+    assert by["AccountNumber"]["description"] == "The account number"   # HTML text preserved
+    assert parse_gw_typelist(TYPELIST_HTML)["values"][0]["code"] == "Employer"
 
 
 def test_import_typelists_filtered_by_product():

@@ -184,7 +184,7 @@ function computeSchemaDiff(prevSnapshot, currEntities){
     if(!prev[tl]){
       diff.tablesAdded.push(curr[tl].name);
       diff.entityStatus[tl] = "added";
-      Object.keys(curr[tl].cols).forEach(cl => { diff.columnStatus[tl + " " + cl] = "added"; });
+      Object.keys(curr[tl].cols).forEach(cl => { diff.columnStatus[tl + "::" + cl] = "added"; });
     }
   });
   // Removed tables (in prev, not in current) — keep their columns for ghost rows.

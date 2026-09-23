@@ -3,8 +3,11 @@
 Turns a plain-English request into a single read-only SELECT, grounded strictly on the logged-in
 client's chosen schema source:
   - "claimcenter": the ClaimCenter dictionary index (cc_dict_*, from entityModel.xml) + claimcenter_sql.md
+  - "policycenter": the PolicyCenter dictionary index (pc_dict_*, from entityModel.xml) + policycenter_sql.md
+  - "billingcenter": the BillingCenter dictionary index (bc_dict_*, from entityModel.xml) + billingcenter_sql.md
   - "cmt": the Claim Migration Tool schema (cmt_schema doc)  + migration_sql.md
   - "pmt": the Policy Migration Tool schema (pmt_schema doc) + migration_sql.md
+  - "bmt": the Billing Migration Tool schema (bmt_schema doc) + migration_sql.md
 A small provider abstraction binds each source to its read API (has_index/list_tables/catalog/
 search/schema_context), conventions doc, and source-specific prompt hints. The AI flow
 (table-select → grounding → generate) is identical across sources.
@@ -19,6 +22,7 @@ from app.services.ai_client import anthropic_client
 from app.services.ai_client_service import call_ai
 from app.services import cc_dictionary_service as ccd
 from app.services import pc_dictionary_service as pcd
+from app.services import bc_dictionary_service as bcd
 from app.services import migration_schema_service as mig
 
 Payload = Dict[str, Any]
@@ -27,6 +31,7 @@ Result = Tuple[Payload, int]
 _PROMPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts")
 _CC_PROMPT = os.path.join(_PROMPTS, "claimcenter_sql.md")
 _PC_PROMPT = os.path.join(_PROMPTS, "policycenter_sql.md")
+_BC_PROMPT = os.path.join(_PROMPTS, "billingcenter_sql.md")
 _MIG_PROMPT = os.path.join(_PROMPTS, "migration_sql.md")
 
 _CC_FALLBACK = (
@@ -46,8 +51,20 @@ _PC_FALLBACK = (
     "Default T-SQL. Return ONE read-only SELECT; no DML/DDL, no multiple statements, no comments. "
     "Use only the tables/columns/codes in the schema context."
 )
+_BC_FALLBACK = (
+    "BillingCenter SQL: entity tables are bc_<name>, typelists bctl_<name>. Every entity has an ID "
+    "surrogate key; FKs are <Prop>ID joining to the target's ID. Retirable entities have a physical "
+    "Retired column (0=active) — add WHERE Retired=0 unless retired rows are wanted (NOT RetiredValue). "
+    "Typekey columns store the code text directly and are exact-case — use the code shown (WHERE "
+    "Subtype='ChargePaidFromAccount'). BC is a double-entry ledger: bc_transaction carries the dollar "
+    "Amount directly (paired with Amount_cur, typelist Currency) — no line-item join needed for a "
+    "transaction total; join bc_lineitem/bc_taccount only for true ledger detail. Subtypes share the "
+    "parent's table, distinguished by Subtype. Money is an amount column paired with a sibling "
+    "<Field>_cur typekey — include _cur on money queries. Default T-SQL. Return ONE read-only SELECT; "
+    "no DML/DDL, no multiple statements, no comments. Use only the tables/columns/codes in the schema context."
+)
 _MIG_FALLBACK = (
-    "Migration-tool SQL (CMT/PMT): PKs vary per table (PMT_ID / PMT_ID1 / PMT_ID2 — use the one shown). "
+    "Migration-tool SQL (CMT/PMT/BMT): PKs vary per table (PMT_ID / PMT_ID1 / PMT_ID2 — use the one shown). "
     "Direct FKs (e.g. PMT_Parent) join child.fkcol = parent.PK. Polymorphic FKs: a value column plus a "
     "sibling <col>_Type naming the target table — resolve with UNION ALL of per-target LEFT JOINs guarded "
     "by <col>_Type='Target', or narrow to the requested type. Typekey columns are plain string filters "
@@ -58,9 +75,10 @@ _MIG_FALLBACK = (
 def _provider(source: str) -> Dict[str, Any]:
     """Bind a schema source to its read API + conventions + prompt hints."""
     s = (source or "claimcenter").strip().lower()
-    if s in ("cmt", "pmt"):
+    if s in ("cmt", "pmt", "bmt"):
         dk = mig.DOC_KEY[s]
-        label = "CMT (Claim Migration Tool)" if s == "cmt" else "PMT (Policy Migration Tool)"
+        label = {"cmt": "CMT (Claim Migration Tool)", "pmt": "PMT (Policy Migration Tool)",
+                 "bmt": "BMT (Billing Migration Tool)"}[s]
         return {
             "kind": s, "label": label, "noun": s.upper() + " schema",
             "conv_path": _MIG_PROMPT, "conv_fallback": _MIG_FALLBACK,
@@ -97,6 +115,29 @@ def _provider(source: str) -> Dict[str, Any]:
             "catalog": lambda u, c: pcd.catalog(u, c),
             "search": lambda u, c, p: pcd.search_entity_ids(u, c, p),
             "context": lambda u, c, ids: pcd.schema_context(u, c, ids),
+        }
+    if s == "billingcenter":
+        return {
+            "kind": "billingcenter", "label": "BillingCenter dictionary", "noun": "BillingCenter dictionary",
+            "conv_path": _BC_PROMPT, "conv_fallback": _BC_FALLBACK,
+            "empty_msg": "upload your BillingCenter dictionary .zip on Product Data Dictionary "
+                         "(choose BillingCenter; it contains entityModel.xml)",
+            "select_example": "e.g. to sum what was billed on a policy include Transaction, and add "
+                              "LineItem/InvoiceItem only if you need ledger- or installment-level detail",
+            "gen_extra": "Retirable tables filter WHERE Retired = 0 (the physical column is Retired, "
+                         "NOT RetiredValue). Typekey codes are stored as exact-case text — use the exact "
+                         "code from the typelist code list (e.g. Transaction.Subtype = 'ChargePaidFromAccount'). "
+                         "bc_transaction carries the dollar Amount directly (with sibling Amount_cur) — do NOT "
+                         "join a line-item table just to total a transaction. If the request involves typelist "
+                         "codes / values / names, LEFT JOIN the relevant table(s) from the SCHEMA's 'TYPELIST "
+                         "TABLES' section on <entity>.<TypekeyColumn> = <bctl_table>.ID and also select "
+                         "<bctl_table>.NAME — one LEFT JOIN per typekey column involved. For money, include the "
+                         "sibling <Field>_cur column (typelist Currency).",
+            "has_index": lambda u, c: bcd.has_index(u, c),
+            "list_tables": lambda u, c, q="": bcd.list_tables(u, c, q),
+            "catalog": lambda u, c: bcd.catalog(u, c),
+            "search": lambda u, c, p: bcd.search_entity_ids(u, c, p),
+            "context": lambda u, c, ids: bcd.schema_context(u, c, ids),
         }
     return {
         "kind": "claimcenter", "label": "ClaimCenter dictionary", "noun": "ClaimCenter dictionary",
@@ -221,9 +262,10 @@ def context_status(user_id: int, client_id: int, source: str = "claimcenter") ->
 def list_sources(user_id: int, client_id: int) -> Result:
     """Which schema sources this client actually has, for the SQL Assistant source picker.
     Reports all sources with an `indexed` flag; the frontend shows the pair matching the
-    client's Product (Claim -> ClaimCenter + CMT, Policy -> PolicyCenter + PMT)."""
+    client's Product (Claim -> ClaimCenter + CMT, Policy -> PolicyCenter + PMT,
+    Billing -> BillingCenter + BMT)."""
     out = []
-    for src in ("claimcenter", "policycenter", "cmt", "pmt"):
+    for src in ("claimcenter", "policycenter", "billingcenter", "cmt", "pmt", "bmt"):
         prov = _provider(src)
         counts = prov["has_index"](user_id, client_id)
         out.append({"source": prov["kind"], "label": prov["label"],

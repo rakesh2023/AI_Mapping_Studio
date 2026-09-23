@@ -1,8 +1,9 @@
-"""Per-client migration-tool schema provider (CMT / PMT) for the Data Reconciliation SQL
+"""Per-client migration-tool schema provider (CMT / PMT / BMT) for the Data Reconciliation SQL
 Assistant.
 
 Reads the schema the user uploaded on the Product Schema page — stored per client as the
-`cmt_schema` (Claim Migration Tool) or `pmt_schema` (Policy Migration Tool) tenant doc — and
+`cmt_schema` (Claim Migration Tool), `pmt_schema` (Policy Migration Tool) or `bmt_schema`
+(Billing Migration Tool) tenant doc — and
 exposes the same read API the ClaimCenter provider does (has_index / list_tables / catalog /
 schema_context) so cc_sql_service can ground on it. Surfaces migration-schema specifics: the
 actual PK column (PMT_ID / _ID1 / _ID2), direct + polymorphic FKs, and typekey string columns.
@@ -15,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from app.services import tenant_store_service as store
 
 # Which tenant doc backs each source.
-DOC_KEY = {"cmt": "cmt_schema", "pmt": "pmt_schema"}
+DOC_KEY = {"cmt": "cmt_schema", "pmt": "pmt_schema", "bmt": "bmt_schema"}
 
 
 def _norm(s: str) -> str:

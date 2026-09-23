@@ -354,6 +354,63 @@ CREATE TABLE IF NOT EXISTS pc_dict_typecodes (
 );
 CREATE INDEX IF NOT EXISTS ix_pcdict_tc_scope ON pc_dict_typecodes(user_id, client_id, typelist_id);
 
+-- ==========================================================================
+-- BillingCenter dictionary index — the BillingCenter equivalent of cc_dict_*.
+-- Built from the SAME Guidewire entityModel.xml parser (physical bc_/bctl_ table
+-- names come straight from the XML) when a client's Product is Billing. Separate
+-- tables (not a shared discriminator) because UNIQUE(user_id,client_id,id) would
+-- collide between CC/PC/BC entity ids. A client has one dictionary at a time.
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS bc_dict_entities (
+    user_id       INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id     INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id            TEXT NOT NULL,               -- entity/subtype id (e.g. 'Charge')
+    kind          TEXT,                        -- 'entity' | 'subtype'
+    parent_id     TEXT,                        -- containing entity id, for subtypes
+    table_name    TEXT,                        -- physical table (e.g. bc_charge); NULL if not persistent
+    description   TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_bcdict_ent_scope ON bc_dict_entities(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS bc_dict_columns (
+    user_id             INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id           INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    owner_id            TEXT NOT NULL,          -- entity/subtype id this column is on
+    name                TEXT,                   -- property name
+    kind                TEXT,                   -- column | typekey | foreignkey | array
+    column_name         TEXT,                   -- physical column (NULL for array/virtual)
+    sql_type            TEXT,
+    type_length         TEXT,
+    description         TEXT,
+    is_nonnull          INTEGER,
+    target_entity       TEXT,                   -- FK/array target entity
+    target_typelist     TEXT,                   -- typekey's typelist
+    key_filter_typelist TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_bcdict_col_scope ON bc_dict_columns(user_id, client_id, owner_id);
+
+CREATE TABLE IF NOT EXISTS bc_dict_typelists (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    id          TEXT NOT NULL,                  -- typelist id (e.g. 'Transaction')
+    table_name  TEXT,                           -- physical (e.g. bctl_transaction)
+    description TEXT,
+    UNIQUE(user_id, client_id, id)
+);
+CREATE INDEX IF NOT EXISTS ix_bcdict_tl_scope ON bc_dict_typelists(user_id, client_id);
+
+CREATE TABLE IF NOT EXISTS bc_dict_typecodes (
+    user_id     INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    typelist_id TEXT NOT NULL,
+    code        TEXT,                           -- the stored value (e.g. 'ChargeBilled')
+    name        TEXT,
+    description TEXT,
+    is_retired  INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_bcdict_tc_scope ON bc_dict_typecodes(user_id, client_id, typelist_id);
+
 -- Per-pass AI run audit (counts/tokens/timing); complements per-call ai_usage_log.
 CREATE TABLE IF NOT EXISTS ai_mapping_runs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -5,11 +5,11 @@
 <title>Introduction - AI Data Conversion Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260911i">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260911i">
-<link rel="stylesheet" href="../css/forms.css?v=20260911i">
-<link rel="stylesheet" href="../css/tables.css?v=20260911i">
-<link rel="stylesheet" href="../css/responsive.css?v=20260911i">
+<link rel="stylesheet" href="../css/common.css?v=20260922a">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260922a">
+<link rel="stylesheet" href="../css/forms.css?v=20260922a">
+<link rel="stylesheet" href="../css/tables.css?v=20260922a">
+<link rel="stylesheet" href="../css/responsive.css?v=20260922a">
 <style>
   .intro-hero{background:linear-gradient(135deg, var(--primary-soft), var(--bg-card));border:1px solid var(--border);border-radius:14px;padding:24px 28px;}
   .intro-hero h1{font-size:1.6rem;margin-bottom:6px;}
@@ -174,27 +174,46 @@
       <div class="card-el mb-4">
         <div class="section-title"><i class="bi bi-signpost-split"></i> The end-to-end workflow</div>
 
+        <p class="text-muted-2 text-xs mb-1">These follow the sidebar top to bottom. Work through them in order, or jump straight to any tool.</p>
+
         <div class="intro-phase">1 &middot; Set up</div>
         <div class="intro-step mb-3">
           <div class="num">1</div>
+          <div class="body">
+            <h6><i class="bi bi-file-earmark-text text-primary"></i> Know Your Data</h6>
+            <p>Upload insurance documents (policies, claims, underwriting, premiums, coverage) and ask questions about them in a chat. Non-insurance files are flagged so you decide whether to include them.</p>
+            <a class="btn btn-sm btn-outline-soft" href="know-your-data.html">Open Know Your Data <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">2</div>
+          <div class="body">
+            <h6><i class="bi bi-card-checklist text-primary"></i> Product Data Dictionary &amp; Product Schema</h6>
+            <p>Import the Guidewire product reference: upload a Guidewire HTML dictionary (.zip) to bring in its <strong>typelists</strong>, and upload the <strong>Product schema</strong> (Excel/CSV) to browse the target tables &amp; columns. Both highlight what changed on re-upload.</p>
+            <a class="btn btn-sm btn-outline-soft me-2" href="lookup-data-system.html">Product Data Dictionary <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="schema-file-explore.html">Product Schema <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">3</div>
+          <div class="body">
+            <h6><i class="bi bi-hdd-network text-primary"></i> Target System</h6>
+            <p>Define the destination schema &mdash; a live SQL Server database or an uploaded data dictionary. Add entities or columns manually or with AI, and set each list column's <strong>Type Key</strong> so it links to the imported typelists.</p>
+            <a class="btn btn-sm btn-outline-soft" href="target-system.html">Open Target System <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">4</div>
           <div class="body">
             <h6><i class="bi bi-database text-primary"></i> Source Systems</h6>
             <p>Connect a live <strong>SQL Server</strong> source or upload a source file (Excel, CSV, PDF, Word, SQL, JSON, XML). Files are read by the AI to extract tables &amp; columns.</p>
             <a class="btn btn-sm btn-outline-soft" href="source-systems.html">Open Source Systems <i class="bi bi-arrow-right ms-1"></i></a>
           </div>
         </div>
-        <div class="intro-step mb-3">
-          <div class="num">2</div>
-          <div class="body">
-            <h6><i class="bi bi-hdd-network text-primary"></i> Target System</h6>
-            <p>Define the destination schema &mdash; a live SQL Server database or an uploaded data dictionary. Add entities or columns manually or with AI.</p>
-            <a class="btn btn-sm btn-outline-soft" href="target-system.html">Open Target System <i class="bi bi-arrow-right ms-1"></i></a>
-          </div>
-        </div>
 
         <div class="intro-phase">2 &middot; Discover</div>
         <div class="intro-step mb-3">
-          <div class="num">3</div>
+          <div class="num">5</div>
           <div class="body">
             <h6><i class="bi bi-diagram-3 text-primary"></i> Metadata Explorer &amp; Data Profiling</h6>
             <p>Browse source tables and columns, and profile the actual data (null %, distinct values, samples) to understand what you're mapping.</p>
@@ -205,7 +224,7 @@
 
         <div class="intro-phase">3 &middot; Map</div>
         <div class="intro-step mb-3">
-          <div class="num">4</div>
+          <div class="num">6</div>
           <div class="body">
             <h6><i class="bi bi-stars text-primary"></i> AI Mapping Generator</h6>
             <p>Pick the target tables and let Claude generate the field-level mappings, transformation rules and join conditions &mdash; guided by your business context.</p>
@@ -213,15 +232,23 @@
           </div>
         </div>
         <div class="intro-step mb-3">
-          <div class="num">5</div>
+          <div class="num">7</div>
           <div class="body">
-            <h6><i class="bi bi-grid-3x3-gap text-primary"></i> Mapping Workspace</h6>
+            <h6><i class="bi bi-grid-3x3-gap text-primary"></i> AI Mapping Workspace</h6>
             <p>Review, edit and approve/reject the generated mappings table by table. Every change is tracked.</p>
-            <a class="btn btn-sm btn-outline-soft" href="mapping-workspace.html">Open Mapping Workspace <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="mapping-workspace.html">Open AI Mapping Workspace <i class="bi bi-arrow-right ms-1"></i></a>
           </div>
         </div>
         <div class="intro-step mb-3">
-          <div class="num">6</div>
+          <div class="num">8</div>
+          <div class="body">
+            <h6><i class="bi bi-card-list text-primary"></i> AI Lookup Mapping</h6>
+            <p>Map source coded / typelist values to the target Guidewire typelist codes. List columns for each mapped target table appear automatically; the <strong>Legacy</strong> values are pulled from your live source data and the AI turns them into a reviewable source-code &rarr; target-code mapping.</p>
+            <a class="btn btn-sm btn-outline-soft" href="lookup-mapping.html">Open AI Lookup Mapping <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+        <div class="intro-step mb-3">
+          <div class="num">9</div>
           <div class="body">
             <h6><i class="bi bi-shield-check text-primary"></i> Validation</h6>
             <p>Check the mappings for issues (unmapped mandatory fields, low-confidence guesses, type mismatches) before you build.</p>
@@ -229,22 +256,46 @@
           </div>
         </div>
 
-        <div class="intro-phase">4 &middot; Build &amp; deliver</div>
+        <div class="intro-phase">4 &middot; Build</div>
         <div class="intro-step mb-3">
-          <div class="num">7</div>
+          <div class="num">10</div>
           <div class="body">
             <h6><i class="bi bi-file-earmark-code text-primary"></i> ETL Code (SQL)</h6>
             <p>Generate a CREATE TABLE script and INSERT stored procedures from the approved mappings, then deploy them to SQL Server.</p>
             <a class="btn btn-sm btn-outline-soft" href="etl-code.html">Open ETL Code <i class="bi bi-arrow-right ms-1"></i></a>
           </div>
         </div>
-        <div class="intro-step">
-          <div class="num">8</div>
+
+        <div class="intro-phase">5 &middot; Validate the loaded data</div>
+        <div class="intro-step mb-3">
+          <div class="num">11</div>
           <div class="body">
-            <h6><i class="bi bi-download text-primary"></i> History &amp; Export</h6>
-            <p>Review the full audit trail of mapping changes and export the mapping document to share or hand off.</p>
+            <h6><i class="bi bi-clipboard-check text-primary"></i> Data Validation Configuration &amp; Report</h6>
+            <p>Configure data-quality checks per column &mdash; primary-key / duplicate, mandatory not-null, typelist membership, FK orphans, plus plain-English custom rules the AI turns into SQL &mdash; then run them live against the target and view the <strong>Validation Report</strong> (KPI cards + charts by type and table).</p>
+            <a class="btn btn-sm btn-outline-soft me-2" href="data-validation.html">Data Validation Configuration <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="validation-report.html">Validation Report <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+
+        <div class="intro-phase">6 &middot; Reconcile</div>
+        <div class="intro-step mb-3">
+          <div class="num">12</div>
+          <div class="body">
+            <h6><i class="bi bi-terminal text-primary"></i> Data Reconciliation &mdash; SQL Assistant</h6>
+            <p>Type a plain-English request and get back a read-only SQL <code>SELECT</code>, grounded only on the selected schema source (ClaimCenter / PolicyCenter dictionary or CMT/PMT) for this client &mdash; with an optional table scope to constrain which entities the AI uses.</p>
+            <a class="btn btn-sm btn-outline-soft" href="data-reconciliation.html">Open SQL Assistant <i class="bi bi-arrow-right ms-1"></i></a>
+          </div>
+        </div>
+
+        <div class="intro-phase">7 &middot; Deliver</div>
+        <div class="intro-step">
+          <div class="num">13</div>
+          <div class="body">
+            <h6><i class="bi bi-download text-primary"></i> History, Export &amp; Settings</h6>
+            <p>Review the full audit trail of mapping changes, export the mapping document to share or hand off, and manage preferences &amp; confidence thresholds in Settings.</p>
             <a class="btn btn-sm btn-outline-soft me-2" href="mapping-history.html">Mapping History <i class="bi bi-arrow-right ms-1"></i></a>
-            <a class="btn btn-sm btn-outline-soft" href="export.html">Export <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft me-2" href="export.html">Export <i class="bi bi-arrow-right ms-1"></i></a>
+            <a class="btn btn-sm btn-outline-soft" href="settings.html">Settings <i class="bi bi-arrow-right ms-1"></i></a>
           </div>
         </div>
       </div>
@@ -254,11 +305,23 @@
         <div class="section-title"><i class="bi bi-grid"></i> Jump to a tool</div>
         <div class="intro-feat">
           <a href="dashboard.html"><div class="t"><i class="bi bi-speedometer2 text-primary"></i> Dashboard</div><div class="d">Project status, KPIs and progress.</div></a>
-          <a href="source-systems.html"><div class="t"><i class="bi bi-database text-primary"></i> Source Systems</div><div class="d">Connect or upload your source.</div></a>
+          <a href="know-your-data.html"><div class="t"><i class="bi bi-file-earmark-text text-primary"></i> Know Your Data</div><div class="d">Upload documents &amp; chat with them.</div></a>
+          <a href="lookup-data-system.html"><div class="t"><i class="bi bi-card-checklist text-primary"></i> Product Data Dictionary</div><div class="d">Import Guidewire typelists.</div></a>
+          <a href="schema-file-explore.html"><div class="t"><i class="bi bi-file-earmark-spreadsheet text-primary"></i> Product Schema</div><div class="d">Browse the target schema file.</div></a>
           <a href="target-system.html"><div class="t"><i class="bi bi-hdd-network text-primary"></i> Target System</div><div class="d">Define the target schema.</div></a>
+          <a href="source-systems.html"><div class="t"><i class="bi bi-database text-primary"></i> Source Systems</div><div class="d">Connect or upload your source.</div></a>
+          <a href="metadata-explorer.html"><div class="t"><i class="bi bi-diagram-3 text-primary"></i> Metadata Explorer</div><div class="d">Browse source tables &amp; columns.</div></a>
+          <a href="data-profiling.html"><div class="t"><i class="bi bi-bar-chart-line text-primary"></i> Data Profiling</div><div class="d">Profile the actual source data.</div></a>
           <a href="ai-mapping-generator.html"><div class="t"><i class="bi bi-stars text-primary"></i> AI Mapping Generator</div><div class="d">Generate mappings with AI.</div></a>
-          <a href="mapping-workspace.html"><div class="t"><i class="bi bi-grid-3x3-gap text-primary"></i> Mapping Workspace</div><div class="d">Review &amp; refine mappings.</div></a>
+          <a href="mapping-workspace.html"><div class="t"><i class="bi bi-grid-3x3-gap text-primary"></i> AI Mapping Workspace</div><div class="d">Review &amp; refine mappings.</div></a>
+          <a href="lookup-mapping.html"><div class="t"><i class="bi bi-card-list text-primary"></i> AI Lookup Mapping</div><div class="d">Map coded values to typelists.</div></a>
+          <a href="validation.html"><div class="t"><i class="bi bi-shield-check text-primary"></i> Validation</div><div class="d">Check mappings before build.</div></a>
           <a href="etl-code.html"><div class="t"><i class="bi bi-file-earmark-code text-primary"></i> ETL Code (SQL)</div><div class="d">Generate &amp; deploy ETL SQL.</div></a>
+          <a href="data-validation.html"><div class="t"><i class="bi bi-clipboard-check text-primary"></i> Data Validation</div><div class="d">Configure data-quality checks.</div></a>
+          <a href="validation-report.html"><div class="t"><i class="bi bi-file-earmark-bar-graph text-primary"></i> Validation Report</div><div class="d">Run checks &amp; view results.</div></a>
+          <a href="data-reconciliation.html"><div class="t"><i class="bi bi-terminal text-primary"></i> SQL Assistant</div><div class="d">Plain English &rarr; read-only SQL.</div></a>
+          <a href="mapping-history.html"><div class="t"><i class="bi bi-clock-history text-primary"></i> Mapping History</div><div class="d">Audit trail of changes.</div></a>
+          <a href="export.html"><div class="t"><i class="bi bi-download text-primary"></i> Export</div><div class="d">Export the mapping document.</div></a>
           <a href="ai-usage-report.html"><div class="t"><i class="bi bi-graph-up text-primary"></i> AI Usage Report</div><div class="d">Track AI token usage.</div></a>
           <a href="settings.html"><div class="t"><i class="bi bi-gear text-primary"></i> Settings</div><div class="d">Preferences &amp; thresholds.</div></a>
         </div>
@@ -269,9 +332,9 @@
 
 <div id="toast-stack"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260911i"></script>
-<script src="../js/navigation.js?v=20260911i"></script>
-<script src="../js/introduction.js?v=20260911i"></script>
+<script src="../js/common.js?v=20260922a"></script>
+<script src="../js/navigation.js?v=20260922a"></script>
+<script src="../js/introduction.js?v=20260922a"></script>
 </body>
 </html>
 

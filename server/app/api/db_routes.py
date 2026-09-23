@@ -57,6 +57,17 @@ def profile_table():
     return jsonify(payload), status
 
 
+@bp.route("/distinct-values", methods=["POST"])
+def distinct_values():
+    """Distinct non-null values of one column — auto-fills the Lookup Mapping Legacy list."""
+    blocked = _throttle()
+    if blocked:
+        return blocked
+    cfg = request.get_json(force=True) or {}
+    payload, status = db_service.distinct_values(cfg)
+    return jsonify(payload), status
+
+
 @bp.route("/validate", methods=["POST"])
 def validate_table():
     blocked = _throttle()

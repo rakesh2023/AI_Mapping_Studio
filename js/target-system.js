@@ -19,6 +19,7 @@ let activeDiff = null;       // computeSchemaDiff() for the active target (chang
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("target-system.html");
   migrateLegacyTargetSchema();   // seed a connection from any legacy uploaded schema
+  ensureTargetBaseline(getTargetConnection(getActiveTargetId()));   // baseline so manual edits highlight
   renderConnections();
   renderActiveBrowser();
   loadTypelistNames();           // for the List-badge "which typelist?" tooltip
@@ -329,6 +330,12 @@ function saveConnectionForm(e){
     const snap = snapshotEntities(existing.entities);
     snap.at = existing.loadedAt || existing.uploadedAt || null;
     conn.prevExtract = snap;
+  } else if(!conn.prevExtract && conn.entities && conn.entities.length){
+    // First save of a new target (or a legacy one lacking a baseline): snapshot the
+    // saved schema so subsequent manual add/remove/change highlights against it.
+    const snap = snapshotEntities(conn.entities);
+    snap.at = conn.loadedAt || null;
+    conn.prevExtract = snap;
   }
   // Never persist the DB password (target schema is already read into entities[]).
   rememberConnPassword(conn.id, conn.password);
@@ -366,6 +373,7 @@ function diffSummaryText(d){
 
 function activateConn(id){
   setActiveTarget(id);
+  ensureTargetBaseline(getTargetConnection(id));   // baseline so manual edits highlight
   renderConnections();
   renderActiveBrowser();
   const c = getTargetConnection(id);
@@ -476,6 +484,19 @@ function dismissTargetDiff(){
   activeDiff = null;
   renderActiveBrowser();
   showNotification("Change highlights cleared.", "primary", 1500);
+}
+
+/* Capture a baseline snapshot the first time a target is seen, so subsequent manual
+   add/remove/change highlights against "the schema as loaded". No-op once a baseline
+   exists (re-extract and Dismiss manage it after that). Call only at clean moments
+   (page load / activate / first save) — NEVER from an edit or render path, or the
+   baseline would absorb the edit and suppress its own highlight. */
+function ensureTargetBaseline(conn){
+  if(!conn || conn.prevExtract || !(conn.entities && conn.entities.length)) return;
+  const snap = snapshotEntities(conn.entities);
+  snap.at = conn.loadedAt || conn.uploadedAt || new Date().toISOString();
+  conn.prevExtract = snap;
+  upsertTargetConnection(conn);
 }
 
 function renderTargetTree(meta){
@@ -671,7 +692,9 @@ function renderTargetFields(){
     const anyUser = Object.keys(uf).length, anyAi = Object.keys(ai).length;
     const originBadge = anyUser ? ' <span class="badge-soft badge-user diff-badge" title="Updated by you">Edited</span>'
                       : anyAi ? ' <span class="badge-soft badge-ai diff-badge" title="Populated from the schema file / data dictionary — review">AI</span>' : '';
-    return '<tr class="' + cls + (anyUser ? "" : (anyAi ? " is-ai" : "")) + '" data-col="' + escapeHtml(f.name) + '">' +
+    // Row background: a schema-diff change (green/orange) always wins over the blue AI
+    // wash. The per-cell blue `cell-ai` outline + "AI" badge still mark AI-filled attributes.
+    return '<tr class="' + cls + (cls ? "" : (anyUser ? "" : (anyAi ? " is-ai" : ""))) + '" data-col="' + escapeHtml(f.name) + '">' +
       '<td class="cell-center"><button type="button" class="icon-btn ec-edit" data-edit="' + escapeHtml(f.name) + '" title="Edit column" style="width:30px;height:30px;"><i class="bi bi-pencil"></i></button></td>' +
       '<td class="mono' + (st === "renamed" ? " cell-changed" : "") + '">' + escapeHtml(f.name) + badge + originBadge + (st === "renamed" && renamedFrom ? '<span class="was">was ' + escapeHtml(renamedFrom) + '</span>' : '') + '</td>' +
       '<td class="ts-edit' + cellCls("dataType") + '" data-tsfield="dataType" data-tscol="' + escapeHtml(f.name) + '" title="Click to edit type">' + escapeHtml(f.dataType || "") + was("dataType", fType) + '</td>' +

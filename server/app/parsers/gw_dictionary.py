@@ -21,6 +21,7 @@ No third-party dependency (stdlib html.parser + zipfile).
 import io
 import re
 import zipfile
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -298,4 +299,120 @@ def iter_zip_html(raw: bytes) -> List[Tuple[str, str]]:
                 continue
             total += len(data)
             out.append((name, data.decode("utf-8", errors="ignore")))
+    return out
+
+
+# ---------------------------------------------------------------- entityModel.xml
+# The Guidewire data-dictionary zip also ships an `entityModel.xml` — the authoritative
+# model. Unlike the physical `db/` HTML pages, it inlines every SUBTYPE's columns (and
+# delegate/inherited columns), each with a `<description>`. We read ONLY descriptions
+# from it here (a pure, description-only reader) to backfill what the db/ pages omit for
+# subtype entities like AutoRepairShop. Typelist/typecode parsing is intentionally NOT
+# done here — that stays in the services that own the lookup / SQL-index paths.
+
+def norm_key(s: str) -> str:
+    """Normalise a table/column name for matching: lowercase, drop non-alphanumerics.
+    Matches the key style used by _store_dict_descriptions and the frontend AI-fill matcher."""
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def find_entity_model_xml(raw: bytes) -> Optional[bytes]:
+    """Return the bytes of the Guidewire entity-model XML inside a dictionary .zip.
+    Tries an exact `entityModel.xml` basename first, then any `.xml` whose head looks
+    like an entity model. Returns None if the input isn't a zip or has no such file."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception:  # noqa: BLE001 — not a zip
+        return None
+    try:
+        xml_entries: List[str] = []
+        for nm in zf.namelist():
+            if nm.endswith("/"):
+                continue
+            base = nm.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if base.endswith(".xml"):
+                xml_entries.append(nm)
+            if base == "entitymodel.xml":
+                return zf.read(nm)
+        for nm in xml_entries:                       # no exact match — sniff content
+            try:
+                head = zf.read(nm)[:4096].lower()
+            except Exception:  # noqa: BLE001
+                continue
+            if b"entitymodel" in head and (b"<entity" in head or b"entitymodel/" in head):
+                return zf.read(nm)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def build_desc_index(xml_bytes: bytes) -> List[Dict[str, Any]]:
+    """Parse a Guidewire entityModel.xml into per-entity/subtype DESCRIPTION entries
+    (namespace-agnostic — the ns is derived from the root, so any …/1.0, /1.1 or none
+    parses). Returns a list of:
+        {"names": [<tableName?>, <id>], "desc": <entity description>,
+         "cols": { <normalised column name> : <column description> }}
+    A SUBTYPE inherits its parent entity's columns, so its `cols` = parent columns
+    unioned with the subtype's own (subtype-specific descriptions win). Column keys are
+    normalised from BOTH the physical `columnName` and the logical `name`, so an entry
+    matches however the HTML extraction named the column (e.g. FK `AccountHolderID` vs
+    logical `AccountHolder`). Returns [] on any parse failure."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except Exception:  # noqa: BLE001
+        return []
+    ns = root.tag[:root.tag.index("}") + 1] if root.tag.startswith("{") else ""
+
+    def t(name: str) -> str:
+        return ns + name
+
+    def desc(el) -> str:
+        # description as a child element (any depth-1 tag ending in 'description'/'desc'/'doc'),
+        # or as an attribute — tolerant of export variations.
+        d = (el.get("description") or el.get("desc") or "").strip()
+        if d:
+            return d
+        for child in el:
+            lt = child.tag.split("}")[-1].lower()
+            if lt in ("description", "desc", "documentation", "doc"):
+                txt = "".join(child.itertext()).strip()
+                if txt:
+                    return txt
+        return ""
+
+    def names_of(el) -> List[str]:
+        # accept id/name for the logical name and tableName/table for the physical one
+        seen, out_names = set(), []
+        for nm in (el.get("tableName"), el.get("table"), el.get("id"), el.get("name")):
+            if nm and nm not in seen:
+                seen.add(nm)
+                out_names.append(nm)
+        return out_names
+
+    def collect_cols(el, cols: Dict[str, str]) -> None:
+        for child in el:
+            lt = child.tag.split("}")[-1]
+            if lt not in ("column", "typekey", "foreignKey", "foreignkey", "array"):
+                continue                 # derivedColumn / delegateto: no physical column
+            d = desc(child)
+            if not d:
+                continue
+            for nm in (child.get("columnName"), child.get("column"), child.get("name")):
+                k = norm_key(nm or "")
+                if k:
+                    cols.setdefault(k, d)
+
+    out: List[Dict[str, Any]] = []
+
+    def walk(el, inherited: Dict[str, str]) -> None:
+        # Accumulate columns DOWN the subtype chain so a nested subtype (e.g.
+        # Contact -> Company -> AutoRepairShop) carries every inherited column's description.
+        cols = dict(inherited)
+        collect_cols(el, cols)
+        out.append({"names": names_of(el), "desc": desc(el), "cols": cols})
+        for sub in el.findall(t("subtype")):
+            walk(sub, cols)
+
+    for entity in root.findall(t("entity")):
+        walk(entity, {})
     return out

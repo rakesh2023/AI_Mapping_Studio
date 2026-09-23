@@ -233,6 +233,32 @@ if(typeof window !== "undefined"){
   });
 }
 
+/* ---- Header AI-status chip: reflect the REAL AI service state ----
+   Green "AI Ready" only when GET /api/ai/status reports ok; otherwise red
+   "AI Not Ready" (with the reason as a tooltip). Safe on pages without the chip
+   (framed pages / login) — it no-ops when the element is absent. */
+async function refreshAiStatusChip(){
+  const chip = document.getElementById("aiStatusChip");
+  if(!chip) return;
+  const setState = (ready, label, title) => {
+    chip.classList.toggle("ai-ready", ready);
+    chip.classList.toggle("ai-not-ready", !ready);
+    chip.title = title || "";
+    chip.innerHTML = '<span class="dot"></span> ' + label;   // label is a fixed literal
+  };
+  try{
+    const res = await fetch("/api/ai/status", {headers:{Accept:"application/json"}});
+    const data = await res.json().catch(() => ({}));
+    if(res.ok && data && data.ok){
+      setState(true, "AI Ready", "AI engine ready" + (data.model ? " — " + data.model : ""));
+    } else {
+      setState(false, "AI Not Ready", (data && data.reason) || "AI service unavailable");
+    }
+  }catch(e){
+    setState(false, "AI Not Ready", "Backend not reachable — is the server running?");
+  }
+}
+
 /* ---- Reset: clear data for the LOGGED-IN USER + SELECTED CLIENT only ---- */
 async function resetApplication(){
   const who = activeClientName() || "the current client";
@@ -577,9 +603,7 @@ function buildHeaderHTML(){
       '<div class="app-title">AI Data Conversion Studio<small>Intelligent Source-to-Target Mapping</small></div>' +
     '</div>' +
     '<div class="topbar-meta">' +
-      '<a class="brief-link" href="/docs/stakeholder-brief.html" target="_blank" rel="noopener" title="Open the Stakeholder Brief in a new tab">' +
-        '<i class="bi bi-file-earmark-richtext"></i><span class="d-none d-lg-inline">Stakeholder Brief</span></a>' +
-      '<span class="meta-chip ai-ready"><span class="dot"></span> AI Ready</span>' +
+      '<span id="aiStatusChip" class="meta-chip ai-ready" title="Checking AI service…"><span class="dot"></span> AI Ready</span>' +
       buildClientSwitcherHTML() +
       '<button class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme"><i class="bi ' + (getTheme()==="dark" ? "bi-sun" : "bi-moon-stars") + '"></i></button>' +
       '<button class="icon-btn" id="resetAppBtn" title="Reset application (clear all data)"><i class="bi bi-arrow-counterclockwise"></i></button>' +
@@ -1127,6 +1151,7 @@ function wireShellEvents(){
       if(icon) icon.className = "bi " + (next === "dark" ? "bi-sun" : "bi-moon-stars");
     });
   }
+  refreshAiStatusChip();   // header chip shows real AI service status (green/red)
 }
 function applySidebarCollapsedState(){
   const collapsed = lsGet(LS_KEYS.sidebar, false);

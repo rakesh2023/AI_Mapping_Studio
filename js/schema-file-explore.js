@@ -13,24 +13,27 @@ let _sfe = null;          // {application, fileName, at, entities:[{name,table,f
 let _sfeDiff = null;      // computeSchemaDiff(baseline, entities) or null
 let _sfeActive = null;    // active entity name
 let _sfePending = null;   // file awaiting confirm (none needed; kept for symmetry)
-let _sfeKind = "cmt";     // cmt (Claim Migration Tool) | pmt (Policy Migration Tool)
+let _sfeKind = "cmt";     // cmt (Claim Migration Tool) | pmt (Policy Migration Tool) | bmt (Billing Migration Tool)
+
+// Tenant docs + label for each migration tool.
+const SFE_KIND_META = {
+  cmt: {schema: "aims_cmt_schema", baseline: "aims_cmt_baseline", label: "CMT (Claim Migration Tool)"},
+  pmt: {schema: "aims_pmt_schema", baseline: "aims_pmt_baseline", label: "PMT (Policy Migration Tool)"},
+  bmt: {schema: "aims_bmt_schema", baseline: "aims_bmt_baseline", label: "BMT (Billing Migration Tool)"}
+};
 
 // Which tenant docs back the currently-selected migration tool.
 function sfeKeys(){
-  return _sfeKind === "pmt"
-    ? {schema: "aims_pmt_schema", baseline: "aims_pmt_baseline", label: "PMT (Policy Migration Tool)"}
-    : {schema: "aims_cmt_schema", baseline: "aims_cmt_baseline", label: "CMT (Claim Migration Tool)"};
+  return SFE_KIND_META[_sfeKind] || SFE_KIND_META.cmt;
 }
-// The OTHER migration tool's docs — a client has only one product schema, so uploading one clears the other.
+// The OTHER migration tools' docs — a client has only one product schema, so uploading one clears the others.
 function sfeOtherKeys(){
-  return _sfeKind === "pmt"
-    ? {schema: "aims_cmt_schema", baseline: "aims_cmt_baseline", label: "CMT (Claim Migration Tool)"}
-    : {schema: "aims_pmt_schema", baseline: "aims_pmt_baseline", label: "PMT (Policy Migration Tool)"};
+  return Object.keys(SFE_KIND_META).filter(k => k !== _sfeKind).map(k => SFE_KIND_META[k]);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("schema-file-explore.html");
-  // The migration tool is decided by the client's Product (Policy -> PMT, else CMT) — not asked.
+  // The migration tool is decided by the client's Product (Policy -> PMT, Billing -> BMT, else CMT) — not asked.
   _sfeKind = sfeKindFromProduct();
   loadSfe();
 
@@ -42,10 +45,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     file.value = "";
     if(!f) return;
     if(!clientProduct()){
-      showNotification("Set this client’s Product (Claim or Policy) in client settings before uploading a schema file.", "warning", 5000);
+      showNotification("Set this client’s Product (Claim, Policy or Billing) in client settings before uploading a schema file.", "warning", 5000);
       return;
     }
-    _sfeKind = sfeKindFromProduct();   // Policy -> PMT, Claim/Billing -> CMT
+    _sfeKind = sfeKindFromProduct();   // Policy -> PMT, Billing -> BMT, Claim -> CMT
     uploadSfe(f);
   });
   const ts = document.getElementById("sfeTreeSearch");
@@ -58,9 +61,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 function clientProduct(){
   return (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "").toLowerCase() : "";
 }
-// Migration tool implied by the client's Product: Policy -> PMT, everything else -> CMT.
+// Migration tool implied by the client's Product: Policy -> PMT, Billing -> BMT, everything else -> CMT.
 function sfeKindFromProduct(){
-  return clientProduct() === "policy" ? "pmt" : "cmt";
+  const p = clientProduct();
+  if(p === "policy") return "pmt";
+  if(p === "billing") return "bmt";
+  return "cmt";
 }
 
 function sfeOk(msg){ return '<div class="hint-note" style="background:var(--success-bg);color:var(--success);border-color:#bfe8cf;"><i class="bi bi-check-circle"></i> ' + msg + '</div>'; }
@@ -98,15 +104,16 @@ function _tablesToEntities(tables){
 
 async function uploadSfe(file){
   const box = document.getElementById("sfeUploadResult");
-  // A client keeps only one product schema. If the OTHER tool already has one, confirm the replacement.
-  const other = sfeOtherKeys();
-  const otherExisting = lsGet(other.schema, null);
-  if(otherExisting && otherExisting.entities && otherExisting.entities.length){
+  // A client keeps only one product schema. If another tool already has one, confirm the replacement.
+  const otherExisting = sfeOtherKeys().find(o => {
+    const d = lsGet(o.schema, null); return d && d.entities && d.entities.length;
+  });
+  if(otherExisting){
     const ok = (typeof confirmDialog === "function")
-      ? await confirmDialog("This client already has a " + other.label + " schema. A client can have only one "
+      ? await confirmDialog("This client already has a " + otherExisting.label + " schema. A client can have only one "
           + "product schema, so uploading this " + sfeKeys().label + " file will replace it. Continue?",
           "Replace product schema")
-      : window.confirm("This client already has a " + other.label + " schema. Uploading this "
+      : window.confirm("This client already has a " + otherExisting.label + " schema. Uploading this "
           + sfeKeys().label + " file will replace it. Continue?");
     if(!ok) return;
   }
@@ -121,9 +128,8 @@ async function uploadSfe(file){
     const K = sfeKeys();
     _sfe = {application: K.label, tool: _sfeKind, fileName: file.name, at: new Date().toISOString(), entities: entities};
     lsSet(K.schema, _sfe);
-    // Enforce one product schema per client — clear the other tool's docs if present.
-    const other = sfeOtherKeys();
-    if(lsGet(other.schema, null)){ lsRemove(other.schema); lsRemove(other.baseline); }
+    // Enforce one product schema per client — clear the other tools' docs if present.
+    sfeOtherKeys().forEach(o => { if(lsGet(o.schema, null)){ lsRemove(o.schema); lsRemove(o.baseline); } });
     // Baseline stays -> the diff highlights what changed. First-ever upload sets it silently.
     const baseline = lsGet(K.baseline, null);
     if(!baseline){ const snap = snapshotEntities(entities); snap.at = _sfe.at; lsSet(K.baseline, snap); _sfeDiff = null; }

@@ -382,38 +382,43 @@ rich(s, 0.8, 6.2, 11.8, 0.72,
 s = slide(); bg(s, INK2)
 brand_mark(s, 0.75, 0.7, 1.3)
 text(s, 0.75, 1.1, 11, 0.35, "HOW IT WORKS", size=12, color=YELLOW, bold=True, spacing=2)
-text(s, 0.73, 1.42, 11.5, 0.7, "One guided journey, six simple steps", size=30, color=WHITE, bold=True, face=HEAD)
+text(s, 0.73, 1.42, 11.5, 0.7, "One guided journey, seven simple steps", size=30, color=WHITE, bold=True, face=HEAD)
 phases = [
-    ["Set up", "Bring in your source data and define the target", ORANGE],
-    ["Understand", "See what your data really contains before mapping", TANGERINE],
-    ["Map with AI", "Let AI draft the mappings, then review and approve", YELLOW],
-    ["Build", "Generate what is needed to move the data", GREEN],
-    ["Validate", "Check data quality against the target", TEAL],
+    ["Set up", "Bring in your source, the product reference and the target", ORANGE],
+    ["Discover", "See what your data really contains before mapping", TANGERINE],
+    ["Map with AI", "AI drafts the mappings and code values; you approve", YELLOW],
+    ["Build", "Generate the ETL code that moves the data", GREEN],
+    ["Validate", "Check the loaded data's quality against the target", TEAL],
+    ["Reconcile", "Ask questions of the data in plain English", ROSE],
     ["Deliver", "Hand off, report and keep a full audit trail", RED],
 ]
-cw, ch, gx, gy, gapX, gapY = 3.86, 1.75, 0.75, 2.5, 0.32, 0.32
-for i, ph in enumerate(phases):
-    col, row = i % 3, i // 3
-    x = gx + col*(cw+gapX); y = gy + row*(ch+gapY)
-    rect(s, x, y, cw, ch, PANEL_DK, rounded=True, line_color=BORDER_DK, line_w=1, radius=0.05)
-    ellipse(s, x + 0.26, y + 0.28, 0.46, ph[2])
-    num_color = INK if i == 2 else WHITE
-    text(s, x + 0.26, y + 0.28, 0.46, 0.46, str(i+1), size=15, color=num_color, bold=True, face=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.85, y + 0.26, cw - 1.05, 0.5, ph[0], size=16, color=WHITE, bold=True, face=HEAD, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.28, y + 0.9, cw - 0.55, ch - 1.05, ph[1], size=10.5, color=LGRAY, line_mult=1.1)
+cw, ch, gapX, gapY, gy = 2.86, 1.72, 0.3, 0.34, 2.55
+def _phase_card(x, y, i, ph):
+    rect(s, x, y, cw, ch, PANEL_DK, rounded=True, line_color=BORDER_DK, line_w=1, radius=0.06)
+    ellipse(s, x + 0.24, y + 0.24, 0.44, ph[2])
+    num_color = INK if ph[2] == YELLOW else WHITE
+    text(s, x + 0.24, y + 0.24, 0.44, 0.44, str(i+1), size=14, color=num_color, bold=True, face=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 0.78, y + 0.22, cw - 0.98, 0.5, ph[0], size=14.5, color=WHITE, bold=True, face=HEAD, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 0.26, y + 0.82, cw - 0.5, ch - 0.95, ph[1], size=9.8, color=LGRAY, line_mult=1.08)
+# row 1: four cards; row 2: three cards, centered beneath as a pyramid
+def _row_start(n): return (W - (n*cw + (n-1)*gapX)) / 2
+for j, ph in enumerate(phases[:4]):
+    _phase_card(_row_start(4) + j*(cw+gapX), gy, j, ph)
+for j, ph in enumerate(phases[4:]):
+    _phase_card(_row_start(3) + j*(cw+gapX), gy + ch + gapY, j+4, ph)
 footer(s, 7, True)
 
 # =====================================================================
 # 8 - CAPABILITIES: PREPARE & UNDERSTAND
 # =====================================================================
-s = content_slide("What you can do · Steps 1–2", "Prepare your data and understand it", 8)
+s = content_slide("What you can do · Steps 1–2", "Set up your data and understand it", 8)
 grid3x2(s, [
     ["A", "Know Your Data", "Upload your documents and simply ask questions about your data in plain language.", ORANGE],
-    ["B", "Bring in any source", "Connect a database or upload files in almost any format — the tool reads the structure for you.", TANGERINE],
-    ["C", "Define the target", "Point the tool at your Guidewire target so every mapping lines up with where the data must land.", YELLOW],
-    ["D", "Explore the content", "Browse the tables and fields in your source data without needing a technical specialist.", GREEN],
-    ["E", "Profile the quality", "See how complete and clean the real data is — before you commit to a mapping.", TEAL],
-    ["F", "Work by client", "Each client engagement is kept separate, so teams can work in parallel with confidence.", ROSE],
+    ["B", "Load the product reference", "Import the Guidewire dictionary and product schema so mappings land on real target tables and codes.", TANGERINE],
+    ["C", "Define the target", "Point the tool at your Guidewire target — a live database or a data dictionary — so mappings line up.", YELLOW],
+    ["D", "Bring in any source", "Connect a database or upload files in almost any format — the tool reads the structure for you.", GREEN],
+    ["E", "Explore the content", "Browse the tables and fields in your source data without needing a technical specialist.", TEAL],
+    ["F", "Profile the quality", "See how complete and clean the real data is — before you commit to a mapping.", ROSE],
 ])
 
 # =====================================================================
@@ -428,10 +433,10 @@ text(s, 0.85, 3.6, 3.8, 2.4,
      size=12.5, color=DGRAY, line_mult=1.2)
 # right stacked cards
 items = [
-    ["AI mapping suggestions", "Get a complete first-draft mapping for the fields you choose — instantly."],
+    ["AI mapping suggestions", "A first-draft of field mappings, transformation rules and joins for the tables you choose."],
     ["Review workspace", "Approve, reject or edit each mapping in one place; every change is tracked."],
-    ["Code-value matching", "Legacy codes are matched to the right Guidewire values automatically."],
-    ["Built-in checks", "The mappings are checked for gaps and low-confidence guesses before you move on."],
+    ["Lookup / code-value mapping", "Legacy codes are matched to the right Guidewire values, drawn from your live source data."],
+    ["Built-in validation", "Mappings are checked for gaps, low-confidence guesses and type mismatches before you move on."],
 ]
 cx, cw2, cy, chh = 5.2, 7.6, 2.0, 1.0
 for i, it in enumerate(items):
@@ -444,13 +449,13 @@ for i, it in enumerate(items):
 # =====================================================================
 # 10 - CAPABILITIES: BUILD, VALIDATE & DELIVER
 # =====================================================================
-s = content_slide("What you can do · Steps 4–6", "Build, validate and deliver with confidence", 10)
+s = content_slide("What you can do · Steps 4–7", "Build, validate, reconcile and deliver", 10)
 grid3x2(s, [
-    ["A", "Generate the code", "Turn approved mappings into ready-to-run code that moves the data into the target.", ORANGE],
-    ["B", "One-click deploy", "Push the code to the target database and track whether it succeeds.", TANGERINE],
-    ["C", "Data-quality checks", "Check the loaded data for duplicates, missing values, bad codes and broken links.", YELLOW],
-    ["D", "Quality dashboard", "See issues at a glance and drill into the exact records that need attention.", GREEN],
-    ["E", "Audit trail & export", "Keep a full history of every change and export the mapping document to share.", TEAL],
+    ["A", "Generate the ETL code", "Turn approved mappings into a ready-to-run SQL build — tables and load procedures — then deploy it.", ORANGE],
+    ["B", "Data-quality checks", "Test the loaded data for duplicates, missing values, bad codes and broken links — plus your own rules.", TANGERINE],
+    ["C", "Validation report", "See issues by type and table at a glance, and drill into the exact records that need attention.", YELLOW],
+    ["D", "Reconcile in plain English", "Ask a question and get grounded, read-only SQL to check that counts and values match end to end.", GREEN],
+    ["E", "Audit trail & export", "Keep a full history of every change and export the mapping document to share or hand off.", TEAL],
     ["F", "Progress & usage", "Track project status and AI usage through clear, live dashboards.", ROSE],
 ])
 

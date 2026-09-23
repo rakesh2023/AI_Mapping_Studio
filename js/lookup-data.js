@@ -39,6 +39,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 let _activeTable = null;      // lowercased table key, or null for "all tables"
 let _tableFilter = "";
 
+// Runs the auto-populate-from-DB pass at most once per page load (the reloads that
+// generateValueMapping() triggers must NOT re-run it).
+let _autoPopulateDone = false;
+
 function toggleLookupPanel(show){
   const panel = document.getElementById("lkTablePanelCol");
   const grid = document.getElementById("lkGridCol");
@@ -126,6 +130,9 @@ async function loadLookupSets(){
     if(_activeTable && !_allLookupSets.some(s => _tableKey(s) === _activeTable)) _activeTable = null;
     renderLookupTableList();
     applyLookupFilters();
+    // Auto-fill Legacy values from the live source DB + auto-generate mappings — once
+    // per page load, guarded so repeat visits (and the reloads Generate triggers) skip it.
+    if(!_autoPopulateDone){ _autoPopulateDone = true; autoPopulateFromDb(); }
   }catch(e){ hideLoading(); layout.style.display = ""; list.innerHTML = '<div class="text-xs text-muted-2">Cannot reach the server.</div>'; }
 }
 
@@ -553,6 +560,165 @@ async function generateValueMapping(id, btn){
     loadLookupSets();
   }catch(e){ showNotification(e.message || "Cannot reach the server.", "danger", 5000); }
   finally{ if(btn){ btn.disabled = false; btn.innerHTML = html; } }
+}
+
+/* ==========================================================================
+   Auto-populate Legacy values from the live source DB, then auto-generate the
+   Legacy → GW mapping. Runs once per page load (guarded by _autoPopulateDone).
+   Rules: auto-pick the first Connected SQL Server source; only fill BLANK Legacy
+   cells (never overwrite manual edits); only generate rows not generated yet.
+   ========================================================================== */
+
+/* Same connection-config shape profiling.js posts to /api/db/* (local copy). */
+function lkConnToConfig(c){
+  return {
+    driver: c.driver || "ODBC Driver 17 for SQL Server",
+    server: c.server || c.host || "",
+    database: c.database || c.db || "",
+    schema: c.schema || null,
+    trusted: !!c.trusted,
+    username: c.username || "",
+    password: c.password || ""
+  };
+}
+
+/* Auto-pick a live SQL Server source: prefer a Connected one, else the first non-file source. */
+function lkPickSource(){
+  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
+  const dbConns = conns.filter(c => (c.type || "").toLowerCase() !== "file system");
+  if(!dbConns.length) return null;
+  return dbConns.find(c => c.status === "Connected") || dbConns[0];
+}
+
+/* Show/replace (html) or hide (null) the auto-populate banner. */
+function lkBanner(html){
+  const el = document.getElementById("lkAutoBanner");
+  if(!el) return;
+  if(html === null){ el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  el.innerHTML = html;
+}
+
+/* Distinct values for one source column from the picked source. sourceTable may be
+   "schema.table" or bare "table" (then the source's default schema is used). */
+async function lkFetchDistinct(cfg, sourceTable, sourceColumn, defaultSchema){
+  let schema = defaultSchema || "dbo", table = sourceTable || "";
+  if(table.indexOf(".") !== -1){
+    const parts = table.split(".");
+    table = parts.pop(); schema = parts.join(".") || schema;
+  }
+  const body = Object.assign({}, cfg, {schema, table, column: sourceColumn, limit: 200});
+  const res = await fetch("/api/db/distinct-values", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  if(res.status === 404) throw new Error("The /api/db/distinct-values endpoint is missing — restart the server to load it.");
+  const j = await res.json().catch(() => ({}));
+  if(!res.ok || !j.ok) throw new Error((j && j.error) || ("distinct query failed (HTTP " + res.status + ")"));
+  return j.values || [];
+}
+
+/* Fill blank Legacy cells from the DB, then generate un-generated mappings.
+   `manual` = triggered by the fallback button (a password prompt is then allowed). */
+async function autoPopulateFromDb(manual){
+  const conn = lkPickSource();
+  if(!conn){
+    lkBanner('<div class="hint-note"><i class="bi bi-info-circle"></i> Connect a SQL Server source on <b>Source Systems</b> to auto-populate Legacy values from live data.</div>');
+    return;
+  }
+  // Resolve the password without nagging on load.
+  let pw = conn.trusted ? "" : (conn.password || (typeof cachedConnPassword === "function" ? cachedConnPassword(conn.id) : null));
+  if(!conn.trusted && pw == null){
+    if(manual){
+      pw = await ensureConnPassword(conn);
+      if(pw == null) return;   // user cancelled
+    } else {
+      // Don't interrupt page load with a modal — offer a button instead.
+      lkBanner('<div class="hint-note d-flex align-items-center justify-content-between flex-wrap gap-2">' +
+        '<span><i class="bi bi-database"></i> Populate <b>Legacy value</b> from <b>' + escapeHtml(conn.name || conn.server || "source") + '</b> and generate mappings.</span>' +
+        '<button type="button" class="btn btn-sm btn-primary" id="lkPopulateBtn"><i class="bi bi-database-down me-1"></i> Populate from database</button></div>');
+      const b = document.getElementById("lkPopulateBtn");
+      if(b) b.addEventListener("click", () => autoPopulateFromDb(true));
+      return;
+    }
+  }
+  const cfg = lkConnToConfig(Object.assign({}, conn, {password: pw}));
+
+  // Rows needing a Legacy fill (blank + bound to a source column). Only these hit the DB.
+  const candidates = (_allLookupSets || []).filter(s => (s.sourceColumn || "").trim() && !(s.legacyValuesSpec || "").trim());
+  const total = candidates.length;
+  if(!total){
+    // Explain the common "nothing happened" case: list columns with no Source bound
+    // (the AI marked them "no source equivalent"), so there are no legacy values to pull.
+    const noSource = (_allLookupSets || []).filter(s => (s.targetColumn || "").trim() &&
+      !(s.sourceColumn || "").trim() && !(s.legacyValuesSpec || "").trim());
+    if(noSource.length){
+      lkBanner('<div class="hint-note"><i class="bi bi-info-circle"></i> ' + noSource.length +
+        ' list column' + (noSource.length === 1 ? "" : "s") + ' have no <b>Source</b> mapped &mdash; the AI marked ' +
+        (noSource.length === 1 ? "it" : "them") + ' &ldquo;no source equivalent&rdquo;, so there are no legacy values to pull from the database. ' +
+        'Set a Source with the row&rsquo;s <b>Edit</b> button (then reload), or map the column in the <b>AI Mapping Generator</b>.</div>');
+      if(manual) showNotification(noSource.length + " row(s) have no source column to read legacy values from.", "warning", 4000);
+    } else {
+      lkBanner(null);
+      if(manual) showNotification("Legacy values are already populated.", "primary", 2500);
+    }
+    return;
+  }
+
+  // Resolve the source's default schema once (fall back to dbo).
+  let defaultSchema = "dbo";
+  try{
+    const mres = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg)});
+    const mj = await mres.json().catch(() => ({}));
+    if(mj && mj.ok && mj.schema) defaultSchema = mj.schema;
+  }catch(e){ /* keep dbo */ }
+
+  let filled = 0, generated = 0, dbFail = 0, empty = 0, lastErr = "";
+  for(let i = 0; i < candidates.length; i++){
+    const s = candidates[i];
+    lkBanner('<div class="hint-note"><span class="spinner-border spinner-border-sm me-1"></span> Populating from ' +
+      escapeHtml(conn.name || conn.server || "source") + ' — row ' + (i + 1) + ' of ' + total + '…</div>');
+    // 1) Distinct values -> Legacy cell (blanks only; this row is a blank by construction).
+    let values = [];
+    try{ values = await lkFetchDistinct(cfg, s.sourceTable, s.sourceColumn, defaultSchema); }
+    catch(e){ dbFail++; lastErr = e.message || String(e); continue; }
+    if(!values.length){ empty++; continue; }
+    const spec = values.join("\n");
+    s.legacyValuesSpec = spec;
+    filled++;
+    try{
+      await fetch("/api/lookups/" + encodeURIComponent(s.id), {method:"PUT", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ legacyValuesSpec: spec })});
+    }catch(e){ /* non-fatal: value is still held in memory for this session */ }
+    // 2) Auto-generate only when not generated yet and target codes exist.
+    if(!(s.targetValuesSpec || "").trim() && (s.targetColumn || "").trim()){
+      const targetCodes = _expectedValues(s).map(v => ({ code: v.code, name: v.description || "" }));
+      if(targetCodes.length){
+        try{
+          const j = await runValueMappingChunked(s.id, spec, targetCodes);
+          if(j && j.spec !== undefined){ s.targetValuesSpec = j.spec; generated++; }
+        }catch(e){ /* leave the row for a manual Generate */ }
+      }
+    }
+    applyLookupFilters();   // refresh the grid as rows complete so progress is visible
+  }
+  // On total failure, keep an explanatory banner (with the real error) so the reason is visible.
+  if(!filled && dbFail){
+    lkBanner('<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;">' +
+      '<i class="bi bi-x-circle"></i> Could not read source values from <b>' + escapeHtml(conn.name || conn.server || "the source") +
+      '</b> — ' + escapeHtml(lastErr || "query failed") + ' ' +
+      '<button type="button" class="btn btn-sm btn-outline-danger ms-2" id="lkPopulateBtn"><i class="bi bi-arrow-clockwise me-1"></i> Retry</button></div>');
+    const rb = document.getElementById("lkPopulateBtn");
+    if(rb) rb.addEventListener("click", () => autoPopulateFromDb(true));
+    showNotification("Auto-populate failed: " + (lastErr || "query failed"), "danger", 6000);
+    return;
+  }
+  lkBanner(null);
+  const parts = [];
+  if(filled) parts.push("filled " + filled + " Legacy list" + (filled === 1 ? "" : "s"));
+  if(generated) parts.push("generated " + generated + " mapping" + (generated === 1 ? "" : "s"));
+  const tail = [];
+  if(dbFail) tail.push(dbFail + " column(s) not found");
+  if(empty) tail.push(empty + " column(s) had no data");
+  const msg = parts.length ? ("Auto-populate: " + parts.join(", ") + ".") : "Nothing to populate from the source.";
+  showNotification(msg + (tail.length ? " (" + tail.join(", ") + ")" : ""), tail.length ? "warning" : "success", 4500);
 }
 
 /* ---- Edit lookup mapping in a modal (Source table.column + Expected mapping) ---- */

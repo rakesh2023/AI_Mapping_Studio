@@ -19,7 +19,9 @@ from typing import Any, Dict, Iterator, List, Tuple
 from app.core.capabilities import anthropic
 from app.core.config import ai_model, EXTRACT_TEXT_BUDGET, EXTRACT_MAX_CHUNKS
 from app.parsers.file_parsers import extract_file_chunks, parse_xlsx_dictionary, parse_csv_dictionary
-from app.parsers.gw_dictionary import iter_zip_html, parse_gw_entity
+from app.parsers.gw_dictionary import (
+    iter_zip_html, parse_gw_entity, find_entity_model_xml, build_desc_index, norm_key,
+)
 from app.parsers.sql_ddl_parser import parse_sql_ddl
 from app.schemas.ai_schemas import SOURCE_EXTRACT_SCHEMA, RICH_EXTRACT_SCHEMA
 from app.services.ai_client import (
@@ -69,6 +71,39 @@ def _is_db_view_page(path: str) -> bool:
     return "/db/" in path.replace("\\", "/").lower()
 
 
+def _enrich_gw_descriptions(tables: List[Dict[str, Any]], raw: bytes) -> None:
+    """Fill BLANK column descriptions on the extracted tables from the zip's
+    entityModel.xml. The physical db/ HTML pages omit descriptions for a SUBTYPE's
+    inherited columns (e.g. AutoRepairShop's Name/Notes/PublicID); the model has them.
+    In-place, fill-blanks-only (HTML text wins), no-op when there's no entityModel.xml."""
+    try:
+        xml = find_entity_model_xml(raw)
+        index = build_desc_index(xml) if xml else []
+    except Exception:  # noqa: BLE001 — best effort; extraction still succeeds
+        index = []
+    if not index:
+        return
+    by_norm: Dict[str, Dict[str, str]] = {}
+    for entry in index:
+        cols = entry.get("cols") or {}
+        if not cols:
+            continue
+        for nm in entry.get("names") or []:
+            by_norm.setdefault(norm_key(nm), cols)
+    if not by_norm:
+        return
+    for tbl in tables:
+        cols = by_norm.get(norm_key(tbl.get("name") or ""))
+        if not cols:
+            continue
+        for c in tbl.get("columns", []):
+            if (c.get("description") or "").strip():
+                continue
+            d = cols.get(norm_key(c.get("name") or ""))
+            if d:
+                c["description"] = d
+
+
 def extract_gw_zip(raw: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """Parse a zipped Guidewire HTML dictionary into source tables (PHYSICAL db
     view). Prefers the data/data/db/ pages; typelists are skipped here (they load
@@ -95,6 +130,7 @@ def extract_gw_zip(raw: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         if b["columns"]:
             tables.append({"name": b["name"], "columns": b["columns"]})
             col_count += len(b["columns"])
+    _enrich_gw_descriptions(tables, raw)   # backfill subtype/inherited descriptions from entityModel.xml
     return tables, {"pages": len(pages), "entities": parsed,
                     "tables": len(tables), "columns": col_count}
 
@@ -250,6 +286,7 @@ def extract_source_stream(filename: str, raw: bytes, rich: bool = False) -> Iter
             if b["columns"]:
                 tables.append({"name": b["name"], "columns": b["columns"]})
                 col_count += len(b["columns"])
+        _enrich_gw_descriptions(tables, raw)   # backfill subtype/inherited descriptions from entityModel.xml
         if not tables:
             yield ev({"type": "error", "error": "No Guidewire dictionary tables were found in the zip "
                       "(looked for entity pages under a db/ folder)."})

@@ -21,16 +21,22 @@ const DR_SOURCE_META = {
     uploadText: "upload your <b>ClaimCenter</b> dictionary <b>.zip</b> on <a href=\"lookup-data-system.html\">Product Data Dictionary</a> (choose ClaimCenter; it contains <span class=\"mono\">entityModel.xml</span>)"},
   policycenter: {label: "PolicyCenter dictionary", radio: "PolicyCenter dictionary", uploadHref: "lookup-data-system.html",
     uploadText: "upload your <b>PolicyCenter</b> dictionary <b>.zip</b> on <a href=\"lookup-data-system.html\">Product Data Dictionary</a> (choose PolicyCenter; it contains <span class=\"mono\">entityModel.xml</span>)"},
+  billingcenter: {label: "BillingCenter dictionary", radio: "BillingCenter dictionary", uploadHref: "lookup-data-system.html",
+    uploadText: "upload your <b>BillingCenter</b> dictionary <b>.zip</b> on <a href=\"lookup-data-system.html\">Product Data Dictionary</a> (choose BillingCenter; it contains <span class=\"mono\">entityModel.xml</span>)"},
   cmt: {label: "CMT (Claim Migration Tool) schema", radio: "CMT — Claim Migration Tool", uploadHref: "schema-file-explore.html",
     uploadText: "upload your <b>CMT</b> schema on <a href=\"schema-file-explore.html\">Product Schema</a> (choose CMT)"},
   pmt: {label: "PMT (Policy Migration Tool) schema", radio: "PMT — Policy Migration Tool", uploadHref: "schema-file-explore.html",
-    uploadText: "upload your <b>PMT</b> schema on <a href=\"schema-file-explore.html\">Product Schema</a> (choose PMT)"}
+    uploadText: "upload your <b>PMT</b> schema on <a href=\"schema-file-explore.html\">Product Schema</a> (choose PMT)"},
+  bmt: {label: "BMT (Billing Migration Tool) schema", radio: "BMT — Billing Migration Tool", uploadHref: "schema-file-explore.html",
+    uploadText: "upload your <b>BMT</b> schema on <a href=\"schema-file-explore.html\">Product Schema</a> (choose BMT)"}
 };
 
 // The client's Product decides which two sources the SQL Assistant offers.
 function drProductSources(){
   const p = (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "").toLowerCase() : "";
-  return p === "policy" ? ["policycenter", "pmt"] : ["claimcenter", "cmt"];
+  if(p === "policy") return ["policycenter", "pmt"];
+  if(p === "billing") return ["billingcenter", "bmt"];
+  return ["claimcenter", "cmt"];
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

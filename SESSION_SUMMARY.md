@@ -1,6 +1,6 @@
 # AI Data Conversion Studio — Session Summary
 
-_Last updated: 2026-09-11_
+_Last updated: 2026-09-17_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,105 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **BillingCenter is now a first-class product in Data Reconciliation / the dictionary+schema path.**
+  Previously the SQL Assistant treated Product as binary *policy vs. else(=claim)*, so a **billing**
+  client fell through to ClaimCenter: the schema source showed "ClaimCenter dictionary", the billing
+  entityModel.xml was indexed into the `cc_dict_*` tables, and generation used `claimcenter_sql.md`.
+  Billing is now fully symmetric with claim/policy — its own **BillingCenter dictionary** source
+  (`bc_dict_*` + `billingcenter_sql.md`) and a **BMT — Billing Migration Tool** schema source
+  (mirroring CMT/PMT).
+  - **Backend:** new `bc_dict_*` tables (`schema.sql`, idempotent — auto-create on restart); new
+    `bc_dictionary_service.py` (thin wrapper, `PREFIX="bc_dict"`); `cc_dictionary_service` learns the
+    `bc_dict` prefix and `detect_app` now recognises `bc_/bctl_` → `"billing"`; `lookup_service.import_document`
+    routes a billing dictionary → `bc_dict_*` (key `bcDictionary`) and the product-mismatch guard covers
+    billing; `cc_sql_service` gains a `billingcenter` provider + `bmt` migration branch, `_BC_PROMPT`/
+    `_BC_FALLBACK`, and `list_sources` now lists all six; `migration_schema_service.DOC_KEY` adds
+    `bmt→bmt_schema`; new `server/app/prompts/billingcenter_sql.md` (BC ledger/`bc_`/`bctl_` conventions).
+  - **Frontend:** `data-reconciliation.js` adds `billingcenter`/`bmt` source meta and `billing →
+    [billingcenter, bmt]`; `schema-file-explore.js` adds a `bmt` kind (billing → BMT) with an
+    N-way "one product schema per client" clear; `lookup-data-system.js` copy includes Billing.
+  - **Operational:** backend edits need a **server restart** (`use_reloader=False`); the client's
+    existing billing dictionary sits in the old `cc_dict_*` tables, so the user must **re-upload the
+    BillingCenter dictionary `.zip`** to populate `bc_dict_*` (and upload the billing migration template
+    for the BMT source). Cache-buster bumped to `?v=20260922a` across all HTML pages.
+
+- **Business overview deck refreshed to match the current feature set** (`deck/build_deck.py` →
+  `deck/AI_Data_Conversion_Studio_Overview.pptx`, regenerated). "How it works" now shows **seven**
+  phases (added **Reconcile**) in a 4-over-3 layout; Set-up capabilities add **Load the product
+  reference** (Guidewire dictionary + product schema); Map-with-AI cards renamed to the real tools
+  (AI mapping suggestions, review workspace, lookup / code-value mapping, built-in validation); and
+  the Build slide (now "Build, validate, reconcile and deliver") adds **Validation Report** drill-down
+  and **Reconcile in plain English** (SQL Assistant). Regenerate with the system Python (has
+  `python-pptx`): `python deck/build_deck.py`. Content + `validate.py` pass; visual render QA not run
+  (no LibreOffice in env). Deck only — no app code, css/js, or cache-buster changes.
+
+- **AI fill: descriptions now backfilled from `entityModel.xml` for Guidewire subtype entities
+  (e.g. AutoRepairShop).** Descriptions were extracted only from the dictionary zip's physical `db/`
+  HTML pages, which omit a contact **subtype**'s inherited columns' `<span class="desc">`, so
+  `AutoRepairShop` columns stayed blank and "AI fill" (which only *copies* descriptions) had nothing
+  to apply. Fix reads the authoritative `entityModel.xml` (subtype columns inlined, each with a
+  `<description>`) and unions those descriptions in. **Backend only, deterministic — no AI, and the
+  cctl_ typelist paths are untouched.**
+  - **New pure reader** (`server/app/parsers/gw_dictionary.py`): `find_entity_model_xml(raw)` locates
+    the XML in the zip; `build_desc_index(xml)` returns per-entity/subtype `{names, desc, cols}` where
+    a subtype's `cols` = parent entity columns ∪ its own, keyed (normalised) by **both** physical
+    `columnName` and logical `name`. Description-only — no typelist/typecode parsing here.
+  - **Two description builders enriched, fill-blanks-only (HTML text wins):**
+    `extract_gw_zip` + the stream zip path (`extraction_service.py`, new `_enrich_gw_descriptions`)
+    feed `aims_cmt_schema` (Product Schema → `_applyRefEntity` / "Add from Product Schema"); and
+    `_store_dict_descriptions` (`lookup_service.py`) feeds the `dict_descriptions` tenant doc →
+    `aims_dict_descriptions` → AI fill's `_applyDictDescriptions`. A zip without `entityModel.xml`
+    behaves exactly as before.
+  - **Not refactored:** `cc_dictionary_service._parse_entity_model`, `build_from_zip`, and
+    `parse_gw_typelist` — so lookup-set import and the Data-Reconciliation `cc_dict_*` index are
+    byte-for-byte unchanged. Tests added in `server/tests/test_gw_dictionary.py` (incl. a typelist
+    non-regression assertion). **To apply to an already-added entity: re-upload the dictionary, then
+    re-run AI fill (or re-add the entity).** No CSS/JS edits → no cache-buster bump.
+
+- **Target System: add/remove/change highlighting (green/red/orange) restored for manual edits.**
+  Row highlights are a diff between a frozen baseline (`activeConn.prevExtract`) and the current
+  schema (`renderActiveBrowser`, `js/target-system.js:401`). The baseline was **only** captured on a
+  re-extract of an already-saved target, so a target that was loaded once and then hand-edited had
+  `activeDiff === null` and nothing highlighted.
+  - **New `ensureTargetBaseline(conn)`** (`js/target-system.js`): snapshots the schema the first time
+    a target is seen (no-op once a baseline exists). Called at **clean moments only** — page init
+    (before the first `renderActiveBrowser`), `activateConn`, and first-save in `saveConnectionForm`
+    (new `else if(!conn.prevExtract …)` branch) — never from an edit/render path, so the baseline
+    can't absorb the edit it should highlight. Re-extract baseline logic and the **Dismiss**
+    (re-baseline) button are unchanged.
+  - **Change color wins over the blue AI wash** (`js/target-system.js:674`): a row that is both a
+    schema change and AI-populated no longer gets `is-ai` (blue previously overrode green/orange in
+    `css/tables.css`). Per-cell `cell-ai` outline + "AI" badge still mark AI-filled attributes.
+  - **New-table columns now tint green** (`js/target-schema.js:187`): keyed with `::` (was a space),
+    matching the renderer's `tl + "::" + cl` lookup — a latent bug since the feature shipped.
+  - Note: edits already persisted before this fix are absorbed into the baseline on first load and
+    won't retroactively highlight; new changes do. Cache-buster bumped to `?v=20260917a`.
+
+- **Introduction page refreshed to match the current implementation** (`pages/introduction.html`, HTML-only).
+  The end-to-end workflow walkthrough now follows the live sidebar (`SIDEBAR_SECTIONS`) top-to-bottom and
+  covers every current page: added **Know Your Data**, **Product Data Dictionary**, **Product Schema**,
+  **AI Lookup Mapping**, **Data Validation Configuration**, **Validation Report**, and **Data
+  Reconciliation — SQL Assistant**; re-phased into Set up / Discover / Map / Build / Validate / Reconcile
+  / Deliver (13 steps). The "Jump to a tool" grid was expanded to the full tool set. Hero + Guidewire
+  process diagram left unchanged (still accurate).
+
+- **Lookup Mapping: auto-populate Legacy values from the live source DB + auto-generate (on load).**
+  - **New backend endpoint** `POST /api/db/distinct-values` → `db_service.distinct_values(cfg)`
+    (`server/app/services/db_service.py`, thin route in `server/app/api/db_routes.py`, behind
+    `_throttle()`). Read-only: `SELECT DISTINCT TOP (n) <col> … WHERE <col> IS NOT NULL ORDER BY <col>`,
+    identifiers quoted via `_quote`, plus a `COUNT(DISTINCT …)` for `truncated`. Modeled on
+    `profile_table`. Returns `{ok, values[], distinctCount, truncated}` (default/max limit 200/1000).
+  - **Frontend** (`js/lookup-data.js`): `autoPopulateFromDb()` runs **once per page load** (guarded by
+    `_autoPopulateDone`, so the reloads Generate triggers don't re-run it). Auto-picks the first
+    **Connected** SQL Server source (`lkPickSource`, File System excluded), builds the profiling-style
+    cfg (`lkConnToConfig`), fills **only blank** Legacy cells from `/api/db/distinct-values`, persists
+    each via the existing `PUT /api/lookups/<id>` `{legacyValuesSpec}`, then auto-generates only rows
+    **not yet generated** via the existing `runValueMappingChunked()`. Progress/fallback banner in the
+    new `#lkAutoBanner` (`pages/lookup-mapping.html`).
+  - **No password nag on load:** proceeds silently only with `trusted`/stored/cached auth; otherwise
+    shows a "Populate from database" button whose click path may prompt (`ensureConnPassword`).
+  - Cache-buster bumped to `?v=20260916a` across all HTML pages.
 
 - **Theme toggle now flips the open page too; sidebar reorder; SQL Assistant header trim; reset clears dictionary.**
   - **Theme sync across the SPA shell + iframe:** the header toggle (and the Settings dropdown) only re-themed

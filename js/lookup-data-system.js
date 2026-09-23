@@ -27,11 +27,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     file.value = "";
     if(!f) return;
     // A Guidewire dictionary's application is decided by the client's Product (Policy -> PolicyCenter
-    // pctl_/pc_dict, else ClaimCenter cctl_/cc_dict) — not asked. Other file types upload as-is.
+    // pctl_/pc_dict, Billing -> BillingCenter bctl_/bc_dict, else ClaimCenter cctl_/cc_dict) — not asked.
+    // Other file types upload as-is.
     if(/\.(zip|html?)$/i.test(f.name)){
       const product = (typeof getActiveClientProduct === "function") ? (getActiveClientProduct() || "").toLowerCase() : "";
       if(!product){
-        showNotification("Set this client’s Product (Claim or Policy) in client settings before importing a Guidewire dictionary.", "warning", 5000);
+        showNotification("Set this client’s Product (Claim, Policy or Billing) in client settings before importing a Guidewire dictionary.", "warning", 5000);
         return;
       }
       uploadLds(f, product);

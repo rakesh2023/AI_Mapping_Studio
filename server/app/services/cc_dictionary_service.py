@@ -5,12 +5,12 @@ the dictionary `.zip` the user uploads on Product Data Dictionary. Stored per cl
 `aims_app.db` and fully replaced on each re-upload — so adding new tables is just a re-upload.
 Powers the Data Reconciliation page's grounded NL->SQL.
 
-The four tables are selected by a `prefix` argument: `cc_dict` (ClaimCenter, the default) or
-`pc_dict` (PolicyCenter). The parser is identical for both — physical `pc_`/`cc_` table names
-come straight from the XML — so the same code indexes either product; `pc_dictionary_service`
-is a thin wrapper that passes `prefix="pc_dict"`.
+The four tables are selected by a `prefix` argument: `cc_dict` (ClaimCenter, the default),
+`pc_dict` (PolicyCenter) or `bc_dict` (BillingCenter). The parser is identical for all three —
+physical `cc_`/`pc_`/`bc_` table names come straight from the XML — so the same code indexes any
+product; `pc_dictionary_service` / `bc_dictionary_service` are thin wrappers that pass the prefix.
 
-This is the deployed, multi-tenant equivalent of the `.claude/skills/{claim,policy}center-sql`
+This is the deployed, multi-tenant equivalent of the `.claude/skills/{claim,policy,billing}center-sql`
 skills: it ports their `build_index.py` XML parsing and `query.py` reads into the app.
 Pure schema/SQL scope — no Flask, no Anthropic here.
 """
@@ -25,11 +25,11 @@ from app.db.app_db import connect, write_lock
 NS = "{http://www.guidewire.com/entityModel/1.0}"
 
 # The dictionary index lives in one of these table sets, chosen per client by product.
-_DICT_PREFIXES = ("cc_dict", "pc_dict")
+_DICT_PREFIXES = ("cc_dict", "pc_dict", "bc_dict")
 
 
 def _tables(prefix: str) -> Dict[str, str]:
-    """The four physical table names for a dictionary prefix ('cc_dict' | 'pc_dict')."""
+    """The four physical table names for a dictionary prefix ('cc_dict' | 'pc_dict' | 'bc_dict')."""
     p = prefix if prefix in _DICT_PREFIXES else "cc_dict"
     return {"entities": p + "_entities", "columns": p + "_columns",
             "typelists": p + "_typelists", "typecodes": p + "_typecodes"}
@@ -225,8 +225,9 @@ def build_from_zip(user_id: int, client_id: int, raw: bytes, prefix: str = "cc_d
 
 def detect_app(raw: bytes) -> Optional[str]:
     """Peek at a dictionary .zip's entityModel.xml and infer the Guidewire application from the
-    dominant physical table prefix: 'policy' (pc_/pctl_), 'claim' (cc_/cctl_), or None when there's
-    no entityModel.xml or the prefixes are ambiguous. Used to warn on a product mismatch before import."""
+    dominant physical table prefix: 'policy' (pc_/pctl_), 'claim' (cc_/cctl_), 'billing' (bc_/bctl_),
+    or None when there's no entityModel.xml or the prefixes are ambiguous. Used to warn on a product
+    mismatch before import."""
     try:
         xml_bytes = _find_entity_model_xml(raw)
         if not xml_bytes:
@@ -235,12 +236,14 @@ def detect_app(raw: bytes) -> Optional[str]:
     except Exception:  # noqa: BLE001
         return None
     names = [e[3] for e in ents if e[3]] + [t[1] for t in tls if t[1]]  # physical table names
-    pc = sum(1 for n in names if n.lower().startswith(("pc_", "pctl_")))
-    cc = sum(1 for n in names if n.lower().startswith(("cc_", "cctl_")))
-    if pc > cc and pc:
-        return "policy"
-    if cc > pc and cc:
-        return "claim"
+    counts = {
+        "policy": sum(1 for n in names if n.lower().startswith(("pc_", "pctl_"))),
+        "claim": sum(1 for n in names if n.lower().startswith(("cc_", "cctl_"))),
+        "billing": sum(1 for n in names if n.lower().startswith(("bc_", "bctl_"))),
+    }
+    top = max(counts, key=counts.get)
+    if counts[top] and counts[top] > max(v for k, v in counts.items() if k != top):
+        return top
     return None
 
 
