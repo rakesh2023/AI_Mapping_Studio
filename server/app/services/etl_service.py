@@ -28,8 +28,8 @@ DDL_MAX_TOKENS = 16000
 
 
 def _short_name(name: str) -> str:
-    """SP / log TableName short form: strip a leading CMT_/PMT_ prefix."""
-    return re.sub(r"^(CMT_|PMT_)", "", str(name or ""), flags=re.IGNORECASE)
+    """SP / log TableName short form: strip a leading CMT_/PMT_/BMT_ prefix (Claim/Policy/Billing)."""
+    return re.sub(r"^(CMT_|PMT_|BMT_)", "", str(name or ""), flags=re.IGNORECASE)
 
 
 def _clean_db(name: str) -> str:
@@ -332,9 +332,20 @@ def generate_etl(body: Dict[str, Any]) -> Result:
         "This takes precedence over NULL and applies EVEN WHEN the type is 'Not Mapped' or there "
         "is no source column. Only when a column has NEITHER a usable source NOR a 'default=' -> "
         "emit NULL with a trailing comment '-- Not Mapped'.\n"
-        "- Use ONLY the source tables/columns present in the mapping list and the provided "
-        "FROM/JOIN. Do NOT invent tables or columns. This is the ONE hard rule that the "
-        "user's instructions cannot override.\n"
+        "- SOURCE-ONLY (hard rule the user's instructions cannot override): every expression, "
+        "FROM, JOIN and subquery MUST reference ONLY the source tables/columns present in the "
+        "COLUMN MAPPINGS list and the provided FROM/JOIN (plus [LookupData] for lookups). Do NOT "
+        "invent tables or columns. NEVER read from, query, or sub-select the TARGET table or any "
+        "other target-side table to look up a value — for example, do NOT write "
+        "'(SELECT PMT_ID FROM Policy WHERE publicid = ...)'. The target table name appears ONLY in "
+        "the INSERT INTO. If a column's value looks like it needs another target row, use its "
+        "mapped SOURCE column directly (Direct passthrough), or emit NULL with '-- Not Mapped' when "
+        "there is no source column — never fabricate a cross-target lookup / subquery.\n"
+        "- NO SYNTHETIC KEYS OR BATCH METADATA: do NOT invent surrogate / hash keys or batch "
+        "columns. Never use HASHBYTES, NEWID(), CHECKSUM, ROW_NUMBER(), or a @BatchId / @BatchID "
+        "parameter to populate an id, *PayloadId, or key column UNLESS the ADDITIONAL INSTRUCTIONS "
+        "explicitly ask for it. Fill every id / payload / key column from its mapped source column "
+        "(or its 'default=' / NULL) exactly like any other column.\n"
         "- Do NOT emit a 'USE [database]' statement. The target database is chosen at deploy "
         "time; the procedure must NOT hard-code a database. Begin with the SET options, then a "
         "drop-if-exists guard (IF OBJECT_ID(...,'P') IS NOT NULL DROP PROCEDURE ...; GO), then "

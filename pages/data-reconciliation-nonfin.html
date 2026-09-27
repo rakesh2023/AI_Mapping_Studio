@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Non-Financial Reconciliation - AI Data Conversion Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260927g">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260927g">
+<link rel="stylesheet" href="../css/tables.css?v=20260927g">
+<link rel="stylesheet" href="../css/forms.css?v=20260927g">
+<link rel="stylesheet" href="../css/responsive.css?v=20260927g">
+<style>
+  .dr-tbl-list{max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:.4rem .6rem;}
+  .dr-tbl{display:block;font-size:.82rem;margin:0;padding:.12rem 0;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .dr-tbl input{margin-right:.45rem;}
+  .dr-sql{width:100%;min-height:440px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.45;white-space:pre;overflow:auto;background:var(--gray-bg);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:.8rem;}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Data Conversion Studio <i class="bi bi-chevron-right"></i> Data Reconciliation <i class="bi bi-chevron-right"></i> Non-Financial Reconciliation</div>
+        <h2>Data Reconciliation — Non-Financial Reconciliation</h2></div>
+      </div>
+
+      <!-- Intro: what this produces. -->
+      <div class="card-el mb-3 d-flex align-items-center gap-2" style="padding:.6rem .9rem;">
+        <i class="bi bi-clipboard-check text-primary"></i>
+        <span class="text-xs text-muted-2">Pick the tables &amp; columns to reconcile, name the recon set, and give a
+          <b>common key</b>. Generates a SQL script that creates two staging tables —
+          <span class="mono">&lt;name&gt;_CMT</span> and <span class="mono">&lt;name&gt;_Legacy</span> — with your chosen columns,
+          plus a <b>stored procedure</b> that compares them on the key and returns the differences as
+          <span class="mono">Column&nbsp;name · Key · CMT_Value · Legacy_Value</span>. Load both tables, then run the proc.</span>
+      </div>
+
+      <!-- Context: is the client's migration schema loaded? -->
+      <div id="drBanner" class="mb-3"></div>
+
+      <div class="card-el mb-3" id="drCard" style="display:none;">
+        <div class="section-title"><i class="bi bi-diff"></i> Tables &amp; columns to reconcile
+          <span class="text-xs text-muted-2 fw-normal ms-2">All tables are selected by default — deselect any you don't need; use each table's <b>columns</b> to narrow.</span>
+        </div>
+
+        <!-- Table scope (collapsible; all selected by default) -->
+        <div class="mb-3">
+          <div class="d-flex align-items-center" id="drTablesHdr" style="cursor:pointer;">
+            <label style="margin:0;cursor:pointer;">Tables <span class="text-muted-2 text-xs">(all selected by default)</span></label>
+            <span class="text-xs text-muted-2 ms-2" id="drSelCount"></span>
+            <i class="bi bi-chevron-up ms-auto" id="drTablesChev"></i>
+          </div>
+          <div id="drTablesWrap">
+            <div class="d-flex align-items-center gap-2 mt-2 mb-1">
+              <input type="text" class="form-control form-control-sm" id="drTableSearch" placeholder="Search tables…">
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drSelectAllBtn" title="Select every table">Select all</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drClearAllBtn" title="Clear selection">Clear</button>
+            </div>
+            <div class="dr-tbl-list" id="drTableList"></div>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-md-6 form-group">
+            <label>Non-Financial Recon table name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="nfReconName" autocomplete="off" placeholder="e.g. Claim_NonFin">
+            <div class="text-xs text-muted-2 mt-1">Creates <span class="mono">&lt;name&gt;_CMT</span> and <span class="mono">&lt;name&gt;_Legacy</span>.</div>
+          </div>
+          <div class="col-md-6 form-group">
+            <label>Common key column(s) <span class="text-danger">*</span></label>
+            <input type="text" class="form-control mono" id="nfKeyCols" autocomplete="off" placeholder="e.g. PMT_ID  (comma-separated for a composite key)">
+            <div class="text-xs text-muted-2 mt-1">Rows are matched on this key in both tables.</div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center flex-wrap mt-2">
+          <button type="button" class="btn btn-primary" id="drGenerateBtn"><i class="bi bi-magic me-1"></i> Generate reconciliation SQL</button>
+          <span class="text-xs text-muted-2" id="drStatus"></span>
+        </div>
+
+        <div id="drResult" class="mt-3" style="display:none;">
+          <div class="section-title d-flex align-items-center justify-content-between">
+            <span><i class="bi bi-code-square"></i> Generated script <span class="text-xs text-muted-2 fw-normal">(two CREATE TABLEs + compare proc — editable)</span></span>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-primary" id="drSaveVersionBtn" title="Save the current SQL as a new version"><i class="bi bi-save me-1"></i> Save version</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drExpandBtn" title="Expand editor (fullscreen)"><i class="bi bi-arrows-fullscreen me-1"></i> Fullscreen</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drCopyBtn"><i class="bi bi-clipboard me-1"></i> Copy</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="drDownloadBtn"><i class="bi bi-download me-1"></i> Download .sql</button>
+            </div>
+          </div>
+          <textarea class="dr-sql" id="drSql" spellcheck="false"></textarea>
+          <div id="drUsed" class="mt-2"></div>
+        </div>
+      </div>
+
+      <!-- Saved Versions: explicitly save the (possibly edited) script; load to edit, save again for the next version, or delete. -->
+      <div class="card-el mb-3" id="drVersionsCard" style="display:none;">
+        <div class="section-title d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-clock-history"></i> Saved Versions</span>
+          <span class="text-xs text-muted-2" id="drVersionsInfo"></span>
+        </div>
+        <div class="text-xs text-muted-2 mt-1 mb-2">Click <b>Save version</b> above to store the current script here. Load a version to edit it, then Save again — that creates the next version.</div>
+        <div class="table-responsive-el">
+          <table class="grid-table" id="drVersionsTable">
+            <thead><tr><th style="width:90px;">Version</th><th>Saved</th><th>Recon</th><th>Size</th><th style="width:170px;">Actions</th></tr></thead>
+            <tbody id="drVersionsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Fullscreen editor — edits sync back to the main editor. -->
+<div class="modal fade" id="drExpandModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-code-square me-1"></i> Generated reconciliation script</h5>
+        <div class="d-flex align-items-center gap-2 ms-auto me-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="drExpandSaveBtn"><i class="bi bi-save me-1"></i> Save version</button>
+          <button type="button" class="btn btn-sm btn-outline-soft" id="drExpandCopyBtn"><i class="bi bi-clipboard me-1"></i> Copy</button>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-2 d-flex">
+        <textarea class="dr-sql" id="drExpandArea" spellcheck="false" style="width:100%;height:100%;min-height:calc(100vh - 120px);resize:none;"></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260927g"></script>
+<script src="../js/navigation.js?v=20260927g"></script>
+<script src="../js/data-reconciliation-nonfin.js?v=20260927g"></script>
+</body>
+</html>

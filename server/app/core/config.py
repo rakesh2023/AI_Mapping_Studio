@@ -10,24 +10,13 @@ CA-bundle lookup are computed relative to __file__ so they keep resolving no
 matter the current working directory.
 """
 import os
-import sys
 from typing import Optional
 
-# server/app/core/config.py -> up 3 -> server/ ; up 4 -> repository root that
+# server/app/core/config.py -> up 2 -> server/ ; up 3 -> repository root that
 # holds index.html and the static site.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if getattr(sys, "frozen", False):
-    # PyInstaller build: read-only resources (frontend + server tree) are
-    # extracted under sys._MEIPASS. The frontend (index.html, pages/, css/, ...)
-    # is bundled at the bundle root, and the server/ tree beneath it. Writable
-    # state (.env, SQLite DBs) is redirected elsewhere via env vars by the
-    # launcher — never written under this temp/read-only bundle.
-    _BUNDLE = getattr(sys, "_MEIPASS", os.path.abspath(os.path.join(_HERE, "..", "..", "..")))
-    ROOT = _BUNDLE
-    SERVER_DIR = os.path.join(_BUNDLE, "server")
-else:
-    SERVER_DIR = os.path.abspath(os.path.join(_HERE, "..", ".."))
-    ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
+SERVER_DIR = os.path.abspath(os.path.join(_HERE, "..", ".."))
+ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
 
 
 def _load_dotenv() -> None:

@@ -11,7 +11,6 @@
 
 const LS_ETL_DB = "aims_etl_db";
 const LS_ETL_INSTRUCTIONS = "aims_etl_instructions";
-const LS_GEN_FILES = "aims_generated_files";   // saved ETL/Create Table outputs (per client, this browser)
 
 let etlGroups = [];              // [{name, entity, table, rows:[...], join}]
 let etlSelected = new Set();     // selected target-table keys
@@ -38,8 +37,248 @@ document.addEventListener("DOMContentLoaded", async () => {
   initInstructions();
   renderTableList();
   wireControls();
-  renderGenFiles();
+  wireEtlVersions();
+  loadEtlVersions();   // populate the Saved Versions table (does not touch the editor)
 });
+
+/* =========================================================================
+   Saved Versions of the generated SQL (SQLite-backed, per client). Versions are
+   saved ONLY when the user clicks "Save version" — never automatically. Loading a
+   version into the editor, editing, then Save again creates the NEXT version.
+   Endpoints: GET/POST /api/ai/etl/versions, GET/DELETE /api/ai/etl/versions/<id>
+   ========================================================================= */
+let etlVersions = [];   // [{id, version, kind, meta, bytes, createdAt}] newest first
+
+function wireEtlVersions(){
+  const save = document.getElementById("etlSaveVersionBtn");
+  if(save) save.addEventListener("click", (e) => { e.preventDefault(); saveEtlVersion(); });
+  // Search / type filter for the Saved Versions table.
+  const search = document.getElementById("etlVerSearch");
+  if(search) search.addEventListener("input", renderEtlVersionsTable);
+  const typeF = document.getElementById("etlVerTypeFilter");
+  if(typeF) typeF.addEventListener("change", renderEtlVersionsTable);
+  const clearF = document.getElementById("etlVerClearFilter");
+  if(clearF) clearF.addEventListener("click", () => {
+    if(search) search.value = ""; if(typeF) typeF.value = "all"; renderEtlVersionsTable();
+  });
+  // Enable Save whenever the editor has content.
+  const out = document.getElementById("etlOutput");
+  if(out) out.addEventListener("input", updateEtlSaveBtn);
+  // Row actions (load / download / delete) act on the version selected in that row's dropdown.
+  const body = document.getElementById("etlVersionsBody");
+  if(body){
+    body.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-ver-act]");
+      if(!btn) return;
+      const row = btn.closest("tr");
+      const sel = row && row.querySelector("select[data-ver-group]");
+      const id = sel ? sel.value : btn.getAttribute("data-ver-id");
+      if(!id) return;
+      const act = btn.getAttribute("data-ver-act");
+      if(act === "load") loadEtlVersionIntoEditor(id);
+      else if(act === "download") downloadEtlVersion(id);
+      else if(act === "delete") deleteEtlVersion(id);
+    });
+    // Selecting a version in a row updates that row's Saved / Size cells.
+    body.addEventListener("change", (e) => {
+      const sel = e.target.closest("select[data-ver-group]");
+      if(!sel) return;
+      const v = etlVersions.find(x => String(x.id) === sel.value);
+      const row = sel.closest("tr");
+      if(v && row){
+        const s = row.querySelector(".ver-saved"); if(s) s.textContent = _fmtWhen(v.createdAt);
+        const z = row.querySelector(".ver-size"); if(z) z.textContent = _fmtBytes(v.bytes);
+      }
+    });
+  }
+}
+
+/* Enable the Save-version button when there is SQL in the editor. */
+function updateEtlSaveBtn(){
+  const out = document.getElementById("etlOutput");
+  const btn = document.getElementById("etlSaveVersionBtn");
+  if(btn) btn.disabled = !(out && (out.value || "").trim());
+}
+
+/* The group key for a saved script = type + table (one version sequence PER table). */
+function _etlGroupKey(kind, table){ return kind + "||" + (table || ""); }
+
+/* Save the current editor SQL — ONE version PER table (each table is its own script with its own
+   version sequence), even when several tables were generated together. Always increments. */
+async function saveEtlVersion(){
+  const out = document.getElementById("etlOutput");
+  const content = out ? (out.value || "").trim() : "";
+  if(!content){ showNotification("Nothing to save — generate or paste some SQL first.", "warning"); return; }
+  const kind = (etlView === "ddl") ? "Create Table" : "ETL Code";
+  const db = (typeof currentEtlDb === "function") ? currentEtlDb() : {};
+  const dbMeta = (db && (db.database || db.server)) ? {server: db.server, database: db.database} : {};
+
+  // Split the editor into per-table pieces. If the piece count matches the generated table list,
+  // save one version per table; otherwise (edited structure / manual paste) save a single version.
+  let pieces;
+  const split = content.split(ETL_JOIN).map(s => s.trim()).filter(Boolean);
+  if(etlLastTables.length >= 1 && split.length === etlLastTables.length){
+    pieces = etlLastTables.map((t, i) => ({table: t, tables: [t], sql: split[i]}));
+  } else {
+    const tbls = etlLastTables.slice();
+    pieces = [{table: tbls.length === 1 ? tbls[0] : "", tables: tbls, sql: content}];
+  }
+
+  const btn = document.getElementById("etlSaveVersionBtn");
+  if(btn){ btn.disabled = true; }
+  const saved = [];
+  try{
+    for(const p of pieces){
+      const groupKey = p.tables.length === 1 ? _etlGroupKey(kind, p.tables[0]) : (kind + "||" + p.tables.slice().sort().join(","));
+      const label = p.tables.length === 1 ? p.tables[0] : (p.tables.length ? p.tables.length + " tables" : "script");
+      const body = { kind: kind, content: p.sql, groupKey: groupKey,
+        title: kind + " — " + label, meta: { tables: p.tables, db: dbMeta } };
+      const res = await fetch("/api/ai/etl/versions", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+      const j = await res.json().catch(() => ({}));
+      if(res.ok && j.ok) saved.push(label + " v" + j.version);
+    }
+    if(saved.length){
+      showNotification("Saved " + saved.length + " script" + (saved.length === 1 ? "" : "s") + ": " + saved.join(", ") + ".", "success", 3200);
+      await loadEtlVersions();
+    } else {
+      showNotification("Save failed.", "danger");
+    }
+  }catch(e){ showNotification("Cannot reach the server — not saved.", "danger"); }
+  finally{ updateEtlSaveBtn(); }
+}
+
+/* Fetch the version list and render the Saved Versions table (newest first). */
+async function loadEtlVersions(){
+  try{
+    const res = await fetch("/api/ai/etl/versions", {headers:{Accept:"application/json"}});
+    const j = await res.json().catch(() => ({}));
+    etlVersions = (j && j.ok) ? (j.versions || []) : [];
+  }catch(e){ etlVersions = []; }
+  renderEtlVersionsTable();
+}
+
+function _fmtBytes(n){
+  n = n || 0;
+  return n < 1024 ? (n + " B") : (n < 1048576 ? ((n/1024).toFixed(1) + " KB") : ((n/1048576).toFixed(1) + " MB"));
+}
+function _fmtWhen(iso){ try{ const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString(); }catch(e){ return ""; } }
+
+/* Group versions of the SAME script (type + tables) into one row with a version dropdown
+   (latest on top). Load / Download / Delete act on the version selected in that row. */
+function renderEtlVersionsTable(){
+  const body = document.getElementById("etlVersionsBody");
+  const info = document.getElementById("etlVersionsInfo");
+  if(!body) return;
+  if(!etlVersions.length){
+    if(info) info.textContent = "";
+    body.innerHTML = '<tr><td colspan="6" class="text-xs text-muted-2 py-3">No saved versions yet. Generate SQL, then click <b>Save version</b>.</td></tr>';
+    return;
+  }
+  // Group by the server's group_key (one sequence per table). Each group's versions are newest-first.
+  const groups = [];
+  const byKey = {};
+  etlVersions.forEach(v => {
+    const tables = (v.meta && v.meta.tables) ? v.meta.tables.slice() : [];
+    const key = v.groupKey || ((v.kind || "") + "||" + tables.slice().sort().join(","));
+    if(!byKey[key]){ byKey[key] = {kind: v.kind, tables: tables, versions: []}; groups.push(byKey[key]); }
+    byKey[key].versions.push(v);
+  });
+
+  // Apply the search (table name) + type filter.
+  const q = ((document.getElementById("etlVerSearch") || {}).value || "").toLowerCase().trim();
+  const typeF = ((document.getElementById("etlVerTypeFilter") || {}).value || "all");
+  const clearBtn = document.getElementById("etlVerClearFilter");
+  if(clearBtn) clearBtn.style.display = (q || typeF !== "all") ? "" : "none";
+  const shown = groups.filter(g => {
+    if(typeF !== "all" && (g.kind || "") !== typeF) return false;
+    if(q && (g.tables.join(" ").toLowerCase().indexOf(q) === -1)) return false;
+    return true;
+  });
+  if(info) info.textContent = etlVersions.length + " version" + (etlVersions.length === 1 ? "" : "s") +
+    " · " + groups.length + " script" + (groups.length === 1 ? "" : "s") +
+    (shown.length !== groups.length ? " · " + shown.length + " shown" : "");
+
+  if(!shown.length){
+    body.innerHTML = '<tr><td colspan="6" class="text-xs text-muted-2 py-3">No scripts match your search / filter.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = shown.map(g => {
+    const latest = g.versions[0];   // newest (list is DESC)
+    const badge = (g.kind === "Create Table")
+      ? '<span class="badge-soft badge-high">Create Table</span>'
+      : '<span class="badge-soft badge-medium">ETL Code</span>';
+    const tablesLabel = g.tables.length ? g.tables.join(", ") : "—";
+    const opts = g.versions.map((v, i) =>
+      '<option value="' + v.id + '"' + (i === 0 ? " selected" : "") + '>v' + v.version + (i === 0 ? " (latest)" : "") + '</option>').join("");
+    return '<tr>' +
+      '<td><select class="form-select form-select-sm" data-ver-group style="width:auto;min-width:110px;">' + opts + '</select></td>' +
+      '<td>' + badge + '</td>' +
+      '<td class="text-xs">' + escapeHtml(tablesLabel.length > 60 ? tablesLabel.slice(0, 60) + "…" : tablesLabel) + '</td>' +
+      '<td class="text-xs text-muted-2 ver-saved">' + escapeHtml(_fmtWhen(latest.createdAt)) + '</td>' +
+      '<td class="text-xs ver-size">' + _fmtBytes(latest.bytes) + '</td>' +
+      '<td style="white-space:nowrap;">' +
+        '<button class="btn btn-sm btn-outline-primary me-1" data-ver-act="load" title="Load the selected version into the editor"><i class="bi bi-box-arrow-in-up-right"></i></button>' +
+        '<button class="btn btn-sm btn-outline-soft me-1" data-ver-act="download" title="Download the selected version (.sql)"><i class="bi bi-download"></i></button>' +
+        '<button class="btn btn-sm btn-outline-danger" data-ver-act="delete" title="Delete the selected version"><i class="bi bi-trash"></i></button>' +
+      '</td></tr>';
+  }).join("");
+}
+
+/* Fetch one version and return it (shared by load/download). */
+async function _fetchEtlVersion(id){
+  const res = await fetch("/api/ai/etl/versions/" + encodeURIComponent(id), {headers:{Accept:"application/json"}});
+  const j = await res.json().catch(() => ({}));
+  if(!res.ok || !j.ok || !j.version) throw new Error((j && j.error) || "Could not load that version.");
+  return j.version;
+}
+
+/* Load a version's SQL into the editor (edit + Save version → next version). */
+async function loadEtlVersionIntoEditor(id){
+  try{
+    const v = await _fetchEtlVersion(id);
+    const out = document.getElementById("etlOutput");
+    if(out) out.value = v.content || "";
+    etlView = (v.kind === "Create Table") ? "ddl" : "etl";
+    if(etlView === "ddl") ddlLastSql = v.content || ""; else etlLastSql = v.content || "";
+    etlLastTables = (v.meta && v.meta.tables) ? v.meta.tables.slice() : [];   // so re-save maps to the same table
+    const has = !!(v.content || "").trim();
+    ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(x => { const b = document.getElementById(x); if(b) b.disabled = !has; });
+    updateEtlSaveBtn();
+    const info = document.getElementById("etlOutInfo");
+    if(info) info.textContent = "Loaded v" + v.version + " · " + (v.kind || "SQL") + " — edit and Save to create a new version";
+    if(out) out.scrollIntoView({behavior:"smooth", block:"center"});
+    showNotification("Loaded version " + v.version + " into the editor.", "primary", 2200);
+  }catch(e){ showNotification(e.message || "Cannot reach the server.", "danger"); }
+}
+
+async function downloadEtlVersion(id){
+  try{
+    const v = await _fetchEtlVersion(id);
+    const blob = new Blob([v.content || ""], {type: "text/sql"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = ((v.kind === "Create Table") ? "CreateTable" : "ETL") + "_v" + v.version + ".sql";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ showNotification(e.message || "Cannot reach the server.", "danger"); }
+}
+
+async function deleteEtlVersion(id){
+  const v = etlVersions.find(x => String(x.id) === String(id));
+  const label = v ? ("version " + v.version) : "this version";
+  const ok = (typeof confirmDialog === "function")
+    ? await confirmDialog("Delete <b>" + escapeHtml(label) + "</b>? This removes its saved SQL permanently.", "Delete version")
+    : window.confirm("Delete " + label + "? This cannot be undone.");
+  if(!ok) return;
+  try{
+    const res = await fetch("/api/ai/etl/versions/" + encodeURIComponent(id), {method:"DELETE"});
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok || !j.ok){ showNotification((j && j.error) || "Delete failed.", "danger"); return; }
+    showNotification("Deleted " + label + ".", "primary", 1800);
+    await loadEtlVersions();
+  }catch(e){ showNotification("Cannot reach the server.", "danger"); }
+}
 
 /* ---- AI Processing Console (right-side column; hidden until you generate) ---- */
 function etlConsoleShow(){
@@ -237,6 +476,30 @@ function wireControls(){
   if(clrOut) clrOut.addEventListener("click", (e) => { e.preventDefault(); clearEtl(); });
   const outEl = document.getElementById("etlOutput");
   if(outEl) outEl.addEventListener("input", onOutputEdited);
+  // Fullscreen editor: open, live-sync edits back to the main editor, and copy.
+  const expandBtn = document.getElementById("etlExpandBtn");
+  if(expandBtn) expandBtn.addEventListener("click", (e) => { e.preventDefault(); openEtlExpand(); });
+  const expandArea = document.getElementById("etlExpandArea");
+  if(expandArea) expandArea.addEventListener("input", () => {
+    const out = document.getElementById("etlOutput");
+    if(out){ out.value = expandArea.value; onOutputEdited(); }
+  });
+  const expandCopy = document.getElementById("etlExpandCopyBtn");
+  if(expandCopy) expandCopy.addEventListener("click", (e) => {
+    e.preventDefault();
+    const ta = document.getElementById("etlExpandArea");
+    if(ta && ta.value) navigator.clipboard.writeText(ta.value)
+      .then(() => showNotification("Copied.", "success", 1200)).catch(() => {});
+  });
+  const expandSave = document.getElementById("etlExpandSaveBtn");
+  if(expandSave) expandSave.addEventListener("click", (e) => {
+    e.preventDefault();
+    // Make sure the main editor has the fullscreen edits, then save a version.
+    const area = document.getElementById("etlExpandArea");
+    const out = document.getElementById("etlOutput");
+    if(area && out){ out.value = area.value; onOutputEdited(); }
+    saveEtlVersion();
+  });
 
   const hide = document.getElementById("etlHidePanelBtn");
   const show = document.getElementById("etlShowPanelBtn");
@@ -270,21 +533,6 @@ function wireControls(){
   if(depModalEl) depModalEl.addEventListener("hidden.bs.modal", () => scrubModalBackdrop());
   const clrHist = document.getElementById("clearDeployHistoryBtn");
   if(clrHist) clrHist.addEventListener("click", (e) => { e.preventDefault(); clearDeployHistory(); });
-
-  const clrGen = document.getElementById("clearGenFilesBtn");
-  if(clrGen) clrGen.addEventListener("click", (e) => { e.preventDefault(); clearAllGenFiles(); });
-
-  // Generated Files table — download / load / remove (event-delegated).
-  const gfBody = document.getElementById("genFilesBody");
-  if(gfBody) gfBody.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-id]");
-    if(!btn) return;
-    e.preventDefault();
-    const id = btn.getAttribute("data-id");
-    if(btn.classList.contains("gf-dl")) downloadGenFile(id);
-    else if(btn.classList.contains("gf-view")) loadGenFileIntoEditor(id);
-    else if(btn.classList.contains("gf-rm")) removeGenFile(id);
-  });
 
   renderDeployHistory();
   updateDeployBtn();
@@ -325,6 +573,8 @@ function updateGenerateBtn(){
 let etlLastSql = "";     // ETL stored-procedure output buffer
 let ddlLastSql = "";     // CREATE TABLE output buffer
 let etlView = "etl";     // which buffer the panel shows: "etl" | "ddl"
+let etlLastTables = [];  // ordered table names for the current output (used to save one version per table)
+const ETL_JOIN = "\n\nGO\n\n\n";   // delimiter joining per-table parts in the editor (used to split on save)
 
 function currentSql(){ return etlView === "ddl" ? ddlLastSql : etlLastSql; }
 function outputPlaceholder(){ return '-- Select one or more target tables on the left, then click "Generate ETL Code" or "Create Table".'; }
@@ -344,11 +594,25 @@ function onOutputEdited(){
   if(etlView === "ddl") ddlLastSql = out.value; else etlLastSql = out.value;
   updateOutputButtons();
 }
+/* Open the fullscreen editor with the current SQL (edits sync back live via the input handler). */
+function openEtlExpand(){
+  const out = document.getElementById("etlOutput");
+  const area = document.getElementById("etlExpandArea");
+  if(area && out) area.value = out.value || "";
+  const modalEl = document.getElementById("etlExpandModal");
+  if(modalEl && typeof bootstrap !== "undefined"){
+    const m = new bootstrap.Modal(modalEl);
+    m.show();
+    setTimeout(() => { if(area) area.focus(); }, 250);
+  }
+}
+
 function setEtlView(v){ etlView = (v === "ddl") ? "ddl" : "etl"; renderOutput(); }
 function updateViewToggle(){ /* view toggle removed — the panel shows the last-generated output */ }
 function updateOutputButtons(){
   const has = !!currentSql();
   ["copyEtlBtn","downloadEtlBtn","clearEtlBtn"].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = !has; });
+  const sv = document.getElementById("etlSaveVersionBtn"); if(sv) sv.disabled = !has;   // Save version enabled when there's SQL
   updateDeployBtn();
 }
 
@@ -405,10 +669,9 @@ async function generateEtl(){
         etlLogFail(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " AI failed — used template. " + (errors.length ? errors[errors.length-1] : ""));
       }
     }
-    etlLastSql = parts.join("\n\nGO\n\n\n");
+    etlLastSql = parts.join(ETL_JOIN);
+    etlLastTables = selected.map(g => g.name);   // remember table order to save one version per table
     etlView = "etl"; renderOutput();
-    // Editor shows the combined script; Generated Files saves ONE file per table.
-    selected.forEach((g, i) => { if(parts[i]) saveGeneratedFile("ETL Code", [g.name], parts[i], db); });
     if(info) info.textContent = selected.length + " procedure(s)"
       + (fbCount ? (" · " + fbCount + " fallback") : "") + (incompleteCount ? (" · " + incompleteCount + " incomplete") : "");
     if(fbCount){
@@ -721,10 +984,9 @@ async function generateDdl(){
         etlLogFail(line, "[" + (i+1) + "/" + selected.length + "] " + g.name + " AI failed — used template. " + (errors.length ? errors[errors.length-1] : ""));
       }
     }
-    ddlLastSql = parts.join("\n\nGO\n\n\n");
+    ddlLastSql = parts.join(ETL_JOIN);
+    etlLastTables = selected.map(g => g.name);   // remember table order to save one version per table
     etlView = "ddl"; renderOutput();
-    // Editor shows the combined script; Generated Files saves ONE file per table.
-    selected.forEach((g, i) => { if(parts[i]) saveGeneratedFile("Create Table", [g.name], parts[i], db); });
     if(info) info.textContent = selected.length + " CREATE TABLE" + (fbCount ? (" · " + fbCount + " fallback") : "") + (warns.length ? " · " + warns.length + " warning(s)" : "");
     if(fbCount){
       etlLogInfo("Finished with " + fbCount + " fallback(s). See errors above.");
@@ -1158,126 +1420,8 @@ function lineDiffHtml(before, after){
     '</div>').join("") + '</div>';
 }
 
-/* =========================================================================
-   Generated Files — persist every ETL / Create Table generation in localStorage,
-   scoped to the ACTIVE CLIENT (client data is never mixed). Download, load back
-   into the editor, or remove any time.
-   ========================================================================= */
-function activeClientId(){ try{ return (typeof AUTH !== "undefined" && AUTH && AUTH.activeClientId) || ""; }catch(e){ return ""; } }
-function getGenFilesAll(){ return lsGet(LS_GEN_FILES, []) || []; }
-function getGenFiles(){ const cid = String(activeClientId()); return getGenFilesAll().filter(f => String(f.clientId || "") === cid); }
-
-// File name in the spirit of the mockup: <ETL|Create>_<table(s)>.
-function genFileName(type, tables){
-  const prefix = (type === "ETL Code") ? "ETL" : "Create";
-  let tbl;
-  if(!tables || !tables.length) tbl = "tables";
-  else if(tables.length === 1) tbl = tables[0];
-  else if(tables.length <= 3) tbl = tables.join("_");
-  else tbl = tables[0] + "_and_" + (tables.length - 1) + "_more";
-  return prefix + "_" + tbl;
-}
-function fmtSize(n){
-  n = +n || 0;
-  if(n < 1024) return n + " B";
-  if(n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-  return (n / 1024 / 1024).toFixed(2) + " MB";
-}
-
-// Auto-save one generation run. Upserts by (client, name, type) so regenerating the
-// same selection replaces its saved file rather than piling up duplicates.
-function saveGeneratedFile(type, tables, sql, db){
-  if(!sql || !sql.trim()) return;
-  const cid = activeClientId();
-  const name = genFileName(type, tables);
-  const all = getGenFilesAll();
-  const entry = {
-    id: "gf_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-    clientId: cid, name: name, type: type, db: db || "",
-    tables: (tables || []).slice(), sql: sql, size: sql.length,
-    createdAt: new Date().toISOString()
-  };
-  const i = all.findIndex(f => (f.clientId || "") === cid && f.name === name && f.type === type);
-  if(i !== -1){ entry.id = all[i].id; all[i] = entry; }
-  else all.unshift(entry);
-  try{ lsSet(LS_GEN_FILES, all); }
-  catch(e){ showNotification("Could not save the generated file — browser storage may be full.", "warning", 6000); }
-  renderGenFiles();
-}
-
-function renderGenFiles(){
-  const body = document.getElementById("genFilesBody");
-  const info = document.getElementById("genFilesInfo");
-  if(!body) return;
-  const list = getGenFiles().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  if(info) info.textContent = list.length ? (list.length + " file(s)") : "";
-  const clrBtn = document.getElementById("clearGenFilesBtn");
-  if(clrBtn) clrBtn.disabled = !list.length;
-  if(!list.length){
-    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted-2 text-xs" style="padding:1.2rem;">' +
-      'No files yet — generate ETL Code or a Create Table script and it will be saved here.</td></tr>';
-    return;
-  }
-  body.innerHTML = list.map(f =>
-    '<tr>' +
-      '<td class="mono">' + escapeHtml(f.name) + '.sql</td>' +
-      '<td>' + (f.type === "ETL Code"
-        ? '<span class="badge-soft badge-medium">ETL Code</span>'
-        : '<span class="badge-soft badge-high">Create Table</span>') + '</td>' +
-      '<td class="text-xs">' + escapeHtml(new Date(f.createdAt).toLocaleString()) + '</td>' +
-      '<td class="text-xs">' + fmtSize(f.size) + '</td>' +
-      '<td><div class="d-flex gap-2">' +
-        '<button type="button" class="btn btn-sm btn-outline-soft gf-dl" data-id="' + f.id + '" title="Download .sql"><i class="bi bi-download"></i></button>' +
-        '<button type="button" class="btn btn-sm btn-outline-soft gf-view" data-id="' + f.id + '" title="Load into the editor above"><i class="bi bi-box-arrow-in-up"></i></button>' +
-        '<button type="button" class="btn btn-sm btn-outline-soft gf-rm" data-id="' + f.id + '" title="Remove this saved file"><i class="bi bi-trash"></i></button>' +
-      '</div></td>' +
-    '</tr>').join("");
-}
-
-function downloadGenFile(id){
-  const f = getGenFiles().find(x => x.id === id);
-  if(!f){ showNotification("File not found.", "warning"); return; }
-  const blob = new Blob([f.sql], {type: "text/sql"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = f.name + ".sql";
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-}
-
-// Load a saved file back into the (editable) output panel for review/edit/deploy.
-function loadGenFileIntoEditor(id){
-  const f = getGenFiles().find(x => x.id === id);
-  if(!f) return;
-  if(f.type === "Create Table"){ ddlLastSql = f.sql; etlView = "ddl"; }
-  else { etlLastSql = f.sql; etlView = "etl"; }
-  renderOutput();
-  const outEl = document.getElementById("etlOutput");
-  if(outEl) outEl.scrollIntoView({behavior: "smooth", block: "center"});
-  showNotification("Loaded " + f.name + ".sql into the editor.", "primary", 1500);
-}
-
-async function removeGenFile(id){
-  const f = getGenFiles().find(x => x.id === id);
-  if(!f) return;
-  const ok = await confirmDialog("Remove the generated file '" + f.name + ".sql'? This deletes only the saved copy on this browser.", "Remove File");
-  if(!ok) return;
-  lsSet(LS_GEN_FILES, getGenFilesAll().filter(x => x.id !== id));
-  renderGenFiles();
-  showNotification("Removed " + f.name + ".sql.", "primary", 1200);
-}
-
-// Remove ALL saved generated files for the active client (leaves other clients' files).
-async function clearAllGenFiles(){
-  const cid = String(activeClientId());
-  const mine = getGenFiles();
-  if(!mine.length){ showNotification("No generated files to clear.", "primary", 1200); return; }
-  const ok = await confirmDialog("Remove all " + mine.length + " generated file(s) for this client? This deletes the saved copies on this browser.", "Clear Generated Files");
-  if(!ok) return;
-  lsSet(LS_GEN_FILES, getGenFilesAll().filter(f => String(f.clientId || "") !== cid));
-  renderGenFiles();
-  showNotification("Cleared all generated files.", "primary", 1200);
-}
+/* (Removed) "Generated Files" localStorage list — superseded by the SQLite-backed
+   Saved Versions feature (manual Save version, one versioned script per table). */
 
 /* ---- deployment history (localStorage; mirrors Mapping History) ---- */
 function addDeployHistory(job, meta){

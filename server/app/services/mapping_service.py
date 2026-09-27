@@ -93,6 +93,14 @@ def default_mapping_system_prompt(strategy: str = "Balanced") -> str:
         "('FROM CLM_TXN'). If no source tables were used, return an empty string."
     )
     system += (
+        "\n\nSOURCE-ONLY (hard rule): every transformationRule, joinCondition and any expression "
+        "you write must reference ONLY the SOURCE tables/columns from the provided source list. "
+        "NEVER reference, query, or sub-select the TARGET table (or any target column) to look up "
+        "or resolve a value — for example, do NOT write '(SELECT PMT_ID FROM Policy WHERE "
+        "publicid = ...)'. Resolve links using the SOURCE foreign-key column directly and describe "
+        "the intended target parent in businessRule, never as a query against the target."
+    )
+    system += (
         "\n\nKEYS & LINEAGE: a source primary key usually feeds the target entity's "
         "surrogate or business key - state which in businessRule (e.g. 'target uses "
         "surrogate key ClaimKey, sourced from source ClaimId'). For a source foreign key, "
@@ -107,8 +115,9 @@ def default_mapping_system_prompt(strategy: str = "Balanced") -> str:
         "discriminator ('X_Type') column use mappingType 'Constant' when the pipeline only "
         "ever loads one parent kind (transformationRule like CONSTANT('CLAIMANT')), "
         "otherwise 'Derived' with a CASE over the driving source column. For the value "
-        "('X') column use mappingType 'Reference' and state in transformationRule which "
-        "target parent key it holds and the WHERE that resolves it. If an 'X_Type' has no "
+        "('X') column use mappingType 'Reference', set transformationRule to its SOURCE "
+        "foreign-key column (source-only — NEVER a subquery against the target), and name the "
+        "intended target parent key in businessRule. If an 'X_Type' has no "
         "matching 'X' (or a referenced parent table is absent), use 'Not Mapped' and "
         "explain the gap; the value column is generic, so flag any datatype/width risk "
         "(e.g. a numeric parent key into a VARCHAR/UUID column) in businessRule."
@@ -116,17 +125,14 @@ def default_mapping_system_prompt(strategy: str = "Balanced") -> str:
     system += (
         "\n\nTARGET-ONLY GROUPING / PAYLOAD ID: some targets include a generated grouping "
         "key with NO source column (commonly named PMT_PayloadId, but it may be LoadId, "
-        "PayloadKey, BatchGroupId, etc.) - a column with no plausible source origin whose "
-        "role is to tag every row produced from one logical unit-of-work (e.g. one Claim "
-        "per extract/batch) with a shared value. When you see such a column, do NOT mark "
-        "it 'Not Mapped' merely because it has no source: use mappingType 'Derived' with "
-        "empty sourceTable/sourceColumn, and in transformationRule propose a deterministic, "
-        "idempotent method keyed by the grain so re-runs never duplicate - e.g. "
-        "HASHBYTES('SHA2_256', ClaimId + '|' + BatchId). Name the grain column(s) in "
-        "businessRule; if the grain is ambiguous or multi-parent, pick the most likely one, "
-        "lower confidence, and note the alternative in explanation. If the user's Business "
-        "Context specifies the payload grain, use that grain verbatim. If the target has no "
-        "such column, ignore this."
+        "PayloadKey, BatchGroupId, etc.). By DEFAULT do NOT synthesize a value for such a "
+        "column: do NOT invent HASHBYTES, NEWID, CHECKSUM, ROW_NUMBER, a BatchId, or any "
+        "hashing / batch expression. Mark it 'Not Mapped' (empty sourceTable/sourceColumn, "
+        "empty transformationRule) and note in businessRule that it is a target-generated "
+        "grouping key awaiting a rule. ONLY when the user's Business Context or instructions "
+        "EXPLICITLY ask for a generated grouping / payload key do you produce one, using the "
+        "exact grain and method they specify (verbatim). If the target has no such column, "
+        "ignore this."
     )
     # Ask for JSON in the prompt too, so we don't depend on structured-output
     # support (internal/Bedrock gateways may not accept output_config.format).
@@ -166,6 +172,11 @@ def generate_mappings(body: Dict[str, Any]) -> Result:
     for i, t in enumerate(src_tables, 1):
         col_lines = []
         for c in t.get("columns", []):
+            key_bits = []
+            if c.get("pk"):
+                key_bits.append("PK")
+            if c.get("fk"):
+                key_bits.append("FK" + (f" -> {c['fkReference']}" if c.get("fkReference") else ""))
             extra_bits = []
             if c.get("businessTerm"):
                 extra_bits.append("business term: " + str(c["businessTerm"]))
@@ -175,6 +186,7 @@ def generate_mappings(body: Dict[str, Any]) -> Result:
                 extra_bits.append("e.g. " + str(c["sample"]))
             col_lines.append(f"    {c['name']} ({c.get('dataType','')}"
                              + (f"({c['length']})" if c.get('length') else "") + ")"
+                             + (" [" + ", ".join(key_bits) + "]" if key_bits else "")
                              + (" — " + "; ".join(extra_bits) if extra_bits else ""))
         blocks.append(f"[{i}/{len(src_tables)}] TABLE {t['name']} ({len(t.get('columns', []))} columns):\n"
                       + "\n".join(col_lines))
@@ -350,6 +362,10 @@ def regenerate_mapping(body: Dict[str, Any]) -> Result:
         "confidence, noting the gap in explanation. If the chosen table is already covered "
         "(or the mapping is Constant/Default/Not Mapped), return the current join unchanged. "
         "Write a runnable snippet, e.g. 'FROM CLM_TXN c JOIN PARTY_MST p ON c.PARTY_ID = p.PARTY_ID'.\n\n"
+        "SOURCE-ONLY & NO SYNTHETIC KEYS: transformationRule/joinCondition must reference only the "
+        "SOURCE columns listed — never sub-select or read the TARGET table to resolve a value. Do "
+        "NOT invent HASHBYTES, NEWID, CHECKSUM, ROW_NUMBER or a @BatchId for id/payload/key columns "
+        "unless the user's instruction explicitly asks; otherwise map from source or leave empty.\n\n"
         "Return the full updated mapping. Respond with ONLY a JSON object with keys "
         "sourceTable, sourceColumn, mappingType, transformationRule, businessRule, "
         "lookupTable, defaultValue, nullHandling, confidence (0-100 integer), explanation, "

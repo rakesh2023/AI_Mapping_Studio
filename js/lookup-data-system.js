@@ -18,6 +18,7 @@ let _ldsActiveId = null;
 document.addEventListener("DOMContentLoaded", async () => {
   await initShell("lookup-data-system.html");
   loadLds();
+  wireCollapsiblePanel({rowId:"ldsLayout", collapseBtnId:"ldsCollapseBtn", showBtnId:"ldsShowTreeBtn", storeKey:"aims_lds_tree_collapsed"});
 
   const btn = document.getElementById("ldsUploadBtn");
   const file = document.getElementById("ldsFile");

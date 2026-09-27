@@ -351,3 +351,9 @@ body.theme-dark .prof-card .kpi-icon, body.theme-dark .kpi-card i{color:var(--te
 .ac-item{padding:5px 9px;font-size:.8rem;border-radius:6px;cursor:pointer;color:var(--text-main);white-space:nowrap;}
 .ac-item.active,.ac-item:hover{background:var(--primary-soft);color:var(--primary-dark);}
 .ac-mark{background:transparent;color:var(--primary);font-weight:700;padding:0;}
+
+/* Collapsible left panel in a two-column (row) layout — shared by Metadata Explorer,
+   Product Schema, Product Data Dictionary. Toggle `panel-collapsed` on the .row and
+   mark the columns with data-panel="left"/"right". */
+.row.panel-collapsed > [data-panel="left"]{display:none;}
+.row.panel-collapsed > [data-panel="right"]{flex:0 0 100%;max-width:100%;}

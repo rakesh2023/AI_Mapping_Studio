@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // The migration tool is decided by the client's Product (Policy -> PMT, Billing -> BMT, else CMT) — not asked.
   _sfeKind = sfeKindFromProduct();
   loadSfe();
+  wireCollapsiblePanel({rowId:"sfeLayout", collapseBtnId:"sfeCollapseBtn", showBtnId:"sfeShowTreeBtn", storeKey:"aims_sfe_tree_collapsed"});
 
   const btn = document.getElementById("sfeUploadBtn");
   const file = document.getElementById("sfeFile");

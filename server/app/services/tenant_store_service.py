@@ -33,6 +33,9 @@ ALLOWED_DOC_KEYS = frozenset({
     # AI Mapping Generator "Additional Instructions"; Target System user-edit highlight map;
     # ETL Code deploy target database — all per client (were device-local, causing cross-client bleed).
     "addl_instructions", "target_user_fields", "etl_db",
+    # Metadata Explorer: user edits to SOURCE table/column metadata (description, business term,
+    # PK, FK) — overlaid on the loaded source schema; also feeds AI mapping generation.
+    "source_meta_overrides",
 })
 
 _MAX_DOC_CHARS = 6_000_000   # ~6 MB per document (guards against runaway payloads)

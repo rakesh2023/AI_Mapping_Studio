@@ -1,6 +1,6 @@
 # AI Data Conversion Studio — Session Summary
 
-_Last updated: 2026-09-17_
+_Last updated: 2026-09-26_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,251 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **Data Reconciliation — new "Non-Financial Recon" tab (report-table + cursor proc, modeled on the
+  client's real SP).** A third item under *Data Reconciliation* (`pages/data-reconciliation-nonfin.html` +
+  `js/data-reconciliation-nonfin.js`) that reuses the IN-vs-OUT table/column picker (migration schema
+  CMT/PMT/BMT, `reconcile-tables` / `reconcile-compare-columns`) and asks for a **recon base name** +
+  **common key** (single or composite, comma-separated). It generates a **deterministic (no-AI)** SQL script:
+  `IF OBJECT_ID … CREATE TABLE [dbo].[<Name>_CMT]` and `_Legacy` (real column types from the schema; key
+  defaulted NVARCHAR(255)), a **report table** `[dbo].[<Name>_Recon_Report]` (`Recon_RunDate`, key col(s),
+  `AttributeName`, `CMTValue`, `LegacyValue`, `Status`), and `CREATE OR ALTER PROCEDURE
+  [dbo].[usp_Reconcile_<Name>]` that TRUNCATEs the report, **cursors over `INFORMATION_SCHEMA.COLUMNS`** of
+  the CMT table (minus the key), and per column builds dynamic SQL diffing the two tables on the key via
+  **FULL OUTER JOIN** (NULL-safe COALESCE), writing only DIFFERING rows with a `Status` of
+  `Match` / `Missing in CMT` / `Missing in Legacy` / `Mismatch`, then `SELECT … WHERE Status <> 'Match'`.
+  Improvements over the sample SP: FULL OUTER JOIN (the sample's LEFT JOIN can't see target-only rows),
+  no hard-coded `USE`/DB, `CREATE OR ALTER`, auto report-table DDL + truncate, inserts only differences.
+  Backend: `cc_sql_service.generate_nonfin_recon_sql` + `_tsql_type`/`_safe_ident`, route
+  `POST /api/ai/reconcile-nonfin-sql`, `migration_schema_service.column_defs`. Both recon pages' column
+  pickers also gained a **column-name search** (filters in place, preserves selection; All/None act on the
+  visible/filtered columns). **Versioning** added (reuses `artifact_version_service`, feature
+  `reconcile_nonfin`): a **Save version** button (main + fullscreen) and a **Saved Versions** card with
+  Load / Download / Delete, via routes `GET/POST /api/ai/reconcile-nonfin/versions` and
+  `GET/DELETE /api/ai/reconcile-nonfin/versions/<id>`. Server restart required.
+
+- **IN vs OUT Comparison — match on PK with OUT-prefix stripping; ignore FK key churn.** The OUT database
+  regenerates the surrogate key as `<random-number>_<original PMT_ID>` (same id, prefixed). So the proc now
+  matches rows on the PK after **stripping a leading `<digits>_` prefix from the OUT key**
+  (`CASE WHEN o.[K] LIKE '[0-9]%[_]%' AND SUBSTRING(...) NOT LIKE '%[^0-9]%' THEN STUFF(o.[K],1,CHARINDEX('_',o.[K]),'') ELSE o.[K] END`),
+  ANDed across composite keys. The value comparison **excludes the PK column(s) and all FK columns**
+  (`migration_schema_service.fk_map`), since FKs also carry the rewritten/prefixed keys and would otherwise
+  flood the diff with key churn instead of real data changes. `@tables` now carries
+  `(TableName, PkCols, IgnoreCols)`; conventions doc + fallback updated. Backend-only change.
+
+- **IN vs OUT Comparison — simplified to one output + metadata-driven proc (scales to all tables).**
+  Dropped the three comparison types; the page now produces a single result set shaped
+  `[Table Name] · [Column name] · InValue · OutValue` — one row per column whose value changed between the
+  IN and OUT databases (PK-matched rows, NULL-safe diff). **All tables are selected by default** (the table
+  list loads and selects-all on open). Fixed the "some tables get dropped" bug: `schema_context` capped
+  grounding at 20 tables, so only the first 20 reached the AI. The generated proc is now **metadata-driven**
+  — it injects every selected table + its PK into a `@tables` variable, loops with a cursor, discovers each
+  table's non-key columns from `INFORMATION_SCHEMA.COLUMNS` (columns common to both DBs) at run time, and
+  builds the diff via dynamic SQL into a `#diffs` temp table — so it stays compact (~350 lines) and covers
+  **all** selected tables regardless of count. New `migration_schema_service.key_map()` returns each table's
+  PK (explicit `pk` flag, else the `PMT_ID`/`_ID1`/`_ID2` convention via `_MIG_PK_RE`), handling composite
+  keys. `generate_compare_sql` no longer uses the capped `schema_context`; `max_tokens` raised to 16000 for
+  generation + re-validation. Structural check made CASE-aware (a `CASE…END` no longer trips the BEGIN/END
+  balance). Verified end-to-end: all 244 test-client tables covered (244/244, none missing).
+
+- **IN vs OUT Comparison — quoting, re-validation, versioning, fullscreen.** Follow-ups on the page below:
+  (1) **Identifier quoting** — conventions doc + fallback now require SQL Server bracket format via
+  `QUOTENAME(...)` on EVERY identifier (db/schema/table/**and every column**) because CMT/PMT names can be
+  reserved keywords or contain spaces. (2) **Re-validation** — after generation a focused second AI pass
+  (`_revalidate_compare_sql`) reviews the proc for T-SQL syntax errors / missing QUOTENAME and returns a
+  corrected, cleanly-formatted version; a deterministic `_structural_sql_issues` check (balanced
+  parens/BEGIN-END, single CREATE PROC) surfaces residual warnings. The garbling `sqlparse` reindent is
+  skipped for the proc. Response adds `revalidated`/`issues`; the console shows the outcome. (3) **Editable
+  default prompt** — the prompt textarea is pre-filled with an editable `DR_DEFAULT_PROMPT`, persisted per
+  source in localStorage, with a **Reset to default** button. (4) **Versioning** (reuses
+  `artifact_version_service`, feature `reconcile_compare`): **Save version** (main + fullscreen), a **Saved
+  Versions** table with Load / Download / Delete, via new routes `GET/POST /api/ai/reconcile-compare/versions`
+  and `GET/DELETE /api/ai/reconcile-compare/versions/<id>`. (5) **Fullscreen editor** modal mirroring the ETL
+  page, edits sync back live. No DB migration (artifact_versions already exists).
+
+- **Data Reconciliation — new "IN vs OUT Comparison" page.** A second item under *Data Reconciliation*
+  (`pages/data-reconciliation-compare.html` + `js/data-reconciliation-compare.js`) that turns the client's
+  uploaded migration schema (CMT/PMT/BMT, from **Product Schema**) into an AI-generated T‑SQL **stored
+  procedure** comparing a migration tool's INPUT vs POST‑CONVERSION OUTPUT databases. Both databases are
+  assumed to share the same schema on the same instance, so the proc takes the **IN/OUT database names as
+  parameters** (`@InDbName`/`@OutDbName`/`@SchemaName`) and diffs them with **dynamic SQL** (`sp_executesql`
+  + `QUOTENAME`). User ticks any of three comparison types — row‑count parity, key‑level missing/extra
+  (`EXCEPT`/`NOT EXISTS` on the `[PK]`), column value mismatches (NULL‑safe) — plus an optional free‑form
+  prompt, and can scope to selected tables (with Select all). Backend is purely additive:
+  `cc_sql_service.generate_compare_sql` (reuses `_provider`/`_select_tables`/`_format_sql`/`call_ai`), a new
+  route `POST /api/ai/reconcile-compare-sql`, and a new conventions doc
+  `server/app/prompts/reconcile_compare_sql.md` (overrides the base "single read‑only SELECT" rule to permit
+  the `CREATE OR ALTER PROCEDURE`). Reuses the existing `reconcile-context`/`reconcile-tables` GET routes
+  (`source=cmt|pmt|bmt`). No new server-side stores; conversation memory stays in `sessionStorage`. Frontend
+  reuses the SQL Assistant's banner/console/copy/download plumbing. Existing SQL Assistant page unchanged.
+
+- **Source Data Filter — scales to any table count (chunk-and-merge join inference).** Removed the
+  60-table cap (`MAX_TABLES` is now a high safety ceiling; new `JOIN_CHUNK = 40`). Join inference no longer
+  a single call: the OTHER tables are split into chunks of 40, each AI call sees the MAIN table + its chunk,
+  and the per-chunk join graphs are merged (dedup by table). The condition→predicate is interpreted once
+  (first chunk). Per-chunk retry-once-then-skip (a failed batch doesn't abort the run); if every batch
+  fails a clear error is returned. Response adds `batches`/`tableCount`. Also added `sqlparse` formatting of
+  every generated SELECT / INSERT…SELECT (multi-line, keywords upper-cased, terminating `;`). Verified: real
+  18-table source → 1 batch (unchanged); synthetic 51-table source → 2 batches → 51 queries (nothing
+  dropped). Trade-off: ~1 AI call per 40 tables (slower + more cost for huge schemas); rare multi-hop joins
+  spanning chunks may be missed.
+
+- **Source Data Filter — manual "Save version" (was auto-save).** Removed the auto-save-on-generate; the
+  generate route now just returns the queries. Added `POST /api/ai/source-filter/versions` (route passes the
+  flat client payload to `source_filter_store_service.save_version` as both body+result). A **Save version**
+  button in the results header saves ALL current queries — capturing edits from each card's textarea (and
+  the fullscreen editor) — as a new version with the set's metadata; the version dropdown refreshes and
+  selects it. Loading a version stores its metadata so edit→Save records the same context. Also added a
+  **per-query fullscreen expand** button on each Source Data Filter query card (mirrors ETL's expand), with
+  live sync back to the card.
+
+- **ETL Code versioning — one saved script (and version sequence) PER table.** Even when several tables
+  are generated together, **Save version** now stores **one version per table**: the editor is split by the
+  per-table delimiter (`\n\nGO\n\n\n`, `ETL_JOIN`) aligned to the generated table list, and each piece is
+  saved under its own `group_key` (`<kind>||<table>`). Added a `group_key` column to `artifact_versions`
+  (+ `_ensure_artifact_columns` migration in `app_db.py`); `save_version` now increments the version **per
+  (tenant, feature, group_key)**, so each table has an independent v1/v2/v3 sequence. The Saved Versions
+  table groups by `group_key` (one row per table) with the version dropdown (latest on top) driving
+  Load/Download/Delete. (Edited/pasted SQL that no longer matches the delimiter count falls back to a single
+  combined version.)
+
+- **ETL Code versioning reworked to manual save + Saved Versions table.** Per feedback: versions are NOT
+  auto-saved on generate anymore. A **Save version** button (Generated SQL header) saves the current editor
+  SQL as the next version (SQLite); a **Saved Versions** table lists all versions (Version / Type / Tables
+  / Saved / Size / actions) with **Load** (into editor), **Download**, **Delete**. Loading a version, editing,
+  and clicking Save again creates the NEXT version and toasts "Saved as version N". `artifact_version_service.
+  list_versions` now returns `bytes` (size). The old auto-save-on-generate + version dropdown were removed.
+  (localStorage "Generated Files" per-table list is still separate/untouched.)
+
+- **ETL Code — generated SQL saved & versioned in SQLite (dropdown + delete).** Added a **generic**
+  versioned-artifact store: table `artifact_versions` (feature-scoped, `server/app/db/schema.sql`) +
+  `artifact_version_service.py` (save/list/get/delete; version auto-increments per user+client+feature;
+  tenant-scoped, `write_lock`). ETL routes on the AI blueprint (`feature="etl_code"`): `GET/POST
+  /api/ai/etl/versions`, `GET/DELETE /api/ai/etl/versions/<id>`. Frontend (`etl-code.html` +
+  `js/etl-code.js`): each **Generate ETL Code** / **Create Table** now also saves the combined script as
+  a new version (best-effort; the existing localStorage "Generated Files" per-table list is untouched); a
+  **Version dropdown** (v1/v2/v3, latest first) with a **trash icon** sits in the Generated SQL header —
+  on load the latest version's SQL is shown; picking a version loads it into the editor; the trash icon
+  deletes the selected version. Schema/backend change ⇒ server restart (see [[dev-server-no-autoreload]]).
+
+- **Source Data Filter — generated queries saved & versioned in SQLite.** New table `source_filter_runs`
+  (`server/app/db/schema.sql`) + service `source_filter_store_service.py` (mirrors lookup_service: tenant-
+  scoped by `user_id`/`client_id`, `write_lock`). Every successful `POST /api/ai/source-filter-sql` is
+  **auto-saved as the next version** (version auto-increments per tenant; best-effort — never fails the
+  generate) and the response carries `version`/`versionId`. New read routes `GET /api/ai/source-filter/
+  versions` (metadata, newest first) and `GET /api/ai/source-filter/versions/<id>` (full queries). Frontend
+  (`source-data-filter.html` + `js/source-data-filter.js`): a **Version dropdown** in the results header —
+  on page load the **latest** version's queries are shown; picking an older version redisplays all its
+  queries; a new generate refreshes the dropdown and selects the new version. Payload (queries + grounded +
+  unrelated + keyPredicate) stored as JSON per row. NOTE: schema/backend change ⇒ server restart required
+  (see [[dev-server-no-autoreload]]).
+
+- **Fix — Lookup Mapping grid flooded with imported Guidewire typelists.** For a client whose only
+  lookup sets are the imported dictionary typelists (`cctl_/pctl_/bctl_`, `source_document=dictionary.zip`,
+  no target), the grid listed all of them (e.g. 492 rows under "(no target table)") because
+  `filterToMappedTables` falls back to "show everything" when there are no generated mappings. Those
+  typelists are REFERENCE code lists (they feed the **Expected GW Values** via `/api/lookups/snapshot`),
+  not mappable rows. Added `_mappableSets()` / `_isImportedTypelist()` in `js/lookup-data.js` (prefix rule
+  mirrors the backend's `lookup_service.delete_all_sets`) and applied it to `_allLookupSets` on load, so
+  typelists never appear as grid rows while the Expected GW Values column (built from the snapshot index)
+  is unaffected. Verified: `/api/lookups` returns 492 typelists → 0 mappable in the grid; `/api/lookups/
+  snapshot` still returns all 492 with codes; clear-all keeps the typelists.
+
+- **Fix — Lookup Mapping wrongly forced a live-DB lookup for file/PDF sources.** On the Lookup Mapping
+  page (`js/lookup-data.js`), the auto-populate step picked *any* live SQL Server connection
+  (`lkPickSource` excluded File System sources) and tried to read Legacy values from it — so when the
+  mapping was built on a **File System (DDL/PDF/dictionary) source** but the client also had a live SQL
+  connection (e.g. `Legacy_Claim_SQL`/`CommonStage`), it queried the wrong live DB. Replaced with
+  `lkResolveSource()`, which infers the mapping's true source and whether it is **live**: it matches the
+  **generated mappings' `sourceTable`** (the reliable origin signal — the lookup sets' own `source_table`
+  is usually blank) against each **File System connection's extracted tables**; a match ⇒ non-live. For a
+  **non-live source** `autoPopulateFromDb` no longer hits the database — it leaves the **Legacy (source)
+  values blank**, keeps the **Expected GW Values** (from the dictionary), and shows a clear **non-live
+  (file) connection indicator** banner. Live SQL sources keep the existing auto-populate path.
+  **Explicit Legacy-source picker** (`#lkSourceSelect` on the page + `populateSourceSelect`/
+  `updateSourceKind` in JS): auto-detection is only a default — since the same table name can exist in
+  both a file and a live source (so auto-resolution always picks the file source), the user can now
+  **choose the source** (live vs file). The choice is persisted per client (`aims_lk_source_<clientId>`),
+  wins in `lkResolveSource` (step 0), shows a live / non-live badge, and re-runs the populate flow on
+  change — so both scenarios are deliberately testable.
+
+- **New feature — Source Data Filter (legacy → prestage subset extraction).** New sidebar section
+  *Source Data › Source Data Filter* (`pages/source-data-filter.html` + `js/source-data-filter.js`).
+  Prepares the **filtered extraction SQL** you run against a legacy system (DB2 / Oracle / SQL Server /
+  mainframe) to load only a subset into a local **prestage** DB (which then becomes the mapping source).
+  The user picks a **source** (its tables/columns come from the DDL/PDF/dictionary extraction, or live
+  SQL Server metadata), a **main table + key column**, a **target dialect**, and a **population** — either
+  specific **key values** or a plain-English **condition** (e.g. "only open claims") with an optional row
+  **cap**. New backend service `server/app/services/source_filter_service.py` + route
+  `POST /api/ai/source-filter-sql` (in `ai_routes.py`). **AI does only the intelligent parts** (returns a
+  compact JSON *join graph* + an interpreted WHERE predicate — can't truncate); the **server assembles one
+  read-only `SELECT` per table deterministically**, every query filtered to the *same* key set (a literal
+  `IN (...)` list, or `IN (SELECT <key> FROM <main> WHERE <predicate> <dialect row-cap>)`) so the prestage
+  subset stays referentially consistent. Dialect governs only the row-cap syntax (`TOP (n)` vs `FETCH FIRST
+  n ROWS ONLY`); identifiers are emitted plain. Grounded strictly on the selected source's schema; hardened
+  prompt (use only verbatim tables/columns, never invent). AI usage logged as `Source Data Filter - Join
+  Graph`. **v1 = SQL only** (editable per-table cards, Copy all / Download .sql; no execution/prestage-load
+  yet). Modeled on the Data Reconciliation SQL Assistant.
+  **Control (driver) table option** (`useControlTable` + `controlTable` name, default `CTL_<MAIN>_KEYS`):
+  when enabled the output prepends a **control-table setup script** — `CREATE TABLE` (key column typed from
+  the source schema) + per-key `INSERT`s (keys mode) or `INSERT … SELECT … <dialect row-cap>` (condition
+  mode) — and **every extract JOINs the control table** (`JOIN <ctl> ON ctl.<key> = m.<key>`) instead of an
+  inline `IN (...)`, so the population is data-driven, reusable and re-runnable. Hardening from debugging:
+  assembly is fully type-safe + wrapped so a malformed AI graph returns a clean error instead of a 500, and
+  the client surfaces the real HTTP status/body on failure (the earlier generic "Could not generate SQL"
+  masked a 500; a separate 405 turned out to be stale duplicate dev-servers on :8008/:8080, not a code bug).
+
+- **ETL code generation prompt hardened (source-only; no synthetic keys).** Two rules added to the
+  stored-proc system prompt in `etl_service.py`: (1) **SOURCE-ONLY** — every expression/FROM/JOIN/subquery
+  must reference only SOURCE tables/columns (+ `[LookupData]`); it must **never query the target table**
+  to look up a value (the model had emitted `(SELECT PMT_ID FROM Policy WHERE …)`); the target name
+  appears only in `INSERT INTO`. (2) **No synthetic keys/batch metadata** — never use HASHBYTES / NEWID /
+  CHECKSUM / ROW_NUMBER / a `@BatchId` param for id/PayloadId/key columns unless the user's Additional
+  Instructions ask; fill them from the mapped source (or default/NULL). Backend change → server restart.
+  **Same two rules applied at the root — the AI *mapping-generation* prompt (`mapping_service.py`)**:
+  the "TARGET-ONLY GROUPING / PAYLOAD ID" section no longer defaults to `HASHBYTES(... + BatchId)` (now
+  'Not Mapped' unless the user's Business Context explicitly asks); a new SOURCE-ONLY rule forbids target
+  sub-selects in transformationRule/joinCondition; the polymorphic "Reference" value column now maps from
+  its SOURCE FK (never a `SELECT … FROM <target>` WHERE). The single-field `regenerate_mapping` prompt got
+  the same source-only / no-synthetic-keys clause.
+
+- **Removed the single-user / local-signin build and its packaging.** Deleted the entire
+  `singleuser/` folder (the additive launcher `run.py` that auto-logged-in a hard-coded local user
+  `local@studio.local` + the first-run `/setup` "bring-your-own-key" wizard: `setup_routes.py`,
+  `setup.html`, `_envfile.py`, `run.bat`/`run.sh`) and the entire `packaging/` folder (PyInstaller
+  `aims.spec` + Inno Setup `installer.iss` + `build.ps1`, which existed only to ship that launcher as
+  a Windows `.exe`). The app now supports **one mode: the multi-user Flask service** (`python main.py`
+  / WSGI). Safe removal — `singleuser/run.py` was purely additive and nothing under `server/app`, `js`,
+  `pages`, `css` imported from either folder. **`server/app/core/config.py` cleaned up**: dropped the
+  now-dead `sys.frozen`/`_MEIPASS` bundle branch (and the unused `import sys`); `ROOT`/`SERVER_DIR` are
+  plain path logic again. `_load_dotenv()`/`AIMS_DISABLE_DOTENV` untouched (tests use it). `.gitignore`
+  lost the moot `singleuser/.venv/` and `packaging/*` build-artifact entries. The `deck/` Tech Stack
+  PDF was regenerated to drop the single-user distribution content.
+
+- **Source Metadata Explorer is now editable (table/column descriptions, business terms, PK, FK) and the
+  edits feed AI mapping generation.** The page (`pages/metadata-explorer.html` + `js/metadata.js`) was
+  read-only; live SQL Server reads come back with blank business term/description and files often lack
+  PK/FK. The grid is **always editable**: a leading **pencil** on each row opens an Edit-column **modal**
+  (Description textarea, Business Term, PK, FK + autocomplete reference picker of the source's own
+  tables/columns), and **PK / FK are also inline click-to-edit** in the grid (FK cell widened for the
+  `table.column` ref). **Table & column names are locked** (not editable). Edited values show simply in
+  **green text** (no badge/box; forced green via a scoped `#columnTable td.cell-user-text` rule).
+  There are **no edit toolbar buttons** — the grid is always editable and autosaves; the search box is
+  the only toolbar control. (Earlier "Edit structure" toggle, "Suggest keys", and "Reset my edits"
+  buttons were all removed at the user's request; edits still clear via the global Reset Application.)
+  - **Storage:** a new non-destructive overlay `aims_source_meta_overrides` (tenant/server-synced,
+    modeled on `aims_mapping_overrides`) keyed by `connId → table → column`, applied over the pristine
+    base load — never mutates the live DB read; re-extraction keeps edits. Helpers in `js/common.js`:
+    `getSourceMetaOverrides`, `saveSourceMetaColOverride`/`saveSourceMetaTableOverride`,
+    `clearSourceMetaOverrides`, `hasSourceMetaOverrides`, `applySourceMetaOverrides(meta, connId, {badge})`.
+    **`source_meta_overrides` was added to `tenant_store_service.ALLOWED_DOC_KEYS`** — without it the
+    server rejects the PUT (400) and edits vanish on refresh. **Server restart required** (`use_reloader=False`).
+  - **Downstream:** `js/ai-mapping.js loadSource()` and `js/mapping-workspace.js loadSourceSchema()`
+    overlay the same edits (`badge:false`) before sending source schema; business terms/descriptions
+    already flowed into the generation prompt, and `mapping_service.py generate_mappings` now also emits
+    per-source-column **PK / FK -> ref** hints so join inference uses explicit source keys.
+  - Also fixed a latent XSS: the column renderer now escapes name/type/business-term/default.
+  - No backend restart strictly required for the prompt tweak on `debug=True`, but restart to be safe.
 
 - **BillingCenter is now a first-class product in Data Reconciliation / the dictionary+schema path.**
   Previously the SQL Assistant treated Product as binary *policy vs. else(=claim)*, so a **billing**

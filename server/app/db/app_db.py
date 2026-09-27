@@ -55,6 +55,17 @@ def _ensure_lookup_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE lookup_sets ADD COLUMN legacy_values_spec TEXT")
 
 
+def _ensure_artifact_columns(conn: sqlite3.Connection) -> None:
+    """Add newer columns to a pre-existing artifact_versions table (CREATE TABLE IF NOT EXISTS
+    won't). Idempotent; caller holds _WRITE_LOCK."""
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(artifact_versions)").fetchall()}
+    except Exception:  # noqa: BLE001 — table may not exist yet on a brand-new DB
+        return
+    if cols and "group_key" not in cols:
+        conn.execute("ALTER TABLE artifact_versions ADD COLUMN group_key TEXT NOT NULL DEFAULT ''")
+
+
 def ensure_app_tables() -> None:
     """Create the app tables if they don't exist (idempotent).
 
@@ -71,6 +82,7 @@ def ensure_app_tables() -> None:
                 conn.executescript(script)
                 _ensure_user_columns(conn)
                 _ensure_lookup_columns(conn)
+                _ensure_artifact_columns(conn)
                 conn.commit()
             finally:
                 conn.close()

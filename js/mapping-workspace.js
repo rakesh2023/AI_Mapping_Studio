@@ -737,14 +737,16 @@ async function rejectMapping(id, silent){
 // includes made-up tables — only what's really configured.
 async function loadSourceSchema(){
   const out = [], seen = new Set();
-  const add = (tbl, col, dt) => {
-    const k = (tbl||"") + "." + (col||"");
-    if(tbl && col && !seen.has(k)){ seen.add(k); out.push({table:tbl, column:col, dataType:dt||""}); }
+  const add = (tbl, col) => {
+    const k = (tbl||"") + "." + (col.name||"");
+    if(tbl && col.name && !seen.has(k)){ seen.add(k); out.push({table:tbl, column:col.name, dataType:col.dataType||"",
+      description:col.description||"", businessTerm:col.businessTerm||"", pk:!!col.pk, fk:!!col.fk, fkReference:col.fkReference||""}); }
   };
   const readConn = async (c) => {
     try{
+      let tables = null;
       if((c.type||"").toLowerCase() === "file system"){
-        (c.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
+        tables = c.tables || [];
       } else {
         const cfg = {driver:c.driver||"ODBC Driver 17 for SQL Server", server:c.server||c.host||"",
           database:c.database||c.db||"", schema:c.schema||null, trusted:!!c.trusted,
@@ -755,8 +757,12 @@ async function loadSourceSchema(){
         cfg.password = pw;
         const res = await fetch("/api/db/metadata", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cfg)});
         const data = await res.json();
-        if(data.ok) (data.tables||[]).forEach(t => (t.columns||[]).forEach(col => add(t.name, col.name, col.dataType)));
+        if(!data.ok) return;
+        tables = data.tables || [];
       }
+      // Overlay Metadata Explorer edits (PK/FK/descriptions) so regenerate is grounded on them too.
+      tables = applySourceMetaOverrides({tables: tables}, c.id, {badge:false}).tables;
+      tables.forEach(t => (t.columns||[]).forEach(col => add(t.name, col)));
     }catch(e){ /* skip unreachable source */ }
   };
 

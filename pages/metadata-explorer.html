@@ -5,11 +5,44 @@
 <title>Metadata Explorer - AI Data Conversion Studio</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../css/common.css?v=20260922a">
-<link rel="stylesheet" href="../css/sidebar.css?v=20260922a">
-<link rel="stylesheet" href="../css/tables.css?v=20260922a">
-<link rel="stylesheet" href="../css/forms.css?v=20260922a">
-<link rel="stylesheet" href="../css/responsive.css?v=20260922a">
+<link rel="stylesheet" href="../css/common.css?v=20260927g">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260927g">
+<link rel="stylesheet" href="../css/tables.css?v=20260927g">
+<link rel="stylesheet" href="../css/forms.css?v=20260927g">
+<link rel="stylesheet" href="../css/responsive.css?v=20260927g">
+<style>
+  /* Leading edit-action column: hidden until "Edit structure" is on. */
+  #columnTable .col-actions{display:none;width:44px;text-align:center;padding-left:8px;padding-right:8px;}
+  #columnTable.sm-editing .col-actions{display:table-cell;}
+  /* Inline-editable PK / FK cells while editing: pointer affordance. */
+  #columnTable.sm-editing td.sm-edit{cursor:pointer;}
+  #columnTable.sm-editing td.sm-edit:hover{background:var(--surface-2, #f4f6f9);}
+  #columnTable td.sm-edit input,#columnTable td.sm-edit select{margin:-4px 0;}
+  /* While a cell is being edited, let its editor overflow a narrow column and sit above
+     neighbours (so a compact FK column is still fully editable). */
+  #columnTable td.sm-editing-cell{overflow:visible !important;position:relative;z-index:6;}
+  #columnTable td.sm-editing-cell input,#columnTable td.sm-editing-cell select{position:relative;z-index:6;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.15);}
+  body.theme-dark #columnTable td.sm-editing-cell input,body.theme-dark #columnTable td.sm-editing-cell select{background:#1f1f1f;}
+  /* Once columns are frozen (table-layout:fixed), clip overflow so a narrow column
+     shows an ellipsis instead of forcing itself wider — the user drags to widen. */
+  #columnTable.sm-fixed tbody td{overflow:hidden;text-overflow:ellipsis;}
+  /* An edited value shows in green: force inner spans/icons (mono key/link icons that
+     Bootstrap colors with !important) to inherit the cell's green from .cell-user-text. */
+  #columnTable td.cell-user-text{color:#16a34a !important;font-weight:600;}
+  #columnTable td.cell-user-text *{color:inherit !important;}
+  body.theme-dark #columnTable td.cell-user-text{color:#4ade80 !important;}
+  /* Collapsible source panel: hide the tree column and let the table span full width. */
+  .metadata-row.tree-collapsed #sourcePanelCol{display:none;}
+  .metadata-row.tree-collapsed #tablePanelCol{flex:0 0 100%;max-width:100%;}
+  /* Excel-like column headers: click to sort, drag the right edge to resize. */
+  #columnTable th{position:relative;}
+  #columnTable th.sortable{cursor:pointer;user-select:none;}
+  #columnTable th.sortable:hover{background:var(--surface-2, #f4f6f9);}
+  #columnTable th .sort-caret{font-size:.68em;margin-left:4px;opacity:.85;}
+  #columnTable th .col-resizer{position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;user-select:none;z-index:2;}
+  #columnTable th .col-resizer:hover{background:var(--primary, #d04a02);opacity:.35;}
+  body.sm-col-resizing{cursor:col-resize !important;user-select:none !important;}
+</style>
 </head>
 <body>
 <div class="app-shell">
@@ -36,32 +69,47 @@
         <div class="hint-note mt-2"><i class="bi bi-info-circle"></i> Pick a saved source and click <strong>Connect</strong> to explore its tables &amp; columns. Add, edit or remove sources on the <a href="source-systems.html">Source Systems</a> page.</div>
       </div>
 
-      <div class="row g-4">
-        <div class="col-lg-3">
+      <div class="row g-4 metadata-row" id="metadataRow">
+        <div class="col-lg-3" id="sourcePanelCol">
           <div class="card-el">
-            <div class="section-title" id="sourceCardTitle"><i class="bi bi-diagram-3"></i> Source Database</div>
-            <div id="sourceModeBadge" class="mb-2"></div>
+            <div class="d-flex align-items-center justify-content-between gap-2">
+              <div class="section-title mb-0" id="sourceCardTitle"><i class="bi bi-diagram-3"></i> Source Database</div>
+              <button class="btn btn-sm btn-outline-soft" id="collapseTreeBtn" title="Collapse panel" aria-label="Collapse panel" style="padding:2px 8px;"><i class="bi bi-chevron-left"></i></button>
+            </div>
+            <div id="sourceModeBadge" class="mb-2 mt-2"></div>
             <ul class="metadata-tree" id="sourceTree"></ul>
           </div>
         </div>
-        <div class="col-lg-9">
+        <div class="col-lg-9" id="tablePanelCol">
           <div class="card-el">
             <div class="table-toolbar">
-              <div>
-                <div class="section-title mb-0" id="tableTitle"><i class="bi bi-table"></i> Select a table</div>
-                <div class="text-xs text-muted-2" id="tableDesc"></div>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-primary" id="showTreeBtn" title="Show the table list" aria-label="Show tables" style="display:none;white-space:nowrap;"><i class="bi bi-layout-sidebar me-1"></i> Tables</button>
+                <div>
+                  <div class="section-title mb-0" id="tableTitle"><i class="bi bi-table"></i> Select a table</div>
+                  <div class="text-xs text-muted-2" id="tableDesc"></div>
+                </div>
               </div>
               <div class="filters">
                 <input type="text" id="colSearch" placeholder="Search columns...">
               </div>
             </div>
             <div class="table-responsive-el">
-              <table class="grid-table" id="columnTable">
+              <table class="grid-table sm-editing" id="columnTable">
                 <thead><tr>
-                  <th>Column</th><th>Type</th><th>Len</th><th>Null?</th><th>PK</th><th>FK</th>
-                  <th>Default</th><th>Business Term</th><th>Sample Value</th><th>Distinct</th><th>Null %</th><th class="wrap">Description</th>
+                  <th class="col-actions"></th>
+                  <th data-sortkey="name">Column</th>
+                  <th data-sortkey="dataType">Type</th>
+                  <th data-sortkey="length" data-sorttype="num">Len</th>
+                  <th data-sortkey="nullable" data-sorttype="bool">Null?</th>
+                  <th data-sortkey="pk" data-sorttype="bool">PK</th>
+                  <th data-sortkey="fkReference">FK</th>
+                  <th data-sortkey="default">Default</th>
+                  <th data-sortkey="businessTerm">Business Term</th>
+                  <th data-sortkey="sample">Sample Value</th>
+                  <th data-sortkey="description" class="wrap">Description</th>
                 </tr></thead>
-                <tbody id="columnTableBody"><tr><td colspan="12"><div class="empty-state"><i class="bi bi-mouse2"></i><h4>Select a table from the tree to view columns.</h4></div></td></tr></tbody>
+                <tbody id="columnTableBody"><tr><td colspan="11"><div class="empty-state"><i class="bi bi-mouse2"></i><h4>Select a table from the tree to view columns.</h4></div></td></tr></tbody>
               </table>
             </div>
           </div>
@@ -71,10 +119,59 @@
   </div>
 </div>
 <div id="toast-stack"></div>
+
+<!-- Edit Source Column modal: table & column names are FIXED; only metadata (description,
+     business term, PK, FK) is editable. Type/Length/Nullable are shown read-only. -->
+<div class="modal fade" id="smEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil-square me-1"></i> Edit column <span id="smEcCol" class="mono"></span> <span class="text-muted-2 text-xs">in <span id="smEcTable" class="mono"></span></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="smEcForm" class="form-grid" novalidate>
+          <div class="form-group">
+            <label>Column Name</label>
+            <input type="text" class="form-control mono" id="smEcName" disabled title="Column name cannot be changed here">
+          </div>
+          <div class="form-group">
+            <label>Data Type</label>
+            <input type="text" class="form-control" id="smEcType" disabled title="Type reflects the source and is read-only">
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <div class="d-flex gap-4 flex-wrap">
+              <label class="d-flex align-items-center gap-2 mb-0"><input type="checkbox" id="smEcPk"> Primary Key (PK)</label>
+              <label class="d-flex align-items-center gap-2 mb-0"><input type="checkbox" id="smEcFk"> Foreign Key (FK)</label>
+            </div>
+          </div>
+          <div class="form-group" id="smEcFkGroup" style="grid-column:1/-1;display:none;">
+            <label>References (table.column)</label>
+            <input type="text" class="form-control mono" id="smEcFkRef" autocomplete="off" placeholder="e.g. LEGACY_ADDRESS.ADDRESS_ID">
+            <div class="text-xs text-muted-2 mt-1"><i class="bi bi-info-circle"></i> Start typing to pick from this source's tables &amp; columns.</div>
+          </div>
+          <div class="form-group">
+            <label>Business Term</label>
+            <input type="text" class="form-control" id="smEcBT" autocomplete="off" placeholder="e.g. Policy Number">
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>Description</label>
+            <textarea class="form-control" id="smEcDesc" rows="4" placeholder="What does this column hold?"></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-soft" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="smEcSaveBtn"><i class="bi bi-save me-1"></i> Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../js/common.js?v=20260922a"></script>
-<script src="../js/navigation.js?v=20260922a"></script>
-<script src="../js/metadata.js?v=20260922a"></script>
+<script src="../js/common.js?v=20260927g"></script>
+<script src="../js/navigation.js?v=20260927g"></script>
+<script src="../js/metadata.js?v=20260927g"></script>
 </body>
 </html>
 

@@ -65,6 +65,14 @@ function clearLookupFilters(){
 // All lookup sets loaded for the active client (search/filter run client-side over this).
 let _allLookupSets = [];
 
+/* Imported Guidewire typelists (cctl_/pctl_/bctl_) are REFERENCE code lists (they populate the
+   Expected GW Values via /api/lookups/snapshot) — NOT mappable rows. Keep them out of the grid
+   list so they don't flood it as "(no target table)" entries. Mirrors the backend's prefix rule
+   in lookup_service.delete_all_sets. */
+const _TYPELIST_PREFIX = /^(cctl|pctl|bctl)_/i;
+function _isImportedTypelist(s){ return _TYPELIST_PREFIX.test(((s && s.lookupName) || "").trim()); }
+function _mappableSets(sets){ return (sets || []).filter(s => !_isImportedTypelist(s)); }
+
 /* ---- small note helpers ---- */
 function okNote(msg){ return '<div class="hint-note" style="background:var(--success-bg);color:var(--success);border-color:#bfe8cf;"><i class="bi bi-check-circle"></i> ' + msg + '</div>'; }
 function failNote(msg){ return '<div class="hint-note" style="background:var(--danger-bg);color:var(--danger);border-color:#f7c9c6;"><i class="bi bi-x-circle"></i> ' + escapeHtml(msg) + '</div>'; }
@@ -112,14 +120,14 @@ async function loadLookupSets(){
     hideLoading();
     layout.style.display = "";
     if(disabled) disabled.style.display = "none";
-    _allLookupSets = j.sets || [];
+    _allLookupSets = _mappableSets(j.sets || []);
     // Auto-create / backfill a lookup set for every List column of a MAPPED target
     // table (source pulled from the generated mappings). Re-fetch if anything changed.
     const added = await ensureListColumnSets(_allLookupSets);
     if(added){
       const r2 = await fetch("/api/lookups", {headers:{Accept:"application/json"}});
       const j2 = await r2.json().catch(() => ({}));
-      if(j2 && j2.ok) _allLookupSets = j2.sets || [];
+      if(j2 && j2.ok) _allLookupSets = _mappableSets(j2.sets || []);
     }
     // Build the dictionary indexes (target Type Key + imported typelist code lists)
     // used to auto-fill the "Expected Type list value" reference column.
@@ -130,6 +138,8 @@ async function loadLookupSets(){
     if(_activeTable && !_allLookupSets.some(s => _tableKey(s) === _activeTable)) _activeTable = null;
     renderLookupTableList();
     applyLookupFilters();
+    // Legacy-source picker (live vs file/PDF) — lets the user choose which source to pull from.
+    populateSourceSelect();
     // Auto-fill Legacy values from the live source DB + auto-generate mappings — once
     // per page load, guarded so repeat visits (and the reloads Generate triggers) skip it.
     if(!_autoPopulateDone){ _autoPopulateDone = true; autoPopulateFromDb(); }
@@ -582,12 +592,87 @@ function lkConnToConfig(c){
   };
 }
 
-/* Auto-pick a live SQL Server source: prefer a Connected one, else the first non-file source. */
-function lkPickSource(){
+/* Resolve the source the lookup mappings are based on, and whether it is a LIVE (SQL Server)
+   connection. A File System source (uploaded DDL / PDF / data dictionary) is NOT live: its
+   legacy values can't be read from a database, so we must not query a live DB for them.
+   Resolution order:
+     1) If a lookup set's source table belongs to a File System connection's extracted tables,
+        that File System source is the origin                                    -> not live.
+     2) Else a SQL Server source (Connected first)                               -> live.
+     3) Else the first File System source                                        -> not live.
+     4) Else none. */
+/* The user's explicit Legacy-source choice for this client (overrides auto-detection), kept
+   per browser so switching source to test live vs file sticks. */
+function _lkClientId(){
+  try{ return (typeof AUTH !== "undefined" && AUTH && AUTH.activeClientId) || ""; }catch(e){ return ""; }
+}
+function lkChosenSourceId(){ try{ return lsGet("aims_lk_source_" + _lkClientId(), "") || ""; }catch(e){ return ""; } }
+function setLkChosenSource(id){ try{ lsSet("aims_lk_source_" + _lkClientId(), id || ""); }catch(e){} }
+
+function lkResolveSource(){
   const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
-  const dbConns = conns.filter(c => (c.type || "").toLowerCase() !== "file system");
-  if(!dbConns.length) return null;
-  return dbConns.find(c => c.status === "Connected") || dbConns[0];
+  if(!conns.length) return {conn: null, live: false};
+  const isFile = c => (c.type || "").toLowerCase() === "file system";
+  // 0) An explicit user choice always wins (lets you deliberately pick live vs a file source).
+  const chosenId = lkChosenSourceId();
+  if(chosenId){
+    const chosen = conns.find(c => c.id === chosenId);
+    if(chosen) return {conn: chosen, live: !isFile(chosen)};
+  }
+  // Source tables the mapping is built on — from the generated field mappings (the real origin
+  // signal; lookup sets' own sourceTable is often blank) plus any lookup sets that carry one.
+  const srcTables = new Set();
+  const addTable = v => { const t = (v || "").split(".").pop().trim().toLowerCase(); if(t) srcTables.add(t); };
+  (lsGet("aims_ai_mappings", null) || []).forEach(m => addTable(m.sourceTable));
+  (_allLookupSets || []).forEach(s => addTable(s.sourceTable));
+  // 1) A File System source that actually contains one of our mapped source tables.
+  const fileConns = conns.filter(isFile);
+  for(const fc of fileConns){
+    const names = new Set((fc.tables || []).map(t => (t.name || "").toLowerCase()));
+    if([...srcTables].some(t => names.has(t))) return {conn: fc, live: false};
+  }
+  // 2) A live SQL Server source (prefer a Connected one).
+  const liveConn = conns.find(c => !isFile(c) && c.status === "Connected") || conns.find(c => !isFile(c));
+  if(liveConn) return {conn: liveConn, live: true};
+  // 3) Only file sources exist.
+  if(fileConns.length) return {conn: fileConns[0], live: false};
+  return {conn: null, live: false};
+}
+
+/* Populate the Legacy-source picker with every source connection and select the resolved one.
+   Changing it persists the choice and re-runs the populate/indicator flow for that source. */
+function populateSourceSelect(){
+  const row = document.getElementById("lkSourceRow");
+  const sel = document.getElementById("lkSourceSelect");
+  if(!row || !sel) return;
+  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
+  if(!conns.length){ row.style.display = "none"; return; }
+  row.style.display = "";
+  const resolved = lkResolveSource();
+  const chosenId = (resolved.conn && resolved.conn.id) || "";
+  sel.innerHTML = conns.map(c =>
+    '<option value="' + escapeHtml(c.id) + '"' + (c.id === chosenId ? " selected" : "") + '>' +
+    escapeHtml(c.name || c.id) + ' (' + escapeHtml(c.type || "?") + ')</option>').join("");
+  updateSourceKind();
+  sel.onchange = () => {
+    setLkChosenSource(sel.value);
+    updateSourceKind();
+    lkBanner(null);
+    autoPopulateFromDb(true);   // re-run for the chosen source (manual: allow a password prompt for live)
+  };
+}
+
+/* Small live / non-live badge next to the source picker. */
+function updateSourceKind(){
+  const sel = document.getElementById("lkSourceSelect");
+  const kind = document.getElementById("lkSourceKind");
+  if(!sel || !kind) return;
+  const conns = (typeof getDbConnections === "function") ? getDbConnections() : [];
+  const c = conns.find(x => x.id === sel.value);
+  const isFile = c && (c.type || "").toLowerCase() === "file system";
+  kind.innerHTML = !c ? "" : (isFile
+    ? '<span class="badge-soft badge-medium"><i class="bi bi-file-earmark-text"></i> non-live (file)</span>'
+    : '<span class="badge-soft badge-high"><i class="bi bi-plug-fill"></i> live</span>');
 }
 
 /* Show/replace (html) or hide (null) the auto-populate banner. */
@@ -618,9 +703,20 @@ async function lkFetchDistinct(cfg, sourceTable, sourceColumn, defaultSchema){
 /* Fill blank Legacy cells from the DB, then generate un-generated mappings.
    `manual` = triggered by the fallback button (a password prompt is then allowed). */
 async function autoPopulateFromDb(manual){
-  const conn = lkPickSource();
+  const resolved = lkResolveSource();
+  const conn = resolved.conn;
   if(!conn){
-    lkBanner('<div class="hint-note"><i class="bi bi-info-circle"></i> Connect a SQL Server source on <b>Source Systems</b> to auto-populate Legacy values from live data.</div>');
+    lkBanner('<div class="hint-note"><i class="bi bi-info-circle"></i> Connect a source on <b>Source Systems</b> to populate Legacy values.</div>');
+    return;
+  }
+  // Non-live source (file/PDF/DDL/dictionary): there is no database to read legacy values from.
+  // Leave the Legacy (source) values BLANK; the target Guidewire values are already shown from
+  // the dictionary (Expected GW Values). Show a clear indicator instead of querying a live DB.
+  if(!resolved.live){
+    lkBanner('<div class="hint-note" style="background:var(--warning-bg,#fff7e6);color:var(--warning,#8a6d00);border-color:#f0dca0;">' +
+      '<i class="bi bi-file-earmark-text"></i> Source <b>' + escapeHtml(conn.name || "source") + '</b> is a <b>non-live (file) connection</b> ' +
+      '(uploaded DDL / PDF / data dictionary) — legacy values can’t be pulled from a database. ' +
+      'Enter <b>Legacy value</b> manually for each row; the <b>Expected GW Values</b> are shown from the dictionary.</div>');
     return;
   }
   // Resolve the password without nagging on load.

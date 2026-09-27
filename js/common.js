@@ -62,7 +62,12 @@ const SIDEBAR_SECTIONS = [
     {label:"Validation Report", icon:"bi-bar-chart-line", href:"validation-report.html"}
   ]},
   {title:"Data Reconciliation", icon:"bi-clipboard-data", items:[
-    {label:"SQL Assistant", icon:"bi-terminal", href:"data-reconciliation.html"}
+    {label:"SQL Assistant", icon:"bi-terminal", href:"data-reconciliation.html"},
+    {label:"IN vs OUT Comparison", icon:"bi-arrow-left-right", href:"data-reconciliation-compare.html"},
+    {label:"Non-Financial Recon", icon:"bi-clipboard-check", href:"data-reconciliation-nonfin.html"}
+  ]},
+  {title:"Source Data", icon:"bi-funnel", items:[
+    {label:"Source Data Filter", icon:"bi-funnel", href:"source-data-filter.html"}
   ]},
   {title:"Deliver", icon:"bi-send", items:[
     {label:"Mapping History", icon:"bi-clock-history", href:"mapping-history.html"},
@@ -116,7 +121,7 @@ const TENANT_DOC_KEYS = ["db_connections","target_connections",
   "active_target","target_schema","ai_mappings","ai_joins","mapping_overrides",
   "mapping_history","deploy_history","exports","business_context","etl_instructions",
   "lookup_baseline","cmt_schema","cmt_baseline","pmt_schema","pmt_baseline","target_ai_fields","dict_descriptions",
-  "data_validation_cfg","addl_instructions","target_user_fields","etl_db"];
+  "data_validation_cfg","addl_instructions","target_user_fields","etl_db","source_meta_overrides"];
 const TENANT_LS = {};                                  // "aims_ai_mappings" -> "ai_mappings"
 TENANT_DOC_KEYS.forEach(k => { TENANT_LS["aims_" + k] = k; });
 function isTenantKey(key){ return Object.prototype.hasOwnProperty.call(TENANT_LS, key); }
@@ -192,6 +197,93 @@ function clearMappingOverrides(){ lsRemove(LS_KEYS.overrides); }
 function applyOverrides(mappings){
   const overrides = getMappingOverrides();
   return mappings.map(m => overrides[m.id] ? Object.assign({}, m, overrides[m.id]) : m);
+}
+
+/* Wire a collapsible left panel in a two-column (.row) layout. Pass element ids; the
+   left/right columns must carry data-panel="left"/"right". State persists per page
+   (device-local UI pref). Used by Metadata Explorer, Product Schema, Product Data Dictionary. */
+function wireCollapsiblePanel(opts){
+  opts = opts || {};
+  const row = document.getElementById(opts.rowId);
+  const collapseBtn = document.getElementById(opts.collapseBtnId);
+  const showBtn = document.getElementById(opts.showBtnId);
+  if(!row) return;
+  const storeKey = opts.storeKey || "aims_panel_collapsed";
+  const apply = (collapsed, skipSave) => {
+    row.classList.toggle("panel-collapsed", !!collapsed);
+    if(showBtn) showBtn.style.display = collapsed ? "" : "none";
+    if(!skipSave){ try{ lsSet(storeKey, !!collapsed); }catch(e){} }
+  };
+  if(collapseBtn) collapseBtn.addEventListener("click", () => apply(true));
+  if(showBtn) showBtn.addEventListener("click", () => apply(false));
+  apply(lsGet(storeKey, false) === true, true);   // restore, no re-save
+}
+
+/* ---- Source metadata edits (Metadata Explorer) --------------------------
+   Non-destructive, like aims_mapping_overrides: user edits to source table /
+   column metadata are stored SEPARATELY (keyed by connection id -> table ->
+   column) and overlaid on whatever base schema is loaded (live DB / file /
+   sample), so re-extraction never loses edits and the live read is untouched.
+   Shape: { [connId]: { tables: { [table]: {
+             description?, columns: { [col]: {description,businessTerm,pk,fk,fkReference,_by} } } } } }
+   `_by` on a column patch is "user" | "ai" (provenance for the Edited/Suggested badge). */
+const LS_SOURCE_META_OVERRIDES = "aims_source_meta_overrides";
+function getSourceMetaOverrides(){ return lsGet(LS_SOURCE_META_OVERRIDES, {}) || {}; }
+function _smoTable(all, connId, table){
+  const c = (all[connId] = all[connId] || {}); const t = (c.tables = c.tables || {});
+  return (t[table] = t[table] || {columns:{}});
+}
+function saveSourceMetaColOverride(connId, table, col, changes){
+  if(!connId || !table || !col) return;
+  const all = getSourceMetaOverrides();
+  const t = _smoTable(all, connId, table);
+  t.columns = t.columns || {};
+  const prev = t.columns[col] || {};
+  // Deep-merge the per-field provenance map ({field:"user"|"ai"}) rather than
+  // overwrite it, so a later AI suggestion doesn't erase an earlier user badge.
+  const by = Object.assign({}, prev._by || {}, changes._by || {});
+  const merged = Object.assign({}, prev, changes);
+  if(Object.keys(by).length) merged._by = by; else delete merged._by;
+  t.columns[col] = merged;
+  lsSet(LS_SOURCE_META_OVERRIDES, all);
+}
+function saveSourceMetaTableOverride(connId, table, changes){
+  if(!connId || !table) return;
+  const all = getSourceMetaOverrides();
+  const t = _smoTable(all, connId, table);
+  Object.assign(t, changes);
+  lsSet(LS_SOURCE_META_OVERRIDES, all);
+}
+/* Return a PATCHED COPY of sourceMeta ({connection,schema,tables:[{name,description,columns:[...]}]})
+   with this connection's edits overlaid. Persisted-payload fields (description,
+   businessTerm,pk,fk,fkReference) are copied onto clones; an `_edited` map
+   ({field:"user"|"ai"}) is stamped per patched column for UI badging only (callers
+   that send schema downstream should ignore/strip `_edited`). */
+function applySourceMetaOverrides(sourceMeta, connId, opts){
+  opts = opts || {};
+  if(!sourceMeta || !Array.isArray(sourceMeta.tables)) return sourceMeta;
+  const ov = getSourceMetaOverrides()[connId];
+  if(!ov || !ov.tables) return sourceMeta;
+  const COL_FIELDS = ["description","businessTerm","pk","fk","fkReference"];
+  const tables = sourceMeta.tables.map(t => {
+    const tOv = ov.tables[t.name];
+    if(!tOv) return t;
+    const nt = Object.assign({}, t);
+    if(tOv.description != null) nt.description = tOv.description;
+    const colOv = tOv.columns || {};
+    nt.columns = (t.columns || []).map(c => {
+      const p = colOv[c.name];
+      if(!p) return c;
+      const nc = Object.assign({}, c);
+      const edited = {};
+      COL_FIELDS.forEach(f => { if(f in p){ nc[f] = p[f]; edited[f] = (p._by && p._by[f]) || "user"; } });
+      // `_edited` is a UI-only badge marker; downstream callers pass {badge:false}.
+      if(opts.badge !== false && Object.keys(edited).length) nc._edited = edited;
+      return nc;
+    });
+    return nt;
+  });
+  return Object.assign({}, sourceMeta, {tables: tables});
 }
 
 const DEFAULT_SETTINGS = {

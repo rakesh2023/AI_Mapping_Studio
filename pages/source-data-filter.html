@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Source Data Filter - AI Data Conversion Studio</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link rel="stylesheet" href="../css/common.css?v=20260927g">
+<link rel="stylesheet" href="../css/sidebar.css?v=20260927g">
+<link rel="stylesheet" href="../css/tables.css?v=20260927g">
+<link rel="stylesheet" href="../css/forms.css?v=20260927g">
+<link rel="stylesheet" href="../css/mapping.css?v=20260927g">
+<link rel="stylesheet" href="../css/responsive.css?v=20260927g">
+<style>
+  .sdf-chip{display:inline-block;background:var(--primary-soft);color:var(--primary);border-radius:12px;padding:1px 9px;font-size:.72rem;margin:2px 4px 2px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .sdf-sql{width:100%;min-height:150px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.45;white-space:pre;overflow:auto;background:var(--gray-bg);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:.7rem;}
+  .sdf-qcard{border:1px solid var(--border);border-radius:10px;padding:.7rem .8rem;margin-bottom:.7rem;}
+  .sdf-qhead{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.4rem;}
+  .sdf-qname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;font-size:.9rem;}
+  .sdf-modebtn.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar-container"></aside>
+  <div class="main-wrapper">
+    <header id="header-container"></header>
+    <main class="content-area">
+      <div class="breadcrumb-bar">
+        <div><div class="crumb">AI Data Conversion Studio <i class="bi bi-chevron-right"></i> Source Data <i class="bi bi-chevron-right"></i> Source Data Filter</div>
+        <h2>Source Data Filter — legacy → prestage extraction</h2></div>
+      </div>
+
+      <!-- What this does -->
+      <div class="card-el mb-3 d-flex align-items-start gap-2" style="padding:.6rem .9rem;">
+        <i class="bi bi-info-circle text-primary mt-1"></i>
+        <span class="text-xs text-muted-2">Prepare the filtered extraction SQL you run against the legacy system to load only a subset into <b>prestage</b>. Pick a source, its main table &amp; key, then extract by specific key values or a plain-English condition. AI infers the joins; you get one read-only <span class="mono">SELECT</span> per related table, all filtered to the same population.</span>
+      </div>
+
+      <div class="card-el mb-3" id="sdfCard">
+        <div class="section-title"><i class="bi bi-funnel"></i> Build the extraction</div>
+
+        <!-- Source + main table + key + dialect -->
+        <div class="row g-3 mb-2">
+          <div class="col-md-3">
+            <label class="form-label mb-1">Source</label>
+            <select class="form-select form-select-sm" id="sdfSource"><option value="">Select a source…</option></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label mb-1">Main table</label>
+            <select class="form-select form-select-sm" id="sdfTable" disabled><option value="">—</option></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label mb-1">Key column</label>
+            <select class="form-select form-select-sm" id="sdfKey" disabled><option value="">—</option></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label mb-1">Target dialect</label>
+            <select class="form-select form-select-sm" id="sdfDialect">
+              <option value="ansi">ANSI / generic</option>
+              <option value="oracle">Oracle</option>
+              <option value="db2">IBM DB2</option>
+              <option value="sqlserver">SQL Server</option>
+            </select>
+          </div>
+        </div>
+        <div id="sdfSchemaInfo" class="text-xs text-muted-2 mb-3"></div>
+
+        <!-- Population: key values OR condition (hidden when a control table is used — the control
+             table itself defines the population, so no key values / condition are needed). -->
+        <div class="mb-2" id="sdfPopWrap">
+          <label class="form-label mb-1">Population to extract</label>
+          <div class="btn-group btn-group-sm mb-2" role="group">
+            <button type="button" class="btn btn-outline-soft sdf-modebtn active" id="sdfModeKeys" data-mode="keys"><i class="bi bi-list-ol me-1"></i> Specific key values</button>
+            <button type="button" class="btn btn-outline-soft sdf-modebtn" id="sdfModeCond" data-mode="condition"><i class="bi bi-chat-left-text me-1"></i> Condition</button>
+          </div>
+
+          <div id="sdfKeysWrap">
+            <textarea class="form-control" id="sdfKeyValues" rows="4" placeholder="Paste key values — one per line (or comma-separated), e.g.&#10;POL-0001&#10;POL-0002&#10;POL-0003"></textarea>
+            <div class="text-xs text-muted-2 mt-1">Every table is filtered to these keys via the AI-inferred join path.</div>
+          </div>
+
+          <div id="sdfCondWrap" style="display:none;">
+            <textarea class="form-control" id="sdfCondition" rows="3" placeholder="Describe the filter, e.g. only open claims, or policies effective in 2023"></textarea>
+            <div class="d-flex align-items-center gap-2 mt-2">
+              <label class="mb-0 text-xs text-muted-2">Row cap (optional):</label>
+              <input type="number" min="1" class="form-control form-control-sm" id="sdfRowCap" style="width:120px;" placeholder="e.g. 50">
+              <span class="text-xs text-muted-2">first N matching keys (e.g. “first 50 open claims”).</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Control (driver) table option -->
+        <div class="mb-3 p-2" style="border:1px dashed var(--border);border-radius:8px;">
+          <label class="d-flex align-items-center gap-2 mb-0" style="cursor:pointer;">
+            <input type="checkbox" id="sdfUseControl">
+            <span class="fw-semibold" style="font-size:.85rem;"><i class="bi bi-table me-1"></i> Use a control (driver) table</span>
+          </label>
+          <div class="text-xs text-muted-2 mt-1">First query is a <span class="mono">CREATE TABLE</span> with columns <span class="mono">Load_Name</span> + your key column; it's then populated and every extract <b>INNER JOINs</b> it on the key + <span class="mono">Load_Name</span> — reusable and re-runnable.</div>
+          <div id="sdfControlNameWrap" class="d-flex align-items-center gap-2 mt-2 flex-wrap" style="display:none;">
+            <label class="mb-0 text-xs text-muted-2">Control table name:</label>
+            <input type="text" class="form-control form-control-sm" id="sdfControlName" style="max-width:280px;" placeholder="CTL_MAIN_KEYS">
+            <label class="mb-0 text-xs text-muted-2 ms-2">Load name:</label>
+            <input type="text" class="form-control form-control-sm" id="sdfLoadName" style="max-width:160px;" placeholder="LOAD_1" value="LOAD_1">
+          </div>
+          <div id="sdfControlHint" class="text-xs text-muted-2 mt-2" style="display:none;"><i class="bi bi-info-circle me-1"></i> The <b>Population to extract</b> above (key values or condition) is used to generate this control table's <span class="mono">INSERT</span> statements. Every extract then INNER JOINs the control table on the key + <span class="mono">Load_Name</span>. (Leave the population blank to get an INSERT template you fill in yourself.)</div>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <button type="button" class="btn btn-primary" id="sdfGenerateBtn" disabled><i class="bi bi-magic me-1"></i> Generate extraction SQL</button>
+          <button type="button" class="btn btn-outline-danger" id="sdfCancelBtn" style="display:none;" title="Stop generating"><i class="bi bi-x-circle me-1"></i> Cancel</button>
+        </div>
+
+        <!-- AI Processing Console -->
+        <div class="mt-3" id="sdfConsoleWrap" style="display:none;">
+          <div class="section-title mb-1 d-flex align-items-center" id="sdfConsoleHdr" style="cursor:pointer;">
+            <span><i class="bi bi-terminal"></i> AI Processing Console</span>
+            <span id="sdfConsoleStatus" class="ms-2 fw-normal" style="font-size:.8rem;"></span>
+            <i class="bi bi-chevron-up ms-auto" id="sdfConsoleChev" title="Show / hide steps"></i>
+          </div>
+          <div class="process-log" id="sdfConsole" style="min-height:auto;"></div>
+        </div>
+
+        <!-- Results: one SELECT per table -->
+        <div id="sdfResult" class="mt-3" style="display:none;">
+          <div class="section-title d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span><i class="bi bi-code-square"></i> Extraction queries <span class="text-xs text-muted-2 fw-normal">(one per table — editable)</span></span>
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+              <button type="button" class="btn btn-sm btn-outline-primary" id="sdfSaveVersionBtn" disabled title="Save the current queries as a new version"><i class="bi bi-save me-1"></i> Save version</button>
+              <label class="mb-0 text-xs text-muted-2"><i class="bi bi-clock-history me-1"></i> Version</label>
+              <select id="sdfVersionSelect" class="form-select form-select-sm" style="width:auto;min-width:90px;" title="Saved versions (latest first)"></select>
+              <button type="button" class="btn btn-sm btn-outline-danger" id="sdfDeleteVersionBtn" title="Delete the selected version"><i class="bi bi-trash"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="sdfCopyAllBtn"><i class="bi bi-clipboard me-1"></i> Copy all</button>
+              <button type="button" class="btn btn-sm btn-outline-soft" id="sdfDownloadBtn"><i class="bi bi-download me-1"></i> Download .sql</button>
+            </div>
+          </div>
+          <div id="sdfVersionInfo" class="text-xs text-muted-2 mb-2"></div>
+          <div id="sdfUnrelated" class="mb-2"></div>
+          <div id="sdfQueries"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<!-- Fullscreen editor for a single query — edits sync back to that query's card. -->
+<div class="modal fade" id="sdfExpandModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-code-square me-1"></i> <span id="sdfExpandTitle">Query</span></h5>
+        <div class="d-flex align-items-center gap-2 ms-auto me-2">
+          <button type="button" class="btn btn-sm btn-outline-soft" id="sdfExpandCopyBtn"><i class="bi bi-clipboard me-1"></i> Copy</button>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-2 d-flex">
+        <textarea class="sdf-sql" id="sdfExpandArea" spellcheck="false" style="width:100%;height:100%;min-height:calc(100vh - 120px);resize:none;"></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-stack"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../js/common.js?v=20260927g"></script>
+<script src="../js/navigation.js?v=20260927g"></script>
+<script src="../js/source-data-filter.js?v=20260927g"></script>
+</body>
+</html>

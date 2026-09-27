@@ -70,6 +70,87 @@ def catalog(user_id: int, client_id: int, doc_key: str) -> List[Dict[str, str]]:
     return list_tables(user_id, client_id, doc_key)
 
 
+# Migration-tool PK naming convention: a surrogate key column like PMT_ID / CMT_ID / BMT_ID
+# (and composite PMT_ID1 / PMT_ID2). The parsed schema rarely sets an explicit pk flag, so the PK is
+# detected by this convention (matching migration_sql.md).
+_MIG_PK_RE = re.compile(r"^[A-Za-z]{2,4}_ID\d*$")
+
+
+def key_map(user_id: int, client_id: int, doc_key: str, table_ids: Optional[List[str]] = None) -> Dict[str, List[str]]:
+    """{table_name: [pk_col, ...]} for the requested tables (all tables when table_ids is None/empty).
+    Used by the IN-vs-OUT comparison to give the generated proc each table's join key(s) without the
+    20-table schema_context cap — the proc enumerates the non-key columns from the DB catalog at run time.
+    PK = any field flagged pk, else columns matching the migration convention (PMT_ID / _ID1 / _ID2)."""
+    want = {str(t).lower() for t in (table_ids or [])} or None
+    out: Dict[str, List[str]] = {}
+    for e in _entities(user_id, client_id, doc_key):
+        tbl = _table_of(e)
+        if not tbl:
+            continue
+        if want is not None and tbl.lower() not in want:
+            continue
+        names = [(f.get("name") or "").strip() for f in (e.get("fields") or [])]
+        flagged = [(f.get("name") or "").strip() for f in (e.get("fields") or [])
+                   if f.get("pk") and (f.get("name") or "").strip()]
+        if flagged:
+            out[tbl] = flagged
+        else:
+            out[tbl] = [n for n in names if n and _MIG_PK_RE.match(n)]
+    return out
+
+
+def columns_of(user_id: int, client_id: int, doc_key: str, table: str) -> List[Dict[str, Any]]:
+    """[{name, pk, fk}] for one table — used to let the user pick which columns to compare."""
+    tl = (table or "").strip().lower()
+    for e in _entities(user_id, client_id, doc_key):
+        if _table_of(e).lower() != tl:
+            continue
+        out = []
+        for f in (e.get("fields") or []):
+            nm = (f.get("name") or "").strip()
+            if not nm:
+                continue
+            out.append({"name": nm, "pk": bool(f.get("pk") or _MIG_PK_RE.match(nm)), "fk": bool(f.get("fk"))})
+        return out
+    return []
+
+
+def column_defs(user_id: int, client_id: int, doc_key: str, table: str) -> List[Dict[str, Any]]:
+    """Like columns_of but also returns each column's dataType/length — used to emit real
+    column types in the Non-Financial reconciliation CREATE TABLE scripts."""
+    tl = (table or "").strip().lower()
+    for e in _entities(user_id, client_id, doc_key):
+        if _table_of(e).lower() != tl:
+            continue
+        out = []
+        for f in (e.get("fields") or []):
+            nm = (f.get("name") or "").strip()
+            if not nm:
+                continue
+            out.append({"name": nm, "dataType": (f.get("dataType") or "").strip(),
+                        "length": f.get("length"),
+                        "pk": bool(f.get("pk") or _MIG_PK_RE.match(nm)), "fk": bool(f.get("fk"))})
+        return out
+    return []
+
+
+def fk_map(user_id: int, client_id: int, doc_key: str, table_ids: Optional[List[str]] = None) -> Dict[str, List[str]]:
+    """{table_name: [fk_col, ...]} — foreign-key value columns (fk-flagged). These hold references to
+    other rows' surrogate keys, which the OUT database rewrites (prefixes), so the IN-vs-OUT comparison
+    ignores them to avoid flooding the diff with key churn rather than real data changes."""
+    want = {str(t).lower() for t in (table_ids or [])} or None
+    out: Dict[str, List[str]] = {}
+    for e in _entities(user_id, client_id, doc_key):
+        tbl = _table_of(e)
+        if not tbl:
+            continue
+        if want is not None and tbl.lower() not in want:
+            continue
+        out[tbl] = [(f.get("name") or "").strip() for f in (e.get("fields") or [])
+                    if f.get("fk") and (f.get("name") or "").strip()]
+    return out
+
+
 def search_entity_ids(user_id: int, client_id: int, doc_key: str, prompt: str, limit: int = 15) -> List[str]:
     """Keyword fallback (the AI table-select is primary). Matches prompt words against table
     names/descriptions; plural-tolerant."""

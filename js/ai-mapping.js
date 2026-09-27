@@ -469,12 +469,16 @@ async function loadSource(){
   if(!conn) throw new Error("Select a source system first.");
   if(sourceCache && sourceCache._id === id) return sourceCache;
 
+  // Overlay the user's Metadata Explorer edits (descriptions/business terms/PK/FK)
+  // so richer source metadata reaches the AI. `badge:false` strips UI-only markers.
+  const withEdits = (tables) => applySourceMetaOverrides({tables: tables}, conn.id, {badge:false}).tables;
+
   // File System sources carry their extracted tables on the connection — no live DB call.
   if((conn.type || "").toLowerCase() === "file system"){
     if(!conn.tables || !conn.tables.length){
       throw new Error("This File System source has no extracted schema. Open it in Source Systems and click 'Extract with AI'.");
     }
-    sourceCache = {_id:id, connection: conn.name, schema: conn.schema || null, tables: conn.tables};
+    sourceCache = {_id:id, connection: conn.name, schema: conn.schema || null, tables: withEdits(conn.tables)};
     return sourceCache;
   }
 
@@ -484,10 +488,11 @@ async function loadSource(){
   const data = await res.json();
   if(!data.ok) throw new Error(data.error || "Could not read source metadata.");
   sourceCache = {_id:id, connection:data.connection, schema:data.schema,
-    tables:data.tables.map(t => ({name:t.name, columns:(t.columns||[]).map(c => ({
+    tables:withEdits(data.tables.map(t => ({name:t.name, columns:(t.columns||[]).map(c => ({
       name:c.name, dataType:c.dataType, length:c.length,
-      businessTerm:c.businessTerm||"", description:c.description||"", sample:c.sample
-    }))}))};
+      businessTerm:c.businessTerm||"", description:c.description||"", sample:c.sample,
+      pk:!!c.pk, fk:!!c.fk, fkReference:c.fkReference||""
+    }))})))};
   return sourceCache;
 }
 

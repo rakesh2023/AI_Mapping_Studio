@@ -428,3 +428,45 @@ CREATE TABLE IF NOT EXISTS ai_mapping_runs (
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_ai_mapping_runs_scope ON ai_mapping_runs(user_id, client_id);
+
+-- =====================================================================
+-- Source Data Filter: saved, versioned generated extraction query sets.
+-- One row per generation; version auto-increments per (user_id, client_id).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS source_filter_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL,
+    client_id     INTEGER NOT NULL,
+    version       INTEGER NOT NULL,
+    source_name   TEXT,
+    main_table    TEXT,
+    key_column    TEXT,
+    dialect       TEXT,
+    use_control   INTEGER NOT NULL DEFAULT 0,
+    control_table TEXT,
+    load_name     TEXT,
+    mode          TEXT,
+    query_count   INTEGER NOT NULL DEFAULT 0,
+    payload_json  TEXT NOT NULL,                    -- {queries:[...], grounded, unrelated, keyPredicate}
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_source_filter_runs_scope ON source_filter_runs(user_id, client_id);
+
+-- =====================================================================
+-- Generic versioned generated artifacts (e.g. ETL code), per tenant + feature.
+-- version auto-increments per (user_id, client_id, feature).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS artifact_versions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    client_id   INTEGER NOT NULL,
+    feature     TEXT NOT NULL,                     -- e.g. 'etl_code'
+    group_key   TEXT NOT NULL DEFAULT '',          -- version sequence within a feature (e.g. one per table)
+    version     INTEGER NOT NULL,
+    title       TEXT,
+    kind        TEXT,                              -- e.g. 'ETL Code' | 'Create Table'
+    meta_json   TEXT,                              -- {tables:[...], db:{...}}
+    content     TEXT NOT NULL,                     -- the generated SQL
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_artifact_versions_scope ON artifact_versions(user_id, client_id, feature, group_key);
