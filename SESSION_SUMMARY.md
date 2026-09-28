@@ -1,6 +1,6 @@
 # AI Data Conversion Studio — Session Summary
 
-_Last updated: 2026-09-26_
+_Last updated: 2026-09-28_
 
 A PwC-themed, AI-assisted **source-to-target data migration mapping** tool
 (insurance / Guidewire-inspired). Static HTML/CSS/vanilla-JS frontend + a
@@ -9,6 +9,72 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
 ---
 
 ## Latest changes (most recent first)
+
+- **Non-Financial Recon: Count aggregation moved into the EXTRACT (staging holds one row per key).** For a
+  Quantitative (Count) column the **extract proc** now stores `COUNT(col)` grouped by the key (value columns
+  in the same recon use `MAX(col)` per key), so `_Legacy`/`_CMT`/`_CDA` each hold one row per key. The
+  compare procs were simplified to a straight per-key value comparison (no runtime re-aggregation). The CDA
+  AI is told to return GRANULAR rows (repeating the key) when counts are involved, and the deterministic
+  outer wrapper does the `COUNT`/`MAX` + `GROUP BY key`. Value-only recon is unchanged (raw rows, no
+  grouping). New helper `_nf_agg_projection`; `_nf_cmt_extract_proc` / `_nf_cda_extract_proc` /
+  `_nf_compare_proc` updated. (Product Data Dictionary picker also now shows PK columns tagged `(PK)`.)
+
+- **Non-Financial Recon: "Selected columns" panel above Generate — per-column alias + Value/Count.** A new
+  panel lists every selected column (unified by name across the chosen tables) with an **alias** input and
+  a **Value/Count** toggle, plus bulk "set all to Value/Count" and "Reset aliases". The **alias renames the
+  column everywhere**: the staging tables' column, the extract procs (`[SourceCol]` → `[Alias]` via
+  positional `INSERT…SELECT`; the CDA AI is told to alias to the output name), the report's `AttributeName`,
+  and the compare. Keys are never aliased. The panel and each table picker's Value/Count toggle share the
+  same state (`drColMode`/`drColAlias`, now flat/global by column name) and stay in sync via
+  `refreshDrModeUI()`. Frontend sends `aliases{}` + `countCols[]`; backend adds an `out` (alias) name to
+  each recon column and uses it in `_create_data` / `_nf_cmt_extract_proc` / `_nf_cda_extract_proc` /
+  `_nf_compare_proc`. Files: `cc_sql_service.py`, `js/data-reconciliation-nonfin.js` (`renderDrSelectedPanel`,
+  `fetchDrCols`, shared helpers), `pages/data-reconciliation-nonfin.html` (panel + toggle CSS).
+
+- **Non-Financial Recon: per-column Value-Level vs Quantitative reconciliation + naming/sequence change.**
+  Each selected column now carries a **Value / Count** toggle (default Value; a "set all to Value/Count"
+  bulk control per table). **Value** columns are compared value-by-value on the key; **Count** columns are
+  reconciled by `COUNT(col)` **grouped by the common key** and the per-key counts compared (fits
+  one-to-many keys). Both land in the same report table (`AttributeName` names the column; count rows are
+  suffixed ` (count/key)`). The compare procs were rewritten from a runtime cursor to **unrolled per-column
+  INSERTs** that pick the value or count branch, with row-missing now detected via the **key** (a NULL
+  value is no longer mistaken for a missing row). Frontend sends `countCols[]`; backend tags each recon
+  column `mode: value|count`. Also renamed objects + fixed the sequence: tables `_Legacy` → `_CMT` → `_CDA`;
+  reports `<Name>_LegacyVsCMT_Report` / `<Name>_CMTVsCDA_Report`; extract procs `usp_extract_<Name>_CMT/_CDA`;
+  compare procs `usp_report_<Name>_LegacyVsCMT` (Legacy=left) / `usp_report_<Name>_CMTVsCDA`. Files:
+  `cc_sql_service.py` (`_nf_compare_proc` rewrite, `countCols`/`mode` in `generate_nonfin_recon_sql`),
+  `js/data-reconciliation-nonfin.js` (toggle UI + `drColMode` state + payload + summary), page CSS.
+
+- **Non-Financial Recon output split into per-object cards (like Source Data Filter).** The single
+  generated-script textarea is replaced by one editable card per object — the 3 data tables
+  (`_CMT`/`_Legacy`/`_CDA`), 2 report tables, the CMT + CDA extract procs, and the 2 compare procs —
+  each with a title + one-line note, a per-card **Copy**, and a **Fullscreen** button; a header
+  **Copy all** / **Download .sql** / **Save version** act on the whole set. Backend
+  `cc_sql_service.generate_nonfin_recon_sql` now also returns `blocks: [{title, note, sql}]` (the joined
+  `sql` is still returned for fallback/download). Frontend `data-reconciliation-nonfin.js` renders cards
+  via `renderDrBlocks()`, concatenates them with `nfScript()` for copy/download/save, and per-card
+  Fullscreen (`openDrBlockExpand`) syncs edits back to that card. Saved versions store the edited blocks
+  in `meta.blocks` so loading a version restores the cards exactly (older versions fall back to one card
+  holding the full script). Files: `pages/data-reconciliation-nonfin.html` (card CSS, `#drBlocks`
+  container, dynamic fullscreen title), `js/data-reconciliation-nonfin.js`, `cc_sql_service.py`.
+
+- **Non-Financial Recon extended to CMT + Legacy + CDA (3 sources) with extraction procs.** The generated
+  script now creates a **third data table `[<Name>_CDA]`** and **two extraction procs** that populate the
+  staging tables, plus a **second comparison**:
+  - `usp_Extract_<Name>_CMT` — **deterministic** `INSERT…SELECT` from the CMT migration table(s) (recon
+    columns come straight from the CMT schema; multi-table selection LEFT-JOINs on the key).
+  - `usp_Extract_<Name>_CDA` — **AI-generated** from the client's ClaimCenter/PolicyCenter/BillingCenter
+    dictionary via the matching `*_sql.md` skill (reuses the SQL-Assistant flow: `_provider` conventions +
+    dictionary `schema_context` + `call_ai`). It maps each recon column to its Guidewire equivalent **by
+    meaning** (using the migration column's description), adds typelist joins as needed, aliases to the exact
+    recon column names + key, and is wrapped in a derived table (`INSERT … SELECT <names> FROM (<AI SELECT>)`)
+    so ordering/extra columns don't break the insert. Falls back to a clearly-commented **stub** (script
+    still valid, `cdaGenerated:false` → UI warning) when no dictionary is loaded / AI unavailable / it fails.
+  - Two report tables + two compare procs: `usp_Reconcile_<Name>` (CMT vs Legacy → `_Recon_Report`) and
+    `usp_Reconcile_<Name>_CDA` (CMT vs CDA → `_CDA_Recon_Report`), via a shared `_nf_compare_proc` builder
+    (value columns `CMTValue`/`LegacyValue` vs `CMTValue`/`CDAValue`). `migration_schema_service.column_defs`
+    now also returns `description` (for the CDA mapping). Same `POST /api/ai/reconcile-nonfin-sql` route
+    (now partly AI). Product-agnostic (CMT→ClaimCenter, PMT→PolicyCenter, BMT→BillingCenter). Server restart.
 
 - **Data Reconciliation — new "Non-Financial Recon" tab (report-table + cursor proc, modeled on the
   client's real SP).** A third item under *Data Reconciliation* (`pages/data-reconciliation-nonfin.html` +
@@ -20,8 +86,9 @@ Python/Flask backend that talks to a live SQL Server and the Claude API.
   `AttributeName`, `CMTValue`, `LegacyValue`, `Status`), and `CREATE OR ALTER PROCEDURE
   [dbo].[usp_Reconcile_<Name>]` that TRUNCATEs the report, **cursors over `INFORMATION_SCHEMA.COLUMNS`** of
   the CMT table (minus the key), and per column builds dynamic SQL diffing the two tables on the key via
-  **FULL OUTER JOIN** (NULL-safe COALESCE), writing only DIFFERING rows with a `Status` of
-  `Match` / `Missing in CMT` / `Missing in Legacy` / `Mismatch`, then `SELECT … WHERE Status <> 'Match'`.
+  **FULL OUTER JOIN** (NULL-safe COALESCE), writing **every** comparison row with a `Status` of
+  `Match` / `Missing in CMT` / `Missing in Legacy` / `Mismatch`, then `SELECT * … ORDER BY Status`
+  (returns Match rows too — the earlier "differences only" filter was removed at the user's request).
   Improvements over the sample SP: FULL OUTER JOIN (the sample's LEFT JOIN can't see target-only rows),
   no hard-coded `USE`/DB, `CREATE OR ALTER`, auto report-table DDL + truncate, inserts only differences.
   Backend: `cc_sql_service.generate_nonfin_recon_sql` + `_tsql_type`/`_safe_ident`, route

@@ -465,7 +465,8 @@ def list_compare_columns(user_id: int, client_id: int, source: str, table: str) 
     if src not in ("cmt", "pmt", "bmt"):
         return {"ok": False, "error": "Column selection applies to a migration-tool schema only."}, 400
     cols = mig.columns_of(user_id, client_id, mig.DOC_KEY[src], table or "")
-    out = [{"name": c["name"], "fk": bool(c["fk"])} for c in cols if not c["pk"]]
+    # Include PK columns too (flagged), so the key (e.g. PMT_ID) is visible/selectable in the picker.
+    out = [{"name": c["name"], "fk": bool(c["fk"]), "pk": bool(c["pk"])} for c in cols]
     return {"ok": True, "table": table, "columns": out}, 200
 
 
@@ -729,10 +730,250 @@ def _tsql_type(data_type, length) -> str:
     return "NVARCHAR(255)"
 
 
+def _nf_fq(t):
+    return "[dbo].[" + t + "]"
+
+
+def _nf_report_ddl(rep, key_cols, left_label, right_label, type_by_col):
+    """DROP+CREATE the derived report table (Recon_RunDate, key(s), AttributeName, <L>Value, <R>Value, Status)."""
+    lines = ["    [Recon_RunDate] DATETIME2"]
+    lines += ["    [" + k + "] " + type_by_col.get(k.lower(), "NVARCHAR(255)") for k in key_cols]
+    lines += ["    [AttributeName] NVARCHAR(255)",
+              "    [" + left_label + "Value] NVARCHAR(MAX)",
+              "    [" + right_label + "Value] NVARCHAR(MAX)",
+              "    [Status] NVARCHAR(30)"]
+    return ("IF OBJECT_ID(N'" + _nf_fq(rep) + "', N'U') IS NOT NULL DROP TABLE " + _nf_fq(rep) + ";\n"
+            "CREATE TABLE " + _nf_fq(rep) + " (\n" + ",\n".join(lines) + "\n);")
+
+
+def _nf_agg_projection(cols, key_cols, ref):
+    """Per-key aggregated projection for an extract that stores ONE row per key: keys are grouped as-is,
+    'count' columns become COUNT(col), 'value' columns become MAX(col) (a representative per key).
+    `ref(c)` returns the source SQL expression for a column (e.g. 't0.[Name]' or 'src.[Out]').
+    Returns (select_list_items, group_by_items)."""
+    key_low = {k.lower() for k in key_cols}
+    sel, grp = [], []
+    for c in cols:
+        r = ref(c)
+        if c["name"].lower() in key_low or (c.get("out") or "").lower() in key_low:
+            sel.append(r + " AS [" + c["out"] + "]"); grp.append(r)
+        elif c.get("mode") == "count":
+            sel.append("COUNT(" + r + ") AS [" + c["out"] + "]")
+        else:
+            sel.append("MAX(" + r + ") AS [" + c["out"] + "]")
+    return sel, grp
+
+
+def _nf_compare_proc(proc, rep, left_tbl, right_tbl, left_label, right_label, key_cols, cols):
+    """Compare left_tbl vs right_tbl into the report, one INSERT per non-key column, value-by-value on
+    the key. The staging tables already hold ONE row per key (count columns were aggregated to COUNT/key
+    at extract time), so this is a straight per-key comparison. Row-missing is detected via the key, so a
+    NULL value is not mistaken for a missing row. Returns every row with a Status."""
+    lval, rval = left_label + "Value", right_label + "Value"
+    k0 = key_cols[0]
+    key_join = " AND ".join("l.[" + k + "] = r.[" + k + "]" for k in key_cols)
+    rep_key_cols = ", ".join("[" + k + "]" for k in key_cols)
+    coalesce_keys = ", ".join("COALESCE(l.[" + k + "], r.[" + k + "])" for k in key_cols)
+    lfq, rfq, repfq, procfq = _nf_fq(left_tbl), _nf_fq(right_tbl), _nf_fq(rep), _nf_fq(proc)
+    key_set = {k.lower() for k in key_cols}
+    ins_head = ("    INSERT INTO " + repfq + " ([Recon_RunDate], " + rep_key_cols +
+                ", [AttributeName], [" + lval + "], [" + rval + "], [Status])\n")
+
+    stmts = []
+    for c in cols:
+        nm = c.get("out") or c["name"]   # staging tables hold the alias (out) column names
+        if nm.lower() in key_set:
+            continue
+        is_count = c.get("mode") == "count"
+        attr = (nm + (" (count/key)" if is_count else "")).replace("'", "''")
+        stmts.append(
+            "    -- " + ("COUNT per key" if is_count else "Value per key") + " for [" + nm + "].\n" + ins_head +
+            "    SELECT @RunDate, " + coalesce_keys + ", N'" + attr + "',\n"
+            "           CONVERT(NVARCHAR(MAX), l.[" + nm + "]), CONVERT(NVARCHAR(MAX), r.[" + nm + "]),\n"
+            "           CASE WHEN l.[" + k0 + "] IS NULL THEN N'Missing in " + left_label + "'\n"
+            "                WHEN r.[" + k0 + "] IS NULL THEN N'Missing in " + right_label + "'\n"
+            "                WHEN COALESCE(CONVERT(NVARCHAR(MAX), l.[" + nm + "]), N'') = COALESCE(CONVERT(NVARCHAR(MAX), r.[" + nm + "]), N'') THEN N'Match'\n"
+            "                ELSE N'Mismatch' END\n"
+            "    FROM   " + lfq + " l FULL OUTER JOIN " + rfq + " r ON " + key_join + ";"
+        )
+    body = "\n\n".join(stmts) if stmts else "    -- (no non-key columns selected to compare)"
+    return (
+        "CREATE OR ALTER PROCEDURE " + procfq + "\nAS\nBEGIN\n"
+        "    SET NOCOUNT ON;\n"
+        "    DECLARE @RunDate DATETIME2 = SYSDATETIME();\n\n"
+        "    TRUNCATE TABLE " + repfq + ";\n\n"
+        + body + "\n\n"
+        "    SELECT * FROM " + repfq + " ORDER BY [Status], [AttributeName];\nEND"
+    )
+
+
+def _nf_cmt_extract_proc(proc, dest, cols, key_cols):
+    """Deterministic INSERT...SELECT populating dest from the CMT migration table(s). Columns are
+    grouped by their source table; one table -> a plain SELECT, several -> LEFT JOIN on the key."""
+    src_tables = []
+    for c in cols:
+        st = c.get("srcTable")
+        if st and st not in src_tables:
+            src_tables.append(st)
+    if not src_tables:
+        return None
+    alias_of = {st: "t" + str(i) for i, st in enumerate(src_tables)}
+    key_low = {k.lower() for k in key_cols}
+    has_count = any(c.get("mode") == "count" for c in cols)
+    # INSERT targets the dest (alias/out) names; the SELECT below yields them positionally.
+    insert_cols = ", ".join("[" + c["out"] + "]" for c in cols)
+    from_clause = _nf_fq(src_tables[0]) + " t0"
+    for i in range(1, len(src_tables)):
+        a = "t" + str(i)
+        on = " AND ".join("t0.[" + k + "] = " + a + ".[" + k + "]" for k in key_cols)
+        from_clause += "\n        LEFT JOIN " + _nf_fq(src_tables[i]) + " " + a + " ON " + on
+    if has_count:
+        # Quantitative recon: store ONE row per key — COUNT(col) for count columns, MAX(col) for value.
+        def _ref(c):
+            a = "t0" if c["name"].lower() in key_low else alias_of.get(c.get("srcTable"), "t0")
+            return a + ".[" + c["name"] + "]"
+        sel, grp = _nf_agg_projection(cols, key_cols, _ref)
+        select_list, tail = ", ".join(sel), "\n    GROUP BY " + ", ".join(grp)
+        note = "-- Count columns are stored as COUNT(col) grouped by the key; value columns as MAX(col) per key."
+    else:
+        select_list = ", ".join(alias_of.get(c.get("srcTable"), "t0") + ".[" + c["name"] + "]" for c in cols)
+        tail = ""
+        note = "-- Deterministic: the recon columns come straight from the CMT migration table(s)."
+    return (
+        "CREATE OR ALTER PROCEDURE " + _nf_fq(proc) + "\nAS\nBEGIN\n"
+        "    SET NOCOUNT ON;\n"
+        "    " + note + "\n"
+        "    TRUNCATE TABLE " + _nf_fq(dest) + ";\n"
+        "    INSERT INTO " + _nf_fq(dest) + " (" + insert_cols + ")\n"
+        "    SELECT " + select_list + "\n"
+        "    FROM " + from_clause + tail + ";\nEND"
+    )
+
+
+def _nf_cda_extract_proc(user_id, client_id, src, proc, dest, cols, key_cols):
+    """AI-generate a SELECT from the ClaimCenter/PolicyCenter/BillingCenter dictionary that maps each
+    recon column to its Guidewire equivalent (aliased to the recon column names + key), wrapped in an
+    INSERT proc. Returns (proc_sql, generated_bool); a clearly-commented stub when the dictionary isn't
+    loaded / the AI SDK is unavailable / generation fails (the rest of the script stays valid)."""
+    center = {"cmt": "claimcenter", "pmt": "policycenter", "bmt": "billingcenter"}.get(src, "claimcenter")
+    prov = _provider(center)
+    all_names = [c["out"] for c in cols]          # output (alias) names — the recon column names
+    insert_cols = ", ".join("[" + n + "]" for n in all_names)
+    proj = ", ".join("[" + n + "]" for n in all_names)
+    has_count = any(c.get("mode") == "count" for c in cols)
+    # Quantitative recon: the AI returns GRANULAR rows (aliased to the out names); an outer query then
+    # stores one row per key — COUNT(col) for count columns, MAX(col) for value columns.
+    if has_count:
+        sel_agg, grp_agg = _nf_agg_projection(cols, key_cols, lambda c: "src.[" + c["out"] + "]")
+        proj, group_sql = ", ".join(sel_agg), "\n    GROUP BY " + ", ".join(grp_agg)
+    else:
+        group_sql = ""
+
+    def _stub(reason):
+        body = (
+            "CREATE OR ALTER PROCEDURE " + _nf_fq(proc) + "\nAS\nBEGIN\n"
+            "    SET NOCOUNT ON;\n"
+            "    -- " + reason + "\n"
+            "    -- When ready this proc should TRUNCATE " + _nf_fq(dest) + " then\n"
+            "    --   INSERT INTO " + _nf_fq(dest) + " (" + insert_cols + ")\n"
+            "    --   SELECT <" + prov["label"] + " columns aliased to the recon column names + key>;\n"
+            "    TRUNCATE TABLE " + _nf_fq(dest) + ";\nEND")
+        return body, False
+
+    if anthropic is None:
+        return _stub("CDA extraction not generated: the 'anthropic' SDK is not installed on the server.")
+    if not prov["has_index"](user_id, client_id):
+        return _stub("CDA extraction needs the " + prov["label"] + " - upload it on Product Data Dictionary, then regenerate.")
+    src_tables = []
+    for c in cols:
+        st = c.get("srcTable")
+        if st and st not in src_tables:
+            src_tables.append(st)
+    sel_text = (("Reconcile the " + ", ".join(src_tables) + " entity/entities. ") if src_tables else "") + \
+        "Fields: " + ", ".join(
+            (c["name"] + (" (" + c["description"] + ")" if c.get("description") else "")) for c in cols)
+    entity_ids = _select_tables(user_id, client_id, prov, sel_text) or prov["search"](user_id, client_id, sel_text)
+    if not entity_ids:
+        return _stub("CDA extraction not generated: could not match " + prov["label"] + " tables to these columns "
+                     "- refine the columns, or build the " + center + " SELECT on the SQL Assistant.")
+    ctx = prov["context"](user_id, client_id, entity_ids)
+    if not ctx:
+        return _stub("CDA extraction not generated: the matched tables have no columns in the dictionary.")
+
+    col_meanings = "\n".join(
+        "  - [" + c["out"] + "]"
+        + ((" (source column: " + c["name"] + ")") if c.get("out") and c["out"] != c["name"] else "")
+        + (": " + c["description"] if c.get("description") else "")
+        for c in cols)
+    system = (
+        _read_conventions(prov) + "\n\n"
+        "Respond in EXACTLY this format and nothing else (no markdown fences, no extra prose):\n"
+        "PURPOSE: <one sentence>\n"
+        "ANALYSIS:\n<one '- ' line per point: tables/joins used and which recon column maps to which source column>\n"
+        "SQL:\n<a single read-only SELECT>\n\n"
+        "TASK: produce ONE read-only SELECT that returns one row per business record for reconciliation, with "
+        "these OUTPUT columns aliased EXACTLY as named (case-sensitive, in square brackets) and NOTHING else:\n"
+        + col_meanings + "\n"
+        "The key column(s) " + ", ".join("[" + k + "]" for k in key_cols) + " MUST be included and aliased to those "
+        "exact names. Map each recon column to its equivalent in the SCHEMA below by MEANING (use the description "
+        "given above); for any recon column with no equivalent, output NULL AS [<that name>]. Every output column "
+        "MUST be aliased with square brackets, e.g. c.PublicID AS [PMT_ID]. Use ONLY the tables/columns in the "
+        "SCHEMA below, spelled verbatim; no trailing semicolon; no inline comments; and NO ORDER BY (the result is "
+        "wrapped in a derived table).\n"
+        + ("IMPORTANT: return GRANULAR rows — one row per underlying source record, and do NOT use "
+           "COUNT/SUM/GROUP BY yourself. The key " + ", ".join("[" + k + "]" for k in key_cols) + " must REPEAT "
+           "across the related rows so an outer query can COUNT them per key. Output the raw column values.\n"
+           if has_count else "")
+        + prov["gen_extra"] + "\n\n"
+        "SCHEMA (the only tables/columns you may use):\n" + ctx
+    )
+    try:
+        client = anthropic_client()
+        base_kwargs = dict(model=ai_model(), max_tokens=8000, system=system,
+                           messages=[{"role": "user", "content": "Generate the reconciliation extraction SELECT now."}])
+
+        def run(extra):
+            with client.messages.stream(**base_kwargs, **extra) as stream:
+                return stream.get_final_message()
+
+        resp = call_ai("Non-Financial Recon - CDA extract", run, [{"output_config": {"effort": "medium"}}, {}])
+        if getattr(resp, "stop_reason", None) == "refusal":
+            return _stub("CDA extraction not generated: the request was declined by safety classifiers.")
+        text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+        raw_sql, analysis, sqm = text, "", None
+        for sqm in re.finditer(r"\bsql\s*:\s*", text, re.IGNORECASE):
+            pass
+        if sqm:
+            pre, raw_sql = text[:sqm.start()], text[sqm.end():]
+            am = re.search(r"(?is)\banalysis\s*:\s*(.*)\Z", pre)
+            if am:
+                analysis = am.group(1).strip()
+        sel = _strip_sql_fences(raw_sql).strip().rstrip(";").strip()
+        if not sel or not re.match(r"(?is)^\s*select\b", sel):
+            return _stub("CDA extraction not generated: the AI did not return a SELECT - try again or use the SQL Assistant.")
+        indented = "\n".join("        " + ln for ln in sel.splitlines())
+        head = ["    -- CDA extraction (AI-generated, grounded on " + prov["label"] + " - REVIEW before running):"]
+        for ln in _analysis_lines(analysis)[:12]:
+            head.append("    " + ln)
+        body = (
+            "CREATE OR ALTER PROCEDURE " + _nf_fq(proc) + "\nAS\nBEGIN\n"
+            "    SET NOCOUNT ON;\n"
+            + "\n".join(head) + "\n"
+            "    TRUNCATE TABLE " + _nf_fq(dest) + ";\n"
+            "    INSERT INTO " + _nf_fq(dest) + " (" + insert_cols + ")\n"
+            "    SELECT " + proj + "\n    FROM (\n" + indented + "\n    ) AS src" + group_sql + ";\nEND")
+        return body, True
+    except Exception:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        return _stub("CDA extraction not generated: an error occurred calling the AI - try again or use the SQL Assistant.")
+
+
 def generate_nonfin_recon_sql(user_id: int, client_id: int, body: Dict[str, Any]) -> Result:
-    """Non-Financial Reconciliation. Deterministically (no AI) build a SQL script with TWO staging
-    tables — [<ReconName>_CMT] and [<ReconName>_Legacy] — from the selected migration-schema columns
-    (flattened, de-duped), plus a CREATE OR ALTER PROCEDURE that diffs them on the user's common key.
+    """Non-Financial Reconciliation. Builds a SQL script with THREE staging tables (_CMT/_Legacy/_CDA)
+    from the selected migration-schema columns, TWO report tables + TWO compare procs (CMT-vs-Legacy,
+    CMT-vs-CDA), and TWO extraction procs: _CMT deterministic (INSERT...SELECT from the CMT tables) and
+    _CDA AI-generated from the ClaimCenter/PolicyCenter/BillingCenter dictionary skill.
     Body: {source(cmt|pmt|bmt), tableIds[], columns:{table:[cols]}, reconName, keyCols}."""
     src = (body.get("source") or "").strip().lower()
     if src not in ("cmt", "pmt", "bmt"):
@@ -764,8 +1005,31 @@ def generate_nonfin_recon_sql(user_id: int, client_id: int, body: Dict[str, Any]
     col_scope = body.get("columns") or {}
     if not isinstance(col_scope, dict):
         col_scope = {}
+    # Per-column reconciliation mode: names listed in countCols are reconciled by COUNT(col) grouped by
+    # the key ('count'); everything else is compared value-by-value ('value'). Keys are never counted.
+    count_set = {s.lower() for s in (body.get("countCols") or []) if isinstance(s, str) and s.strip()}
+    # Per-column alias (output name): the recon column is renamed to the alias EVERYWHERE — staging table
+    # column, extract SELECT (source AS [alias]), report AttributeName and the compare. Keys are never
+    # aliased (they anchor the join). Brackets are stripped so the alias is a safe bracket-quoted ident.
+    alias_map = {}
+    for _k, _v in (body.get("aliases") or {}).items() if isinstance(body.get("aliases"), dict) else []:
+        if isinstance(_k, str) and isinstance(_v, str):
+            _a = _v.replace("[", "").replace("]", "").strip()
+            if _a:
+                alias_map[_k.strip().lower()] = _a
+    key_low = {k.lower() for k in key_cols}
+    used_out = set(key_low)
 
-    # Flatten + de-dup the selected columns across the selected tables (first occurrence wins).
+    def _out_for(low, name):
+        if low in key_low:
+            return name
+        a = alias_map.get(low)
+        if a and a.lower() not in used_out:
+            return a
+        return name
+
+    # Flatten + de-dup the selected columns across the selected tables (first occurrence wins),
+    # keeping each column's source table (for the CMT extraction) and description (for the CDA mapping).
     cols, seen = [], {}
     for e in entity_ids:
         tname = tbl_by_id.get(e)
@@ -778,93 +1042,71 @@ def generate_nonfin_recon_sql(user_id: int, client_id: int, body: Dict[str, Any]
             if (want_set is not None and low not in want_set) or low in seen:
                 continue
             seen[low] = True
-            cols.append({"name": nm, "type": _tsql_type(d.get("dataType"), d.get("length"))})
+            out = _out_for(low, nm); used_out.add(out.lower())
+            cols.append({"name": nm, "out": out, "type": _tsql_type(d.get("dataType"), d.get("length")),
+                         "description": (d.get("description") or ""), "srcTable": tname,
+                         "mode": ("count" if low in count_set else "value")})
     if not cols:
         return {"ok": False, "error": "No columns selected. Pick at least one column to reconcile."}, 400
 
-    # Ensure the key column(s) are in the tables (add with a safe default type if not among selected).
+    # Ensure the key column(s) are in the tables (defaulting type/source if not among the selected columns).
     for k in key_cols:
         if k.lower() not in seen:
             seen[k.lower()] = True
-            cols.append({"name": k, "type": "NVARCHAR(255)"})
+            cols.append({"name": k, "out": k, "type": "NVARCHAR(255)", "description": "",
+                         "srcTable": (cols[0]["srcTable"] if cols else None), "mode": "value"})
+    type_by_col = {c["name"].lower(): c["type"] for c in cols}
 
-    schema = "dbo"
-    t_cmt, t_leg, t_rep = recon + "_CMT", recon + "_Legacy", recon + "_Recon_Report"
-    proc = "usp_Reconcile_" + recon
-
-    def _fq(t):
-        return "[" + schema + "].[" + t + "]"
+    # Naming pattern (data tables kept in the sequence Legacy -> CMT -> CDA):
+    #   tables : <Recon>_Legacy, <Recon>_CMT, <Recon>_CDA
+    #   reports: <Recon>_LegacyVsCMT_Report, <Recon>_CMTVsCDA_Report
+    #   extract: usp_extract_<Recon>_CMT, usp_extract_<Recon>_CDA
+    #   compare: usp_report_<Recon>_LegacyVsCMT (Legacy vs CMT), usp_report_<Recon>_CMTVsCDA (CMT vs CDA)
+    t_leg, t_cmt, t_cda = recon + "_Legacy", recon + "_CMT", recon + "_CDA"
+    rep_lvc, rep_cvd = recon + "_LegacyVsCMT_Report", recon + "_CMTVsCDA_Report"
+    proc_lvc, proc_cvd = "usp_report_" + recon + "_LegacyVsCMT", "usp_report_" + recon + "_CMTVsCDA"
+    proc_ext_cmt, proc_ext_cda = "usp_extract_" + recon + "_CMT", "usp_extract_" + recon + "_CDA"
+    center_label = _provider({"cmt": "claimcenter", "pmt": "policycenter", "bmt": "billingcenter"}[src])["label"]
 
     def _create_data(tname):
-        lines = ",\n".join("    [" + c["name"] + "] " + c["type"] for c in cols)
-        return ("IF OBJECT_ID(N'" + _fq(tname) + "', N'U') IS NULL\n"
-                "CREATE TABLE " + _fq(tname) + " (\n" + lines + "\n);")
+        lines = ",\n".join("    [" + c["out"] + "] " + c["type"] for c in cols)
+        return ("IF OBJECT_ID(N'" + _nf_fq(tname) + "', N'U') IS NULL\n"
+                "CREATE TABLE " + _nf_fq(tname) + " (\n" + lines + "\n);")
 
-    # Report table: run date + the key column(s) + AttributeName / CMTValue / LegacyValue / Status.
-    type_by_col = {c["name"].lower(): c["type"] for c in cols}
-    rep_lines = ["    [Recon_RunDate] DATETIME2"]
-    rep_lines += ["    [" + k + "] " + type_by_col.get(k.lower(), "NVARCHAR(255)") for k in key_cols]
-    rep_lines += ["    [AttributeName] NVARCHAR(255)", "    [CMTValue] NVARCHAR(MAX)",
-                  "    [LegacyValue] NVARCHAR(MAX)", "    [Status] NVARCHAR(30)"]
-    create_report = ("IF OBJECT_ID(N'" + _fq(t_rep) + "', N'U') IS NULL\n"
-                     "CREATE TABLE " + _fq(t_rep) + " (\n" + ",\n".join(rep_lines) + "\n);")
-
-    key_join = " AND ".join("cmt.[" + k + "] = legacy.[" + k + "]" for k in key_cols)
-    rep_key_cols = ", ".join("[" + k + "]" for k in key_cols)
-    coalesce_keys = ", ".join("COALESCE(cmt.[" + k + "], legacy.[" + k + "])" for k in key_cols)
-    key_not_in = ", ".join("N'" + k.replace("'", "''") + "'" for k in key_cols)
-
-    # Metadata-driven proc: cursor over the CMT table's columns (minus the keys), and per column
-    # build a dynamic INSERT that diffs the two tables on the key (FULL OUTER JOIN, NULL-safe) and
-    # writes only the DIFFERING rows into the report table with a Status.
-    proc_sql = (
-        "CREATE OR ALTER PROCEDURE " + _fq(proc) + "\n"
-        "AS\n"
-        "BEGIN\n"
-        "    SET NOCOUNT ON;\n"
-        "    DECLARE @ColumnName NVARCHAR(255), @SQL NVARCHAR(MAX), @RunDate DATETIME2 = SYSDATETIME();\n\n"
-        "    TRUNCATE TABLE " + _fq(t_rep) + ";\n\n"
-        "    DECLARE col_cur CURSOR LOCAL FAST_FORWARD FOR\n"
-        "        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS\n"
-        "        WHERE TABLE_SCHEMA = N'" + schema + "' AND TABLE_NAME = N'" + t_cmt + "'\n"
-        "          AND COLUMN_NAME NOT IN (" + key_not_in + ");\n"
-        "    OPEN col_cur;\n"
-        "    FETCH NEXT FROM col_cur INTO @ColumnName;\n"
-        "    WHILE @@FETCH_STATUS = 0\n"
-        "    BEGIN\n"
-        "        SET @SQL =\n"
-        "            N'INSERT INTO " + _fq(t_rep) + " ([Recon_RunDate], " + rep_key_cols + ", [AttributeName], [CMTValue], [LegacyValue], [Status])' +\n"
-        "            N' SELECT @RunDate, " + coalesce_keys + ", @Col,' +\n"
-        "            N'   CONVERT(NVARCHAR(MAX), cmt.' + QUOTENAME(@ColumnName) + N'),' +\n"
-        "            N'   CONVERT(NVARCHAR(MAX), legacy.' + QUOTENAME(@ColumnName) + N'),' +\n"
-        "            N'   CASE WHEN COALESCE(CONVERT(NVARCHAR(MAX), cmt.' + QUOTENAME(@ColumnName) + N'), N'''')' +\n"
-        "            N'             = COALESCE(CONVERT(NVARCHAR(MAX), legacy.' + QUOTENAME(@ColumnName) + N'), N'''') THEN N''Match''' +\n"
-        "            N'        WHEN cmt.' + QUOTENAME(@ColumnName) + N' IS NULL THEN N''Missing in CMT''' +\n"
-        "            N'        WHEN legacy.' + QUOTENAME(@ColumnName) + N' IS NULL THEN N''Missing in Legacy''' +\n"
-        "            N'        ELSE N''Mismatch'' END' +\n"
-        "            N' FROM " + _fq(t_cmt) + " cmt FULL OUTER JOIN " + _fq(t_leg) + " legacy ON " + key_join + "' +\n"
-        "            N' WHERE COALESCE(CONVERT(NVARCHAR(MAX), cmt.' + QUOTENAME(@ColumnName) + N'), N'''')' +\n"
-        "            N'    <> COALESCE(CONVERT(NVARCHAR(MAX), legacy.' + QUOTENAME(@ColumnName) + N'), N'''')';\n"
-        "        EXEC sys.sp_executesql @SQL, N'@RunDate DATETIME2, @Col NVARCHAR(255)', @RunDate = @RunDate, @Col = @ColumnName;\n"
-        "        FETCH NEXT FROM col_cur INTO @ColumnName;\n"
-        "    END\n"
-        "    CLOSE col_cur;\n"
-        "    DEALLOCATE col_cur;\n\n"
-        "    SELECT * FROM " + _fq(t_rep) + " WHERE [Status] <> N'Match' ORDER BY [AttributeName];\n"
-        "END"
-    )
+    cmt_extract = _nf_cmt_extract_proc(proc_ext_cmt, t_cmt, cols, key_cols)
+    cda_extract, cda_ok = _nf_cda_extract_proc(user_id, client_id, src, proc_ext_cda, t_cda, cols, key_cols)
 
     header = [
-        "-- Non-Financial Reconciliation - CMT vs Legacy: data tables + report table + compare procedure",
-        "-- Data tables: " + _fq(t_cmt) + ", " + _fq(t_leg) + "   |   Common key: " + ", ".join(key_cols),
-        "-- Report:      " + _fq(t_rep) + "  ([Recon_RunDate], key(s), [AttributeName], [CMTValue], [LegacyValue], [Status])",
-        "-- Proc:        " + _fq(proc) + "  - truncates the report, loops columns, writes only DIFFERENCES, then returns Status <> 'Match'.",
-        "-- Steps: run this script; load both data tables (CMT-side + Legacy-side); then EXEC " + _fq(proc) + ".",
+        "-- Non-Financial Reconciliation - Legacy vs CMT AND CMT vs CDA",
+        "-- Data tables: " + _nf_fq(t_leg) + ", " + _nf_fq(t_cmt) + ", " + _nf_fq(t_cda) + "   |   Key: " + ", ".join(key_cols),
+        "-- Extract procs: " + _nf_fq(proc_ext_cmt) + " (from the CMT tables) ; " + _nf_fq(proc_ext_cda) + " (from " + center_label + ")",
+        "-- Report tables: " + _nf_fq(rep_lvc) + " (Legacy vs CMT) ; " + _nf_fq(rep_cvd) + " (CMT vs CDA)",
+        "-- Compare procs: " + _nf_fq(proc_lvc) + " ; " + _nf_fq(proc_cvd) + "  (return every row with a Status)",
+        "-- Run order: create objects; EXEC the two extract procs to fill _CMT/_CDA (load _Legacy yourself); then EXEC the compare procs.",
     ]
-    sql = ("\n".join(header) + "\n\n"
-           + _create_data(t_cmt) + "\nGO\n\n"
-           + _create_data(t_leg) + "\nGO\n\n"
-           + create_report + "\nGO\n\n"
-           + proc_sql + "\nGO\n")
-    return {"ok": True, "sql": sql, "tables": [t_cmt, t_leg], "report": t_rep, "proc": proc,
-            "columns": [c["name"] for c in cols], "source": prov["kind"]}, 200
+    count_names = [c["out"] for c in cols if c.get("mode") == "count"]
+    if count_names:
+        header.insert(5, "-- Quantitative (COUNT(col) grouped by " + ", ".join(key_cols) + "): " + ", ".join(count_names)
+                      + "   |   all other columns are value-level.")
+    # One block per object (title + note + sql) so the UI can render editable cards, like Source Data Filter.
+    blocks = [
+        {"title": t_leg, "note": "CREATE data table (Legacy side)", "sql": _create_data(t_leg)},
+        {"title": t_cmt, "note": "CREATE data table (CMT side)", "sql": _create_data(t_cmt)},
+        {"title": t_cda, "note": "CREATE data table (CDA side)", "sql": _create_data(t_cda)},
+        {"title": rep_lvc, "note": "CREATE report table - Legacy vs CMT", "sql": _nf_report_ddl(rep_lvc, key_cols, "Legacy", "CMT", type_by_col)},
+        {"title": rep_cvd, "note": "CREATE report table - CMT vs CDA", "sql": _nf_report_ddl(rep_cvd, key_cols, "CMT", "CDA", type_by_col)},
+    ]
+    if cmt_extract:
+        blocks.append({"title": proc_ext_cmt, "note": "Extract -> " + t_cmt + " (deterministic, from the CMT tables)", "sql": cmt_extract})
+    blocks.append({"title": proc_ext_cda,
+                   "note": ("Extract -> " + t_cda + " (AI-mapped from " + center_label + ")") if cda_ok
+                           else ("Extract -> " + t_cda + " (STUB - upload the " + center_label + ", then regenerate)"),
+                   "sql": cda_extract})
+    blocks.append({"title": proc_lvc, "note": "Compare Legacy vs CMT -> " + rep_lvc, "sql": _nf_compare_proc(proc_lvc, rep_lvc, t_leg, t_cmt, "Legacy", "CMT", key_cols, cols)})
+    blocks.append({"title": proc_cvd, "note": "Compare CMT vs CDA -> " + rep_cvd, "sql": _nf_compare_proc(proc_cvd, rep_cvd, t_cmt, t_cda, "CMT", "CDA", key_cols, cols)})
+
+    sql = "\n".join(header) + "\n\n" + "\nGO\n\n".join(b["sql"] for b in blocks) + "\nGO\n"
+
+    return {"ok": True, "sql": sql, "blocks": blocks, "tables": [t_leg, t_cmt, t_cda], "reports": [rep_lvc, rep_cvd],
+            "procs": [proc_ext_cmt, proc_ext_cda, proc_lvc, proc_cvd], "cdaGenerated": cda_ok,
+            "columns": [c["name"] for c in cols], "countCols": count_names, "source": prov["kind"]}, 200

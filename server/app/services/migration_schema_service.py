@@ -129,6 +129,7 @@ def column_defs(user_id: int, client_id: int, doc_key: str, table: str) -> List[
                 continue
             out.append({"name": nm, "dataType": (f.get("dataType") or "").strip(),
                         "length": f.get("length"),
+                        "description": (f.get("description") or "").strip(),
                         "pk": bool(f.get("pk") or _MIG_PK_RE.match(nm)), "fk": bool(f.get("fk"))})
         return out
     return []
